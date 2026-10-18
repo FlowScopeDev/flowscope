@@ -3,6 +3,12 @@
 FlowScope is a macOS and Windows desktop recorder plus CLI for observing Android UI flows and
 replaying durable tests. It supports physical devices and emulators over USB or wireless ADB.
 
+![The FlowScope IDE running a recorded test against a connected device](assets/ide-flow-editor.png)
+
+The live device sits beside the test it drives. The rail lists the project's tests, suites and past
+runs; the green play button saves the open `.flow` and replays it on the selected device, with the
+result reported against the file you can read.
+
 ## Two capture modes
 
 | Mode | App changes | Captures |
@@ -397,6 +403,11 @@ project anywhere on disk — the checked-in test plus the runner remains the com
 In the IDE, the project chip in the session bar opens, creates, and switches projects, and the Flow
 tab's file rail lists the project's tests, suites, and recent runs. With no project open the IDE
 behaves exactly as before, saving under `~/.flowscope/`.
+
+Every step is also editable as a card, so a recorded flow can be reordered, disabled, duplicated or
+trimmed without hand-editing the file:
+
+![The same test shown as editable step cards](assets/ide-step-cards.png)
 
 Switching projects switches everything that belongs to a project:
 
