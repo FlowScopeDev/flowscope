@@ -97,8 +97,12 @@ and stream fallback. Resolve explicit `SCRCPY`, `SCRCPY_SERVER_PATH`, and `FFMPE
 The v1 `.flow` language is line-oriented and intentionally small. `before`, `step`, and `after`
 define setup, test, and always-run cleanup phases. It supports `launch`,
 `wait-visible`, `tap`, `tap-if-visible`, `type`, `scroll`, `back`, `assert-visible`, `assert-not-visible`, and
-`screenshot`, plus host `api-request` and target-app data/permission actions. Selectors can combine
-`id`, `text`, `text-contains`, `desc`, and `class`.
+`screenshot`, plus the gestures and input actions `long-press`, `swipe`, `scroll-to`, `press-key`,
+`clear-text`, and `hide-keyboard`, host `api-request`, and target-app data/permission actions. Selectors
+can combine `id`, `text`, `text-contains`, `desc`, and `class`, and narrow with `index` and the state
+filters `enabled`, `checked`, `focused`, `clickable`, `selected` (filters never select on their own).
+`direction` always means where the finger moves. `press-key` accepts a fixed key list, never raw
+keycodes. `double-tap` is not offered: `adb` cannot land two taps inside the double-tap window.
 `text-contains` targets an inline substring when UIAutomator merges clickable text into a larger
 single-line accessibility node.
 

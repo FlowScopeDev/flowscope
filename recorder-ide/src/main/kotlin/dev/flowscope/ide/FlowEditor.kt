@@ -107,7 +107,10 @@ internal fun validateSource(source: String, kind: EditorKind): FlowValidation =
 
 /** Actions whose selector quality actually matters. `back`/`screenshot` carry none. */
 private fun needsSelector(line: String): Boolean =
-    listOf("tap", "tap-if-visible", "wait-visible", "assert-visible", "assert-not-visible", "type")
+    listOf(
+        "tap", "tap-if-visible", "wait-visible", "assert-visible", "assert-not-visible", "type",
+        "long-press", "scroll-to", "clear-text",
+    )
         .any { action -> listOf("before", "step", "after").any { line.startsWith("$it $action") } }
 
 private fun isLifecycleLine(line: String): Boolean =
@@ -116,7 +119,8 @@ private fun isLifecycleLine(line: String): Boolean =
 private val HeaderDirectives = setOf("flowscope", "name", "package", "mode", "timeout")
 private val StepKeywords = setOf(
     "before", "step", "after", "launch", "wait-visible", "tap", "tap-if-visible", "type",
-    "scroll", "back", "assert-visible", "assert-not-visible", "screenshot", "api-request",
+    "scroll", "back", "long-press", "swipe", "scroll-to", "press-key", "clear-text", "hide-keyboard",
+    "assert-visible", "assert-not-visible", "screenshot", "api-request",
     "clear-app-data", "force-stop", "grant-permission", "revoke-permission",
     "reset-app-permissions", "open-deep-link", "assert-deep-link-handler",
     "assert-app-link-verified", "install-apk", "uninstall-app", "assert-installed",
@@ -285,12 +289,19 @@ internal fun describeStep(stepLine: String): String {
     val value = Regex("""\bvalue=("[^"]*"|\S+)""").find(tokens)
         ?.groupValues?.get(1)?.trim('"')
     val direction = Regex("""\bdirection=(\S+)""").find(tokens)?.groupValues?.get(1)
+    val key = Regex("""\bkey=("[^"]*"|\S+)""").find(tokens)?.groupValues?.get(1)?.trim('"')
     val target = selector?.let { readableSelector(it) }
     return when (action) {
         "launch" -> "Launch the app under test"
         "back" -> "Press the back button"
         "screenshot" -> "Capture a screenshot"
         "scroll" -> "Scroll ${direction ?: "down"}"
+        "swipe" -> "Swipe ${direction ?: "up"}" + (target?.let { " from $it" } ?: "")
+        "scroll-to" -> "Scroll until ${target ?: "an element"} is visible"
+        "long-press" -> "Long-press ${target ?: "an element"}"
+        "clear-text" -> "Clear the text in ${target ?: "a field"}"
+        "press-key" -> "Press the ${key ?: "a"} key"
+        "hide-keyboard" -> "Hide the keyboard"
         "tap" -> "Tap ${target ?: "an element"}"
         "tap-if-visible" -> "Tap ${target ?: "an element"} if visible"
         "type" -> "Type \"${value ?: ""}\"" + (target?.let { " into $it" } ?: "")

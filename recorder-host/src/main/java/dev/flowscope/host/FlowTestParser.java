@@ -14,6 +14,7 @@ import java.util.Set;
 public final class FlowTestParser {
     private static final Set<String> ACTIONS = Set.of(
         "launch", "wait-visible", "tap", "tap-if-visible", "type", "scroll", "back",
+        "long-press", "swipe", "scroll-to", "press-key", "clear-text", "hide-keyboard",
         "assert-visible", "assert-not-visible", "screenshot", "api-request",
         "clear-app-data", "force-stop", "grant-permission", "revoke-permission",
         "reset-app-permissions", "open-deep-link", "assert-deep-link-handler",
@@ -24,7 +25,23 @@ public final class FlowTestParser {
         "web-assert-storage", "web-clear-storage", "web-assert-interface",
         "web-assert-secure-context", "web-snapshot");
 
+    /** Keys `press-key` accepts. The runner maps each to one fixed Android keycode; raw keycodes are never accepted. */
+    static final Set<String> PRESS_KEYS = Set.of(
+        "enter", "search", "delete", "tab", "home", "app-switch", "volume-up", "volume-down");
+    static final long LONG_PRESS_MIN_MILLIS = 500, LONG_PRESS_MAX_MILLIS = 10_000;
+    static final long SWIPE_MIN_MILLIS = 100, SWIPE_MAX_MILLIS = 5_000;
+    static final long SWIPE_MIN_PERCENT = 10, SWIPE_MAX_PERCENT = 90;
+    static final long SCROLL_TO_MAX_SWIPES_LIMIT = 50;
+    private static final Set<String> SELECTOR_ACTIONS = Set.of("wait-visible", "tap", "tap-if-visible",
+        "assert-visible", "assert-not-visible", "long-press", "scroll-to", "clear-text");
+    private static final Set<String> DIRECTIONS = Set.of("up", "down", "left", "right");
+
     private FlowTestParser() {}
+
+    /** Every action name the parser accepts, for tools that must stay in step with it. */
+    public static Set<String> actions() {
+        return ACTIONS;
+    }
 
     public static FlowTest parse(Path path) throws IOException {
         return parseLines(Files.readAllLines(path, StandardCharsets.UTF_8),
@@ -132,14 +149,15 @@ public final class FlowTestParser {
     }
 
     private static void validateAction(String action, Map<String, String> arguments, int line) {
-        Set<String> selectorKeys = Set.of("id", "text", "text-contains", "desc", "class");
-        boolean hasSelector = arguments.keySet().stream().anyMatch(selectorKeys::contains);
-        if (Set.of("wait-visible", "tap", "tap-if-visible", "assert-visible", "assert-not-visible")
-            .contains(action)
-            && !hasSelector) {
+        boolean hasSelector = arguments.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);
+        if ((SELECTOR_ACTIONS.contains(action)) && !hasSelector) {
             throw error(line,
                 action + " requires id=, text=, text-contains=, desc=, or class=");
         }
+        if (SELECTOR_ACTIONS.contains(action) || action.equals("type") || action.equals("swipe")) {
+            validateSelectorFilters(arguments, line);
+        }
+        validateGestures(action, arguments, line);
         if (action.equals("type") && !arguments.containsKey("value")) {
             throw error(line, "type requires value=");
         }
@@ -258,6 +276,58 @@ public final class FlowTestParser {
             if (!arguments.containsKey("value")) throw error(line, "web-assert-secure-context requires value=");
             parseBoolean(arguments.get("value"), line, "value");
         }
+    }
+
+    /** `index` and the accessibility-state filters narrow a selector; they never select on their own. */
+    private static void validateSelectorFilters(Map<String, String> arguments, int line) {
+        if (arguments.containsKey("index")) {
+            String index = arguments.get("index").strip();
+            if (!index.contains("${") && !index.matches("\\d{1,4}")) {
+                throw error(line, "index must be a zero-based number, 0 to 9999");
+            }
+        }
+        for (String key : UiHierarchy.STATE_KEYS) {
+            String value = arguments.get(key);
+            if (value != null && !value.contains("${")) parseBoolean(value.strip(), line, key);
+        }
+    }
+
+    private static void validateGestures(String action, Map<String, String> arguments, int line) {
+        switch (action) {
+            case "long-press" -> boundedMillis(arguments, "duration", LONG_PRESS_MIN_MILLIS, LONG_PRESS_MAX_MILLIS, line);
+            case "swipe" -> {
+                requireDirection(action, arguments, line, true);
+                boundedMillis(arguments, "duration", SWIPE_MIN_MILLIS, SWIPE_MAX_MILLIS, line);
+                boundedMillis(arguments, "distance", SWIPE_MIN_PERCENT, SWIPE_MAX_PERCENT, line);
+            }
+            case "scroll-to" -> {
+                requireDirection(action, arguments, line, false);
+                boundedMillis(arguments, "max-swipes", 1, SCROLL_TO_MAX_SWIPES_LIMIT, line);
+            }
+            case "press-key" -> {
+                String key = arguments.get("key");
+                if (key == null || !PRESS_KEYS.contains(key)) {
+                    throw error(line, "press-key requires key= one of " + String.join(", ", new java.util.TreeSet<>(PRESS_KEYS)));
+                }
+            }
+            default -> { }
+        }
+    }
+
+    private static void requireDirection(String action, Map<String, String> arguments, int line, boolean required) {
+        String direction = arguments.get("direction");
+        if (direction == null && !required) return;
+        if (direction == null || !DIRECTIONS.contains(direction)) {
+            throw error(line, action + " direction must be up, down, left, or right");
+        }
+    }
+
+    /** Validates an optional numeric argument against inclusive bounds; values with `${...}` are checked at run time. */
+    private static void boundedMillis(Map<String, String> arguments, String key, long min, long max, int line) {
+        String raw = arguments.get(key);
+        if (raw == null || raw.contains("${")) return;
+        long value = parsePositiveLong(raw.strip(), line, key);
+        if (value < min || value > max) throw error(line, key + " must be between " + min + " and " + max);
     }
 
     private static boolean parseBoolean(String value, int line, String name) {

@@ -218,6 +218,13 @@ class StepEditingTest {
         assertEquals("Launch the app under test", describeStep("step launch"))
         assertEquals("Tap btn_continue", describeStep("""step tap id="btn_continue""""))
         assertEquals("Scroll down", describeStep("step scroll direction=down"))
+        assertEquals("Swipe left from carousel", describeStep("step swipe direction=left id=carousel"))
+        assertEquals("Swipe up", describeStep("step swipe direction=up"))
+        assertEquals("Scroll until Order total is visible", describeStep("""step scroll-to text="Order total""""))
+        assertEquals("Long-press Row", describeStep("step long-press text=Row"))
+        assertEquals("Clear the text in email", describeStep("step clear-text id=email"))
+        assertEquals("Press the enter key", describeStep("step press-key key=enter"))
+        assertEquals("Hide the keyboard", describeStep("step hide-keyboard"))
         assertEquals("""Type "hello" into field_name""", describeStep("""step type id="field_name" value="hello""""))
         assertEquals("Assert Welcome is visible", describeStep("""step assert-visible text="Welcome""""))
         assertEquals("Assert WebView cookie metadata", describeStep("step web-assert-cookie name=session_id"))
@@ -321,5 +328,23 @@ class SuiteValidationTest {
         // The highlighter must round-trip the text unchanged whichever word list it uses.
         val suite = "flowscope-suite 1\ntest tests/login.flow\n"
         assertEquals(suite, highlight(suite, DarkFlowColors, SuiteWords).text)
+    }
+
+    @Test
+    fun `editor keywords match every action the host parser accepts`() {
+        val lifecycle = setOf("before", "step", "after")
+        assertEquals(
+            dev.flowscope.host.FlowTestParser.actions().toSortedSet(),
+            (FlowWords.keywords - lifecycle).toSortedSet(),
+        )
+    }
+
+    @Test
+    fun `validates the new gesture actions through the host parser`() {
+        val valid = "flowscope 1\npackage com.example.debug\nstep launch"
+        val source = valid + "\nstep scroll-to text=\"Total\"\nstep long-press id=row duration=900"
+        assertTrue(validateFlow(source).isValid)
+        val bad = valid + "\nstep long-press duration=900"
+        assertFalse(validateFlow(bad).isValid)
     }
 }

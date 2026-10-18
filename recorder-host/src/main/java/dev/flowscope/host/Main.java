@@ -552,6 +552,13 @@ public final class Main {
             step tap text-contains="Terms & Policies"
             step type id=com.example.debug:id/email value="qa@example.com"
             step scroll direction=up
+            step scroll-to text="Order total" max-swipes=8
+            step long-press id=com.example.debug:id/item duration=900
+            step swipe direction=left id=com.example.debug:id/carousel
+            step clear-text id=com.example.debug:id/email
+            step press-key key=enter
+            step hide-keyboard
+            step assert-visible id=com.example.debug:id/accept checked=true
             step assert-visible desc="Order complete"
             step assert-not-visible text="Loading" timeout=30000
             step back
@@ -562,6 +569,18 @@ public final class Main {
             Selectors can combine id=, text=, text-contains=, desc=, and class=.
             text-contains= targets an inline substring within a single-line accessibility node.
             tap-if-visible waits up to its timeout and is a no-op when the selector stays absent.
+            Selectors may also carry index=N (zero-based nth match) and the state filters enabled=,
+            checked=, focused=, clickable=, and selected= (true|false), for example
+            assert-visible id=... checked=true. They narrow a selector and never select on their own.
+            Gestures: direction= is where the finger moves, as for scroll. long-press <selector>
+            [duration=500..10000, default 800]; swipe direction= [<selector>] [distance=10..90 percent of
+            the screen, default 50] [duration=100..5000, default 300] (with a selector it starts at that
+            element, otherwise it is centred on the screen); scroll-to <selector> [direction=up]
+            [max-swipes=1..50, default 10] swipes until the element is visible and fails at the end of
+            the content or at max-swipes.
+            Input: press-key key=enter|search|delete|tab|home|app-switch|volume-up|volume-down,
+            clear-text <selector> (deletes the field's text), and hide-keyboard (Back only while the
+            keyboard is showing).
             Mutating actions wait for UI stability; assertions poll until timeout.
             before runs setup in order; step is the test; after always runs every cleanup action.
             Device actions: clear-app-data, force-stop, grant-permission permission=...,

@@ -197,6 +197,23 @@ after api-request method=DELETE url="${env.API_BASE_URL}/fixtures/${var.fixtureI
   expect-status=200,204,404 if-var=fixtureId
 ```
 
+Gestures and input beyond `tap` and `scroll`. `direction=` is where the finger moves, as for `scroll`:
+
+```text
+step scroll-to text="Order total" max-swipes=8        # swipes until visible; stops at the end of the content
+step long-press id=com.example.debug:id/row duration=900
+step swipe direction=left id=com.example.debug:id/carousel distance=60
+step clear-text id=com.example.debug:id/email
+step press-key key=enter                              # enter, search, delete, tab, home, app-switch, volume-up/down
+step hide-keyboard                                    # Back only while the keyboard is showing
+step assert-visible id=com.example.debug:id/accept checked=true index=1
+```
+
+Any selector can add `index=N` (zero-based nth match) and the state filters `enabled=`, `checked=`,
+`focused=`, `clickable=`, and `selected=` (`true` or `false`); they narrow a selector and never select
+on their own. `double-tap` is deliberately absent: `adb` cannot deliver two taps inside Android's
+300 ms double-tap window reliably.
+
 Target-app actions include `clear-app-data`, `force-stop`, `grant-permission`,
 `revoke-permission`, and app-scoped `reset-app-permissions`. FlowScope never uses Android's
 device-wide permission reset and never stores environment values, API bodies, or captured values in

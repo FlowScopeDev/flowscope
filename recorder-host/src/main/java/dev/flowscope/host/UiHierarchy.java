@@ -38,23 +38,56 @@ public final class UiHierarchy {
                 element.getAttribute("content-desc"),
                 element.getAttribute("class"),
                 Integer.parseInt(bounds.group(1)), Integer.parseInt(bounds.group(2)),
-                Integer.parseInt(bounds.group(3)), Integer.parseInt(bounds.group(4))));
+                Integer.parseInt(bounds.group(3)), Integer.parseInt(bounds.group(4)),
+                element.getAttribute("enabled").equals("true"),
+                element.getAttribute("checked").equals("true"),
+                element.getAttribute("focused").equals("true"),
+                element.getAttribute("clickable").equals("true"),
+                element.getAttribute("selected").equals("true")));
         }
         return result;
     }
 
+    /** Selector keys that choose elements; at least one is required by selector actions. */
+    public static final java.util.Set<String> SELECTOR_KEYS =
+        java.util.Set.of("id", "text", "text-contains", "desc", "class");
+    /** Boolean accessibility-state filters, matched against the node's attribute. */
+    public static final java.util.Set<String> STATE_KEYS =
+        java.util.Set.of("enabled", "checked", "focused", "clickable", "selected");
+
+    /** The first match in document order, or the zero-based {@code index}th when one is given. */
     static UiNode find(List<UiNode> nodes, Map<String, String> arguments) {
-        return nodes.stream().filter(node -> node.matches(arguments)).findFirst().orElse(null);
+        int index = arguments.containsKey("index") ? Integer.parseInt(arguments.get("index").strip()) : 0;
+        return nodes.stream().filter(node -> node.matches(arguments)).skip(index).findFirst().orElse(null);
     }
 
     public record UiNode(String id, String text, String description, String className,
-                         int left, int top, int right, int bottom) {
+                         int left, int top, int right, int bottom,
+                         boolean enabled, boolean checked, boolean focused,
+                         boolean clickable, boolean selected) {
+        /** A node with no accessibility state, for callers that only care about identity and bounds. */
+        public UiNode(String id, String text, String description, String className,
+                      int left, int top, int right, int bottom) {
+            this(id, text, description, className, left, top, right, bottom,
+                false, false, false, false, false);
+        }
+
         boolean matches(Map<String, String> arguments) {
             return matches(arguments, "id", id)
                 && matches(arguments, "text", text)
                 && contains(arguments, "text-contains", text)
                 && matches(arguments, "desc", description)
-                && matches(arguments, "class", className);
+                && matches(arguments, "class", className)
+                && state(arguments, "enabled", enabled)
+                && state(arguments, "checked", checked)
+                && state(arguments, "focused", focused)
+                && state(arguments, "clickable", clickable)
+                && state(arguments, "selected", selected);
+        }
+
+        private boolean state(Map<String, String> arguments, String key, boolean actual) {
+            String expected = arguments.get(key);
+            return expected == null || expected.strip().equals(String.valueOf(actual));
         }
 
         private boolean matches(Map<String, String> arguments, String key, String actual) {

@@ -20,7 +20,8 @@ public final class FlowTestRunner {
      * the hierarchy settle() recorded. Their own input goes through command(), which drops the cache.
      */
     private static final Set<String> REUSES_SETTLED_DUMP = Set.of(
-        "wait-visible", "assert-visible", "assert-not-visible", "screenshot", "tap", "tap-if-visible", "type");
+        "wait-visible", "assert-visible", "assert-not-visible", "screenshot", "tap", "tap-if-visible", "type",
+        "long-press", "swipe", "scroll-to", "clear-text");
     /** How long consecutive hierarchies are compared after a mutation (design: up to 1.5 s). */
     private static final long SETTLE_WINDOW_NANOS = 1_500_000_000L;
     /** The dump taken at the end of settle() may answer the next lookup for this long. */
@@ -209,6 +210,12 @@ public final class FlowTestRunner {
             case "tap-if-visible" -> { var n = findNode(args, timeout); if (n != null) { shell("input", "tap", "" + n.tapX(args), "" + n.centerY()); settle(); } yield Map.of("matched", "" + (n != null)); }
             case "type" -> { if (hasSelector(args)) { var n = requireNode(args, timeout); shell("input", "tap", "" + n.centerX(), "" + n.centerY()); } typeText(args.get("value")); settle(); yield Map.of(); }
             case "scroll" -> { scroll(args.get("direction")); settle(); yield Map.of(); }
+            case "long-press" -> longPress(args, timeout);
+            case "swipe" -> swipeStep(args, timeout);
+            case "scroll-to" -> scrollTo(args);
+            case "press-key" -> { String key = args.get("key"); shell("input", "keyevent", pressKeycode(key)); settle(); yield Map.of("key", key); }
+            case "clear-text" -> clearText(args, timeout);
+            case "hide-keyboard" -> hideKeyboard();
             case "back" -> { shell("input", "keyevent", "KEYCODE_BACK"); settle(); yield Map.of(); }
             case "assert-not-visible" -> { requireAbsent(args, timeout); yield Map.of(); }
             case "screenshot" -> { String name = args.getOrDefault("name", "step-" + String.format("%02d", index + 1)); captureScreenshot(name); yield Map.of("evidence", "evidence/" + safeFile(name) + ".png"); }
@@ -996,6 +1003,130 @@ public final class FlowTestRunner {
         if (!size.find()) throw new IOException("Could not determine device size"); int w = Integer.parseInt(size.group(1)), h = Integer.parseInt(size.group(2)); int sx=w/2,sy=h/2,ex=sx,ey=sy;
         switch(direction){case"up"->{sy+=h/3;ey-=h/3;}case"down"->{sy-=h/3;ey+=h/3;}case"left"->{sx+=w/3;ex-=w/3;}case"right"->{sx-=w/3;ex+=w/3;}default->throw new IllegalArgumentException("Unknown scroll direction: "+direction);} shell("input","swipe",""+sx,""+sy,""+ex,""+ey,"450");
     }
+    private static final Map<String, String> KEYCODES = Map.of(
+        "enter", "KEYCODE_ENTER", "search", "KEYCODE_SEARCH", "delete", "KEYCODE_DEL", "tab", "KEYCODE_TAB",
+        "home", "KEYCODE_HOME", "app-switch", "KEYCODE_APP_SWITCH",
+        "volume-up", "KEYCODE_VOLUME_UP", "volume-down", "KEYCODE_VOLUME_DOWN");
+    private int[] screenSize;
+
+    private static String pressKeycode(String key) {
+        String keycode = KEYCODES.get(key);
+        if (keycode == null) throw new IllegalArgumentException("Unsupported key: " + key);
+        return keycode;
+    }
+
+    /** An optional numeric argument, checked again here because `${var.x}` values are only known at run time. */
+    private static long boundedArg(Map<String, String> args, String key, long fallback, long min, long max) {
+        String raw = args.get(key);
+        if (raw == null) return fallback;
+        long value;
+        try {
+            value = Long.parseLong(raw.strip());
+        } catch (NumberFormatException invalid) {
+            throw new IllegalArgumentException(key + " must be a number");
+        }
+        if (value < min || value > max) throw new IllegalArgumentException(key + " must be between " + min + " and " + max);
+        return value;
+    }
+
+    /** Holds a finger on the element: a zero-length `input swipe` lasts exactly {@code duration} ms. */
+    private Map<String, String> longPress(Map<String, String> args, long timeout) throws Exception {
+        var node = requireNode(args, timeout);
+        long duration = boundedArg(args, "duration", 800,
+            FlowTestParser.LONG_PRESS_MIN_MILLIS, FlowTestParser.LONG_PRESS_MAX_MILLIS);
+        int x = node.tapX(args), y = node.centerY();
+        shell("input", "swipe", "" + x, "" + y, "" + x, "" + y, "" + duration);
+        settle();
+        return Map.of("duration", "" + duration);
+    }
+
+    private Map<String, String> swipeStep(Map<String, String> args, long timeout) throws Exception {
+        int percent = (int) boundedArg(args, "distance", 50,
+            FlowTestParser.SWIPE_MIN_PERCENT, FlowTestParser.SWIPE_MAX_PERCENT);
+        long duration = boundedArg(args, "duration", 300,
+            FlowTestParser.SWIPE_MIN_MILLIS, FlowTestParser.SWIPE_MAX_MILLIS);
+        var anchor = hasSelector(args) ? requireNode(args, timeout) : null;
+        swipe(args.get("direction"), anchor == null ? null : anchor.centerX(),
+            anchor == null ? null : anchor.centerY(), percent, duration);
+        settle();
+        return Map.of("direction", args.get("direction"), "distance", percent + "%");
+    }
+
+    /**
+     * Swipes by {@code percent} of the screen along the axis. The finger moves in {@code direction}
+     * (like `scroll`): without an anchor the path is centred on the screen, with one it starts there.
+     */
+    private void swipe(String direction, Integer anchorX, Integer anchorY, int percent, long millis) throws Exception {
+        if (screenSize == null) {
+            screenSize = adb.displaySize(device.serial());
+            if (screenSize == null) throw new IOException("Could not determine device size");
+        }
+        int w = screenSize[0], h = screenSize[1], dx = 0, dy = 0;
+        switch (direction) {
+            case "up" -> dy = -h * percent / 100;
+            case "down" -> dy = h * percent / 100;
+            case "left" -> dx = -w * percent / 100;
+            case "right" -> dx = w * percent / 100;
+            default -> throw new IllegalArgumentException("Unknown swipe direction: " + direction);
+        }
+        int sx = anchorX == null ? w / 2 - dx / 2 : anchorX;
+        int sy = anchorY == null ? h / 2 - dy / 2 : anchorY;
+        int ex = Math.max(1, Math.min(w - 2, sx + dx)), ey = Math.max(1, Math.min(h - 2, sy + dy));
+        shell("input", "swipe", "" + sx, "" + sy, "" + ex, "" + ey, "" + millis);
+    }
+
+    /**
+     * Swipes until the element is visible. Stops at {@code max-swipes}, or earlier when a swipe leaves
+     * the settled hierarchy unchanged (the end of the content), so it can never scroll forever.
+     */
+    private Map<String, String> scrollTo(Map<String, String> args) throws Exception {
+        String direction = args.getOrDefault("direction", "up");
+        int maxSwipes = (int) boundedArg(args, "max-swipes", 10, 1, FlowTestParser.SCROLL_TO_MAX_SWIPES_LIMIT);
+        byte[] previous = null;
+        for (int swipes = 0; ; swipes++) {
+            byte[] dump = currentHierarchy();
+            if (UiHierarchy.find(UiHierarchy.parse(dump), args) != null) return Map.of("swipes", "" + swipes);
+            if (swipes >= maxSwipes) {
+                throw new IllegalStateException("Element not found after " + swipes + " swipes: " + selectorDescription(args));
+            }
+            if (previous != null && Arrays.equals(previous, dump)) {
+                throw new IllegalStateException("Reached the end of the content after " + swipes
+                    + " swipes without finding: " + selectorDescription(args));
+            }
+            previous = dump;
+            swipe(direction, null, null, 50, 400);
+            settle();
+        }
+    }
+
+    /** Taps the field, moves to the end of its text, and deletes as many characters as it holds. */
+    private Map<String, String> clearText(Map<String, String> args, long timeout) throws Exception {
+        var node = requireNode(args, timeout);
+        shell("input", "tap", "" + node.centerX(), "" + node.centerY());
+        // Ctrl+End jumps to the end of multi-line text on Android 11+; older builds ignore it, and
+        // End still reaches the end of the current line.
+        adb.run(List.of("-s", device.serial(), "shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_MOVE_END"));
+        shell("input", "keyevent", "KEYCODE_MOVE_END");
+        int length = node.text().length();
+        for (int left = length; left > 0; left -= 100) {
+            String[] command = new String[2 + Math.min(100, left)];
+            command[0] = "input";
+            command[1] = "keyevent";
+            Arrays.fill(command, 2, command.length, "KEYCODE_DEL");
+            shell(command);
+        }
+        settle();
+        return Map.of("deleted", "" + length);
+    }
+
+    /** Sends Back only while the soft keyboard is showing, so it can never navigate away by accident. */
+    private Map<String, String> hideKeyboard() throws Exception {
+        boolean shown = adb.run(List.of("-s", device.serial(), "shell", "dumpsys", "input_method"))
+            .stdout().contains("mInputShown=true");
+        if (shown) { shell("input", "keyevent", "KEYCODE_BACK"); settle(); }
+        return Map.of("keyboard", shown ? "hidden" : "not-shown");
+    }
+
     private void captureEvidence(String name) { try { captureScreenshot(name); } catch(Exception ignored){} try { Files.write(root.resolve("evidence").resolve(name+".xml"),dumpHierarchy()); } catch(Exception ignored){} }
     private void captureScreenshot(String name) throws Exception { Files.write(root.resolve("evidence").resolve(safeFile(name)+".png"),adb.execOut(device.serial(),"screencap","-p")); }
     private void shell(String... args) throws Exception { String[] command=new String[args.length+1];command[0]="shell";System.arraycopy(args,0,command,1,args.length);command(command); }
@@ -1127,6 +1258,6 @@ public final class FlowTestRunner {
     private static long elapsed(long n){return Duration.ofNanos(System.nanoTime()-n).toMillis();} private static String message(Exception e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();} private static String safeFile(String n){return n.replaceAll("[^a-zA-Z0-9._-]","_");}
     private String safeUrl(URI u){String path=u.getPath()==null?"":u.getPath();for(String value:variables.values())if(value!=null&&!value.isBlank())path=path.replace(value,"{captured}");return u.getScheme()+"://"+u.getAuthority()+path;}
     private String redact(String value){String redacted=value;for(String secret:environment.values())if(secret!=null&&!secret.isBlank())redacted=redacted.replace(secret,"{env}");for(String captured:variables.values())if(captured!=null&&!captured.isBlank())redacted=redacted.replace(captured,"{captured}");return redacted;}
-    private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(Set.of("id","text","text-contains","desc","class")::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->Set.of("id","text","text-contains","desc","class").contains(e.getKey())).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){return details.entrySet().stream().map(e->e.getKey().equals("evidence")?"<a href=\""+html(e.getValue())+"\">evidence</a>":html(e.getKey()+"="+e.getValue())).collect(java.util.stream.Collectors.joining(" · "));} private static String html(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
+    private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){return details.entrySet().stream().map(e->e.getKey().equals("evidence")?"<a href=\""+html(e.getValue())+"\">evidence</a>":html(e.getKey()+"="+e.getValue())).collect(java.util.stream.Collectors.joining(" · "));} private static String html(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
     private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details,int dumps,long dumpMillis){}
 }

@@ -1,0 +1,18 @@
+# Not in sample.suite yet: validated by the parser, but not yet run on a device or emulator.
+flowscope 1
+name "Sample: gestures on the XML list"
+package io.github.flowscopedev.sample
+mode zero-code
+timeout 10000
+
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_list_xml
+step wait-visible text="Item 1"
+step scroll-to text="Item 45" max-swipes=20
+step long-press text="Item 45" duration=800
+step swipe direction=down distance=60
+step scroll-to text="Item 1" direction=down max-swipes=20
+step tap text="Item 1"
+step assert-visible id=io.github.flowscopedev.sample:id/detail_title
+step back
+after force-stop
