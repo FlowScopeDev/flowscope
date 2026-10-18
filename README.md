@@ -72,6 +72,22 @@ requires Developer ID signing and notarization. Local `createDistributable` buil
 inherited quarantine/provenance metadata and ad-hoc signed so Finder can open them on the build Mac.
 Compose Desktop produces Windows packages from a Windows host and macOS packages from a Mac host.
 
+## Install the desktop app
+
+On macOS, install via Homebrew:
+
+```bash
+brew tap FlowScopeDev/homebrew-tap
+brew install --cask flowscope
+```
+
+FlowScope isn't signed with an Apple Developer ID (it's a one-person project; a certificate costs
+money every year), so a DMG downloaded directly from a release still trips Gatekeeper's "damaged"
+dialog. Homebrew clears the quarantine attribute it applies to files it downloads, so installing
+through the cask avoids that dialog entirely. Downloading the DMG directly from a GitHub release
+instead still works, but needs the manual workaround described in the release notes
+(`xattr -cr "/Applications/Flow Scope.app"`, or right-click the app and choose Open).
+
 ## Install the CLI
 
 ```bash

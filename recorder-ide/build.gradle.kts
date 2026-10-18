@@ -64,13 +64,16 @@ compose.desktop {
 
 // Files copied from a quarantined/provenance-marked JDK can make an otherwise valid local
 // development bundle appear "damaged" to macOS. Distribution builds signed with a real Developer
-// ID are handled by the signing block above; this cleanup only prepares the unsigned local app.
-tasks.matching { it.name == "createDistributable" }.configureEach {
+// ID are handled by the signing block above; this cleanup only prepares the unsigned app, local or
+// released — the release DMG we actually ship is built from createReleaseDistributable's output,
+// so it needs the same treatment as the local createDistributable one.
+tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
     doLast {
         if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true)) return@doLast
         if (providers.gradleProperty("flowscope.mac.signingIdentity").isPresent) return@doLast
 
-        val app = layout.buildDirectory.dir("compose/binaries/main/app/Flow Scope.app").get().asFile
+        val variant = if (name == "createReleaseDistributable") "main-release" else "main"
+        val app = layout.buildDirectory.dir("compose/binaries/$variant/app/Flow Scope.app").get().asFile
         fun runTool(vararg command: String) {
             val exit = ProcessBuilder(*command).inheritIO().start().waitFor()
             check(exit == 0) { "Command failed ($exit): ${command.joinToString(" ")}" }

@@ -242,6 +242,11 @@ Before finishing a behavior change, compile both modules. For recorder changes, 
 against a connected device when available and validate gzip/JSONL output. For runner changes, validate
 the examples and execute an appropriate smoke test.
 
+macOS desktop releases are tagged `v<version>` matching `packageVersion` in
+`recorder-ide/build.gradle.kts`, which triggers `.github/workflows/release-macos-dmg.yml` to build
+`packageReleaseDmg`, checksum it, and attach both to a GitHub Release. The Homebrew cask that
+downloads from that release lives in the separate `FlowScopeDev/homebrew-tap` repo, not here.
+
 ## Documentation maintenance
 
 Keep `README.md` and `design.md` aligned with behavior in the same change. Update this file when

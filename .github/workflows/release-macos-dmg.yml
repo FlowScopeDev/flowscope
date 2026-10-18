@@ -1,0 +1,50 @@
+name: Release macOS DMG
+
+# Tag a release as v<packageVersion> (matching recorder-ide/build.gradle.kts) to build the macOS
+# DMG and publish it, with a SHA-256 checksum, as a GitHub Release. The Homebrew cask in
+# FlowScopeDev/homebrew-tap downloads from this release.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check tag matches packageVersion
+        run: |
+          version="$(sed -n 's/.*packageVersion = "\(.*\)".*/\1/p' recorder-ide/build.gradle.kts)"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match packageVersion=${version}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_ENV"
+
+      - name: Build the release DMG
+        run: ./gradlew :recorder-ide:packageReleaseDmg
+
+      - name: Rename and checksum the release asset
+        run: |
+          dmg_dir="recorder-ide/build/compose/binaries/main-release/dmg"
+          src="${dmg_dir}/Flow Scope-${version}.dmg"
+          dst="${dmg_dir}/FlowScope-${version}.dmg"
+          mv "$src" "$dst"
+          shasum -a 256 "$dst" | awk '{print $1}' > "${dst}.sha256"
+          echo "dmg_path=${dst}" >> "$GITHUB_ENV"
+          echo "sha256_path=${dst}.sha256" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.dmg_path }}
+            ${{ env.sha256_path }}
