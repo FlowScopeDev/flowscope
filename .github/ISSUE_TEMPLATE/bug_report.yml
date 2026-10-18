@@ -1,0 +1,60 @@
+name: Bug report
+description: Something in FlowScope does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not paste screenshots, hierarchies or logs that show private
+        data; recordings and reports can contain whatever was on the device screen.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the `.flow` file or the commands, if you can share them.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options: [Desktop IDE, CLI (flowscope), Test runner, Android agent, Documentation, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Capture mode
+      options: [zero-code, instrumented, Not applicable]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: FlowScope version or commit
+  - type: input
+    id: host
+    attributes:
+      label: Computer OS
+      placeholder: macOS 15 / Windows 11
+  - type: input
+    id: device
+    attributes:
+      label: Device or emulator, and Android version
+      placeholder: Pixel 8, Android 15 (physical)
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `flowscope doctor`
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output or logs
+      render: text

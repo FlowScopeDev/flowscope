@@ -439,6 +439,11 @@ flowscope test run examples/flows/tests/example-launch.flow --serial <serial>
 The current desktop interface is specified in [design.md](design.md). Repository instructions for
 Claude, Codex, and other coding agents live only in [CLAUDE.md](CLAUDE.md).
 
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and conventions, [CHANGELOG.md](CHANGELOG.md) for
+what changed, and [SECURITY.md](SECURITY.md) to report a vulnerability privately.
+
 ## Contributors
 
 FlowScope is maintained by [@imabhishekkumar](https://github.com/imabhishekkumar). See
