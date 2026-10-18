@@ -59,7 +59,6 @@ internal class DeviceState {
     var agentAvailable by mutableStateOf(false)
     /** Consecutive failed embedded-stream starts; drives reconnect backoff. */
     var streamAttempts by mutableStateOf(0)
-    var recentPackages by mutableStateOf<Map<String, String>>(emptyMap())
     /** Set when the attached device vanishes mid-recording. */
     var lostSerial by mutableStateOf<String?>(null)
     var debuggable by mutableStateOf(true)
@@ -139,6 +138,13 @@ internal class AuthoringState {
     var currentFile by mutableStateOf<Path?>(null)
     var savedSource by mutableStateOf("")
 
+    /**
+     * The parse of [source], refreshed on a debounce by the shell. Held here rather than inside the
+     * editor so the chrome's run button and the editor's own footer cannot disagree about whether
+     * the open file is runnable.
+     */
+    var validation by mutableStateOf(validateSource("", EditorKind.Flow))
+
     fun appendStep(step: String) {
         source = source.trimEnd() + "\n$step\n"
     }
@@ -148,6 +154,9 @@ internal class AuthoringState {
         currentFile = file
         source = contents
         savedSource = contents
+        // Synchronously, not on the debounce: opening a file must not leave the run button
+        // reflecting the file that was open a moment ago.
+        validation = validateSource(contents, editorKindOf(file))
     }
 
     /**
@@ -175,6 +184,9 @@ internal class ShellState {
     var selection by mutableStateOf<Selection>(Selection.None)
     var paletteOpen by mutableStateOf(false)
     var reduceMotion by mutableStateOf(false)
+
+    /** Set when an action would discard unsaved work and is waiting on the user's answer. */
+    var pendingConfirm by mutableStateOf<PendingConfirm?>(null)
 
     fun toggleSettings() {
         if (surface == WorkSurface.Settings) {

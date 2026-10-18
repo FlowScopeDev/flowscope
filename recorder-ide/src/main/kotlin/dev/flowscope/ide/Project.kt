@@ -26,6 +26,12 @@ internal class ProjectState {
     var railOpen by mutableStateOf(true)
 
     /**
+     * An application ID found in the project's own Gradle build, when `flowscope.json` names none.
+     * Offered in project settings rather than written: the manifest is authored, checked-in input.
+     */
+    var detectedPackage by mutableStateOf<String?>(null)
+
+    /**
      * True until the startup restore has finished deciding whether a project is open. Recording
      * started in the first seconds after launch must wait for this, or the new test is filed under
      * the no-project fallback while the project is still being reopened.

@@ -16,6 +16,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -56,6 +57,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -63,6 +65,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
@@ -130,6 +133,7 @@ internal fun SessionBar(
     checkpointCount: Int,
     settingsSelected: Boolean,
     project: ProjectChrome,
+    run: RunControl,
     onRecord: () -> Unit,
     onCheckpoint: () -> Unit,
     onSettings: () -> Unit,
@@ -417,6 +421,11 @@ internal fun SessionBar(
 
         Spacer(Modifier.width(10.dp))
 
+        // Beside the target it runs against, the way an IDE puts run next to its configuration.
+        RunButton(run)
+
+        Spacer(Modifier.width(10.dp))
+
         Box {
             ChromeChip(
                 label = if (captureMode == CaptureMode.ZERO_CODE) "ZERO-CODE" else "INSTRUMENTED",
@@ -580,6 +589,60 @@ internal fun RecordButton(
             letterSpacing = .8.sp,
             fontWeight = FontWeight.Medium,
         )
+    }
+}
+
+/**
+ * Runs the open flow or suite, from the chrome rather than the editor footer.
+ *
+ * Sits beside the target package because that is the pair the user reasons about before running:
+ * which app, on which device. The disabled state keeps its hover hint — a greyed control that
+ * explains nothing is worse than no control at all.
+ */
+@Composable
+internal fun RunButton(run: RunControl) {
+    val tint = when {
+        run.running -> SignalAmber
+        run.enabled -> SignalGreen
+        else -> TextLow
+    }
+    HoverTip(
+        when {
+            run.running -> "Running…"
+            run.enabled -> run.label
+            else -> "${run.label} · needs a device and a file that parses"
+        },
+        run.shortcut,
+    ) {
+        Box(
+            Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(Ink200)
+                .semantics {
+                    contentDescription = run.label
+                    role = Role.Button
+                }
+                .clickable(enabled = run.enabled && !run.running, onClick = run.onRun),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(Modifier.size(16.dp)) {
+                if (run.running) {
+                    // A square reads as "busy, click does nothing" without implying it stops a run.
+                    drawRoundRect(
+                        color = tint,
+                        topLeft = Offset(4.dp.toPx(), 4.dp.toPx()),
+                        size = Size(8.dp.toPx(), 8.dp.toPx()),
+                        cornerRadius = CornerRadius(1.5.dp.toPx()),
+                    )
+                    return@Canvas
+                }
+                val triangle = GraphicsPath().apply {
+                    moveTo(4.5.dp.toPx(), 2.6.dp.toPx())
+                    lineTo(13.dp.toPx(), 8.dp.toPx())
+                    lineTo(4.5.dp.toPx(), 13.4.dp.toPx())
+                    close()
+                }
+                drawPath(triangle, tint)
+            }
+        }
     }
 }
 
@@ -948,6 +1011,7 @@ internal fun ContextDrawer(
     onAddStep: (String) -> Unit,
     manifest: ProjectManifest? = null,
     installedPackages: List<String> = emptyList(),
+    detectedPackage: String? = null,
     suites: List<String> = emptyList(),
     onManifestChanged: (ProjectManifest) -> Unit = {},
     onOpenManifest: () -> Unit = {},
@@ -1047,6 +1111,7 @@ internal fun ContextDrawer(
                 is Selection.ProjectSettings -> ProjectSettingsForm(
                     manifest = manifest,
                     installedPackages = installedPackages,
+                    detectedPackage = detectedPackage,
                     suites = suites,
                     onManifestChanged = onManifestChanged,
                     onOpenManifest = onOpenManifest,
@@ -1288,6 +1353,68 @@ internal fun prettyJson(raw: String): String {
 }
 
 // design.md §5.9 / §6.1 — the command palette is a floating layer, dismissed with Esc.
+/**
+ * Asks what to do with unsaved work before an action replaces the buffer.
+ *
+ * A `Popup` rather than the context drawer: the drawer is a place to inspect things and can be
+ * ignored, and this question cannot be — the alternative is losing the edits silently, which is
+ * what the IDE did before. Errors stay inline (design.md); this is a question, not a failure.
+ */
+@Composable
+internal fun ConfirmPrompt(
+    fileName: String,
+    onSave: () -> Unit,
+    onDiscard: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+
+    Popup(
+        alignment = Alignment.TopCenter,
+        offset = IntOffset(0, 120),
+        onDismissRequest = onCancel,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Column(
+            Modifier.width(440.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Ink150)
+                .border(1.dp, Ink400, RoundedCornerShape(12.dp))
+                .focusRequester(focus)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        onCancel(); true
+                    } else false
+                }
+                .padding(18.dp),
+        ) {
+            Text("Unsaved changes", color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "$fileName has edits that are not on disk. Switching projects closes it.",
+                color = TextMid,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onDiscard) {
+                    Text("Discard", color = SignalRed, fontSize = 12.sp)
+                }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onCancel) { Text("Cancel", fontSize = 12.sp) }
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = onSave) { Text("Save", fontSize = 12.sp) }
+            }
+        }
+    }
+}
+
 @Composable
 internal fun CommandPalette(commands: List<Command>, onDismiss: () -> Unit) {
     var query by remember { mutableStateOf("") }
@@ -1746,6 +1873,7 @@ private fun RailRunRow(report: RunReport, onOpen: () -> Unit, onReveal: () -> Un
 private fun ProjectSettingsForm(
     manifest: ProjectManifest?,
     installedPackages: List<String>,
+    detectedPackage: String?,
     suites: List<String>,
     onManifestChanged: (ProjectManifest) -> Unit,
     onOpenManifest: () -> Unit,
@@ -1799,6 +1927,20 @@ private fun ProjectSettingsForm(
     DrawerTextField("NAME", name, { name = it }) { commit(newName = name) }
     DrawerTextField("DEFAULT PACKAGE", packageName, { packageName = it }) {
         commit(newPackage = packageName)
+    }
+    // Offered, never applied on its own: flowscope.json is checked in, and a file that rewrites
+    // itself when a project is merely opened produces diffs nobody asked for.
+    if (packageName.isBlank() && detectedPackage != null) {
+        Text(
+            "Use detected · $detectedPackage",
+            color = SignalIce,
+            fontSize = 10.5.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .semantics { role = Role.Button }
+                .clickable { packageName = detectedPackage; commit(newPackage = detectedPackage) },
+        )
     }
     if (installedPackages.isNotEmpty() && packageName.isNotBlank()) {
         val matches = rankPackages(installedPackages, packageName, emptySet()).take(3)

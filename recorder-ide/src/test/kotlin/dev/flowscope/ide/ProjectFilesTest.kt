@@ -381,4 +381,50 @@ class ExistingPathDetectionTest {
         // Event payloads render as JSON in the same drawer body; none of it is a path.
         assertNull(existingPathIn("{\n  \"kind\": \"ui.tap\"\n}"))
     }
+
+    // ------------------------------------------------- the file remembered for a project
+
+    @Test
+    fun `restores the file remembered for a project`() {
+        val root = Path.of("/projects/alpha")
+        val recents = listOf(RecentProject(root, "flows/tests/login.flow"))
+        assertEquals(
+            Path.of("/projects/alpha/flows/tests/login.flow"),
+            recentOpenFileFor(root, recents),
+        )
+    }
+
+    @Test
+    fun `has nothing to restore for an unlisted project or a bare entry`() {
+        val root = Path.of("/projects/alpha")
+        assertNull(recentOpenFileFor(root, emptyList()))
+        assertNull(recentOpenFileFor(root, listOf(RecentProject(Path.of("/projects/beta"), "a.flow"))))
+        assertNull(recentOpenFileFor(root, listOf(RecentProject(root, null))))
+        assertNull(recentOpenFileFor(root, listOf(RecentProject(root, "   "))))
+    }
+
+    /**
+     * The bug this guards: the IDE used to record the outgoing project's open file against the
+     * incoming project's root, so reopening would pull up another project's test.
+     */
+    @Test
+    fun `refuses a remembered file that escapes the project`() {
+        val root = Path.of("/projects/alpha")
+        assertNull(recentOpenFileFor(root, listOf(RecentProject(root, "../beta/flows/tests/login.flow"))))
+        assertNull(recentOpenFileFor(
+            root,
+            listOf(RecentProject(root, "../../../../Other/flows/tests/terms.flow")),
+        ))
+        assertNull(recentOpenFileFor(root, listOf(RecentProject(root, "/elsewhere/login.flow"))))
+    }
+
+    /** A `..` that stays inside the project is still inside it. */
+    @Test
+    fun `allows a path that climbs but lands back inside`() {
+        val root = Path.of("/projects/alpha")
+        assertEquals(
+            Path.of("/projects/alpha/flows/tests/login.flow"),
+            recentOpenFileFor(root, listOf(RecentProject(root, "flows/suites/../tests/login.flow"))),
+        )
+    }
 }

@@ -11,7 +11,6 @@ import java.nio.file.Path
  */
 internal object Preferences {
     private val favouritesFile: Path get() = FlowScopeHome.resolve("favourite-packages.txt")
-    private val recentFile: Path get() = FlowScopeHome.resolve("recent-packages.txt")
     private val themeFile: Path get() = FlowScopeHome.resolve("theme.txt")
     private val recentProjectsFile: Path get() = FlowScopeHome.resolve("recent-projects.txt")
     private val showDeviceFile: Path get() = FlowScopeHome.resolve("show-device.txt")
@@ -59,25 +58,6 @@ internal object Preferences {
         }
     }
 
-    /** Last package used against each device serial. */
-    fun loadRecentPackages(): Map<String, String> = runCatching {
-        if (!Files.exists(recentFile)) emptyMap()
-        else parseRecentPackages(Files.readAllLines(recentFile, StandardCharsets.UTF_8))
-    }.getOrDefault(emptyMap())
-
-    fun saveRecentPackage(serial: String, packageName: String) {
-        runCatching {
-            val updated = loadRecentPackages() + (serial to packageName)
-            Files.createDirectories(recentFile.parent)
-            Files.writeString(
-                recentFile,
-                updated.entries.sortedBy { it.key }
-                    .joinToString("\n", postfix = "\n") { "${it.key}\t${it.value}" },
-                StandardCharsets.UTF_8,
-            )
-        }
-    }
-
     /**
      * Recently opened projects, newest first. The project's *name* is deliberately not cached
      * here — `flowscope.json` is its single source of truth, and a copy would go stale.
@@ -89,10 +69,23 @@ internal object Preferences {
             .filter { Files.isRegularFile(it.root.resolve(FlowProject.MANIFEST_NAME)) }
     }.getOrDefault(emptyList())
 
+    /**
+     * Records [root] as most recently opened, with [openFile] as the place to return to.
+     *
+     * [openFile] is only stored when it actually lives inside [root]. Relativizing blindly turns a
+     * file from another project into a `../../..` path that resolves to someone else's test, and
+     * once written it is indistinguishable from a legitimate entry.
+     */
     fun rememberRecentProject(root: Path, openFile: Path?) {
         runCatching {
             val relative = openFile?.let { file ->
-                runCatching { root.relativize(file).toString().replace('\\', '/') }.getOrNull()
+                runCatching {
+                    val base = root.toAbsolutePath().normalize()
+                    val target = file.toAbsolutePath().normalize()
+                    if (target.startsWith(base) && target != base) {
+                        base.relativize(target).toString().replace('\\', '/')
+                    } else null
+                }.getOrNull()
             }
             val entry = listOfNotNull(root.toAbsolutePath().normalize().toString(), relative)
                 .joinToString("\t")
@@ -138,20 +131,15 @@ internal fun formatShowDevice(show: Boolean): String = "$show\n"
 
 internal fun formatThemeMode(mode: ThemeMode): String = "${mode.persistedValue}\n"
 
-/** `serial<TAB>package` per line. Tab-separated because neither field can contain a tab. */
-internal fun parseRecentPackages(lines: List<String>): Map<String, String> =
-    lines.mapNotNull { raw ->
-        val line = raw.trim()
-        if (line.isEmpty() || line.startsWith("#")) return@mapNotNull null
-        val parts = line.split("\t", limit = 2)
-        if (parts.size != 2 || parts[0].isBlank() || parts[1].isBlank()) null
-        else parts[0].trim() to parts[1].trim()
-    }.toMap()
-
 /**
  * `absoluteRoot<TAB>lastOpenRelativePath` per line; the second field is optional. Only trailing
  * whitespace is stripped — trimming the whole line would swallow an empty first field and promote
  * the remembered file to the root position.
+ *
+ * A remembered file that is absolute, or that climbs out of its root with `..`, is dropped while
+ * the project itself is kept. Earlier versions wrote such entries when the open file belonged to
+ * the previous project, and reading one back would reopen another project's test; discarding the
+ * field here repairs those files in place on the next load.
  */
 internal fun parseRecentProjects(lines: List<String>): List<RecentProject> =
     lines.mapNotNull { raw ->
@@ -161,9 +149,15 @@ internal fun parseRecentProjects(lines: List<String>): List<RecentProject> =
         val root = parts[0]
         // A relative root is meaningless: the IDE's working directory is arbitrary.
         if (root.isBlank() || !Path.of(root).isAbsolute) return@mapNotNull null
-        val openFile = parts.getOrNull(1)?.trim()?.ifEmpty { null }
+        val openFile = parts.getOrNull(1)?.trim()?.ifEmpty { null }?.takeIf { contained(it) }
         RecentProject(Path.of(root), openFile)
     }.distinctBy { it.root }
+
+/** True when [relative] names a file inside its project rather than one beyond it. */
+private fun contained(relative: String): Boolean = runCatching {
+    val path = Path.of(relative)
+    !path.isAbsolute && path.none { it.toString() == ".." }
+}.getOrDefault(false)
 
 /** Moves [added] to the front, de-duplicates on the root path, and caps the list. */
 internal fun mergeRecentProject(

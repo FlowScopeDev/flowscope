@@ -53,26 +53,6 @@ class RankPackagesTest {
     }
 }
 
-class RecentPackagesTest {
-
-    @Test
-    fun `parses serial to package pairs`() {
-        val parsed = parseRecentPackages(
-            listOf("device-1234\tcom.example.customer.debug", "emulator-5554\tcom.example.app"),
-        )
-        assertEquals("com.example.customer.debug", parsed["device-1234"])
-        assertEquals("com.example.app", parsed["emulator-5554"])
-    }
-
-    @Test
-    fun `skips blanks comments and malformed rows`() {
-        val parsed = parseRecentPackages(
-            listOf("", "# a note", "no-tab-here", "serial\t", "\tpackage", "a\tb"),
-        )
-        assertEquals(mapOf("a" to "b"), parsed)
-    }
-}
-
 class EventExportTest {
 
     private fun event(
@@ -155,6 +135,23 @@ class RecentProjectsTest {
     @Test
     fun `treats an empty remembered file field as none`() {
         assertNull(parseRecentProjects(listOf("/Users/me/app\t")).single().lastOpenFile)
+    }
+
+    /**
+     * Older builds wrote the previous project's open file against the new project's root. Keeping
+     * the project but dropping the escaping file repairs those lines the next time they are read.
+     */
+    @Test
+    fun `keeps the project but drops a remembered file from outside it`() {
+        val parsed = parseRecentProjects(listOf(
+            "/Users/me/app\t../../../../Other/flows/tests/terms.flow",
+            "/Users/me/other\t/absolute/elsewhere.flow",
+        ))
+
+        assertEquals(2, parsed.size)
+        assertEquals(Path.of("/Users/me/app"), parsed[0].root)
+        assertNull(parsed[0].lastOpenFile)
+        assertNull(parsed[1].lastOpenFile)
     }
 
     @Test

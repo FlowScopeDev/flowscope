@@ -100,6 +100,7 @@ The 44dp session bar contains, from left to right:
 - five subsystem health dots for ADB, device, stream, agent, and session;
 - connected-device selector;
 - searchable application ID field with favourites and installed-package suggestions;
+- green play button that saves and runs the open flow or suite;
 - checkpoint count;
 - capture-mode selector for Zero-code or Instrumented;
 - camera checkpoint action;
@@ -109,6 +110,23 @@ The 44dp session bar contains, from left to right:
 Health dots open a menu containing the label, state, detail, and available recovery action for each
 subsystem. The camera uses a conventional outlined-camera glyph and is available while recording.
 The Settings gear sits immediately left of Record and has an active treatment while Settings is open.
+
+The play button sits beside the application ID rather than in the transport cluster: which app, on
+which device, and run it are one decision, and the two chips to its left are the other half of it.
+It is the only run control — the Flow surface's bottom bar keeps the save state and the target
+device, so the two can never disagree about whether a run is possible. It is green when runnable,
+amber and square while a run is in flight, and dim otherwise; the hover hint names what is missing
+rather than only disappearing, so a disabled control still explains itself.
+
+### Switching projects
+
+A project owns the target application ID and the open file, so switching swaps both. The ID comes
+from the new project's `defaults.package`, or, when it declares none, from the `applicationId` in
+the project's own Gradle build — detected and offered in Project settings, never written back
+automatically, because `flowscope.json` is authored input and opening a project must not produce a
+diff. The editor reopens whatever that project was last on, and opens empty otherwise; a file is
+only ever remembered against the project that contains it. A buffer with unsaved edits stops the
+switch with a Save / Discard / Cancel prompt, and Save only continues once the write succeeds.
 
 ### Work surfaces
 

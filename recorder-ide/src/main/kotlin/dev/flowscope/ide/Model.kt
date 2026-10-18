@@ -52,6 +52,29 @@ internal sealed interface Selection {
 }
 
 /**
+ * An action that would discard unsaved work, parked until the user answers.
+ *
+ * Holds the continuation rather than an enum of known actions: the prompt does not care what is
+ * being switched to, only that the buffer must be dealt with first, and keeping the follow-up here
+ * means a new caller cannot forget to wire its own branch into the dialog.
+ */
+internal class PendingConfirm(val fileName: String, val proceed: suspend () -> Unit)
+
+/**
+ * The run control in the session bar. A holder for the same reason as [ProjectChrome]: `SessionBar`
+ * is already well past the parameter count where positional arguments stop being readable.
+ */
+internal data class RunControl(
+    val enabled: Boolean,
+    val running: Boolean,
+    val kind: EditorKind,
+    val shortcut: String,
+    val onRun: () -> Unit,
+) {
+    val label: String get() = if (kind == EditorKind.Suite) "Run suite on device" else "Run flow on device"
+}
+
+/**
  * Everything the file rail inside the Flow surface needs. One holder, for the same reason as
  * [ProjectChrome]: the editor's parameter list is already long.
  */

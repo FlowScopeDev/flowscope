@@ -220,14 +220,14 @@ private fun FlowScopeApp(
         shell.reduceMotion = withContext(Dispatchers.IO) { detectReduceMotion() }
         deviceState.favourites = withContext(Dispatchers.IO) { Preferences.loadFavourites() }
         deviceState.showDisplay = withContext(Dispatchers.IO) { Preferences.loadShowDevice() }
-        deviceState.recentPackages = withContext(Dispatchers.IO) { Preferences.loadRecentPackages() }
         // Recents are loaded by the session-restore effect, which needs them sequentially.
     }
 
-    // Gated on installedPackages rather than applied inline: openProject can land before the
-    // effect that loads the device's package list, and prefilling a package the device does not
-    // have would block recording with a confusing message.
-    LaunchedEffect(projectState.root, deviceState.installedPackages) {
+    // The switch itself is handled by `adoptProjectTarget`, which runs once and overwrites. This
+    // only covers what arrives afterwards: the device's package list and its serial can both land
+    // after the project is already open, and a blank field is the one case where filling it in
+    // cannot be mistaken for clobbering the user's choice.
+    LaunchedEffect(projectState.root, deviceState.installedPackages, deviceState.devices) {
         val defaults = projectState.manifest?.defaults() ?: return@LaunchedEffect
         defaults.packageName()?.let { configured ->
             val installed = deviceState.installedPackages
@@ -246,6 +246,13 @@ private fun FlowScopeApp(
                     ?.let { deviceState.selected = it }
             }
         }
+    }
+
+    // design.md §5.6 — validation on a 400ms debounce, through the parser the CLI uses. Lives here
+    // rather than in the editor so the session bar's run button reads the same verdict.
+    LaunchedEffect(authoring.source, authoring.kind) {
+        delay(400)
+        authoring.validation = validateSource(authoring.source, authoring.kind)
     }
 
     LaunchedEffect(deviceState.serial, deviceState.packageName, deviceState.captureMode) {
@@ -532,28 +539,147 @@ private fun FlowScopeApp(
         projectState.scratch = emptyList()
     }
 
-    /** Opens a project and waits for it. [openProject] is the fire-and-forget wrapper. */
-    suspend fun openProjectAwaiting(root: Path) {
+    // ------------------------------------------------------------------- files
+    //
+    // Ahead of the project commands because opening a project now opens a file: a switch restores
+    // whatever that project was last on.
+
+    /** Renders a path for a status line: relative to the open project, else `~`-shortened. */
+    fun shown(path: Path): String = displayPath(path, projectState.root)
+
+    suspend fun openFileAwaiting(path: Path) {
         run {
-            val opened = withContext(Dispatchers.IO) { runCatching { FlowProject.open(root) } }
-            opened.onSuccess { project ->
-                projectState.project = project
-                projectState.status = "${project.manifest().name()} · ${project.root()}"
-                withContext(Dispatchers.IO) {
-                    Preferences.rememberRecentProject(project.root(), authoring.currentFile)
+            val read = withContext(Dispatchers.IO) {
+                runCatching { Files.readString(path, StandardCharsets.UTF_8) }
+            }
+            read.onSuccess { contents ->
+                authoring.adopt(path, contents)
+                authoring.lastRun = null
+                authoring.status = "Opened · ${shown(path)}"
+                shell.surface = WorkSurface.Flow
+                projectState.root?.let { root ->
+                    withContext(Dispatchers.IO) { Preferences.rememberRecentProject(root, path) }
                 }
-                projectState.recent = withContext(Dispatchers.IO) { Preferences.loadRecentProjects() }
-                refreshProjectListing()
-                addEvent("▣", "Project opened", projectState.status, channel = Channel.Session)
             }.onFailure { failure ->
-                projectState.status = failure.message ?: "Could not open that project"
-                addEvent("×", "Project not opened", projectState.status, severity = Severity.Error)
+                authoring.status = failure.message ?: "Could not open that file"
+                addEvent("×", "File not opened", authoring.status, severity = Severity.Error)
             }
         }
     }
 
+    fun openFile(path: Path) {
+        scope.launch { openFileAwaiting(path) }
+    }
+
+    /** Empties the editor, for when the open file does not belong to the project being opened. */
+    fun clearEditor() {
+        authoring.adopt(null, "")
+        authoring.lastRun = null
+        authoring.status = "No test open"
+        if (shell.selection is Selection.Step || shell.selection is Selection.RenameFile) {
+            shell.selection = Selection.None
+        }
+    }
+
+    /**
+     * Points the device target at what [project] is about.
+     *
+     * Runs only on a real switch, and deliberately overwrites whatever is in the field: after
+     * choosing a different project, a package left over from the previous one is simply wrong, and
+     * the stale value is the harder error to notice. `flowscope.json` wins; when it names no
+     * package the project's own Gradle build is asked, which is the case `flowscope project init`
+     * leaves behind whenever `--package` was omitted.
+     *
+     * Unlike the blank-field prefill below, this does not require the package to be installed on
+     * the attached device. A target the device lacks is already called out by the NOT INSTALLED
+     * badge, whereas silently keeping another project's package looks correct and is not.
+     */
+    suspend fun adoptProjectTarget(project: FlowProject) {
+        val defaults = project.manifest().defaults()
+        val configured = defaults.packageName()?.trim()?.ifEmpty { null }
+        val detected = if (configured != null) null else {
+            withContext(Dispatchers.IO) { detectApplicationId(project.root()) }
+        }
+        projectState.detectedPackage = detected
+        deviceState.packageName = configured ?: detected.orEmpty()
+        // Whatever the project said is now the target; the foreground poll only resumes adopting
+        // once the field is empty again, so it must not believe it owns this value.
+        deviceState.autoDetectedPackage = null
+        if (configured == null && detected != null) {
+            addEvent(
+                "▣", "Package detected", "$detected · from this project's Gradle build. " +
+                    "Project settings can store it in flowscope.json.",
+                channel = Channel.Session,
+            )
+        }
+        defaults.mode()?.let { mode ->
+            if (!deviceState.captureModeChosen) deviceState.captureMode = mode
+        }
+        defaults.serial()?.let { serial ->
+            deviceState.devices.firstOrNull { it.serial() == serial }
+                ?.let { deviceState.selected = it }
+        }
+    }
+
+    /**
+     * Opens a project and waits for it. [openProject] is the wrapper that guards unsaved work.
+     *
+     * A switch re-targets the package and swaps the editor to the new project's own last file, or
+     * empties it. Before this, the previous project's buffer stayed open and was then recorded as
+     * the *new* project's last-open file, which is how `recent-projects.txt` ended up holding
+     * `../../..` paths into unrelated repositories.
+     */
+    suspend fun openProjectAwaiting(root: Path) {
+        val opened = withContext(Dispatchers.IO) { runCatching { FlowProject.open(root) } }
+        opened.onSuccess { project ->
+            val switching = projectState.root?.toAbsolutePath()?.normalize() !=
+                project.root().toAbsolutePath().normalize()
+            projectState.project = project
+            projectState.status = "${project.manifest().name()} · ${project.root()}"
+            refreshProjectListing()
+            if (switching) {
+                adoptProjectTarget(project)
+                val recents = withContext(Dispatchers.IO) { Preferences.loadRecentProjects() }
+                val restore = recentOpenFileFor(project.root(), recents)
+                    ?.takeIf { withContext(Dispatchers.IO) { Files.isRegularFile(it) } }
+                if (restore != null) openFileAwaiting(restore) else clearEditor()
+            }
+            // After the editor decision, never before: this must record the file that is actually
+            // open in *this* project.
+            withContext(Dispatchers.IO) {
+                Preferences.rememberRecentProject(project.root(), authoring.currentFile)
+            }
+            projectState.recent = withContext(Dispatchers.IO) { Preferences.loadRecentProjects() }
+            addEvent("▣", "Project opened", projectState.status, channel = Channel.Session)
+        }.onFailure { failure ->
+            projectState.status = failure.message ?: "Could not open that project"
+            addEvent("×", "Project not opened", projectState.status, severity = Severity.Error)
+        }
+    }
+
+    /**
+     * Runs [proceed] once the buffer is dealt with, asking first when it has unsaved edits.
+     *
+     * Every caller that replaces the editor goes through here, so there is one place that decides
+     * what happens to unsaved work rather than one silent `adopt` per entry point.
+     */
+    fun confirmingUnsaved(proceed: suspend () -> Unit) {
+        if (authoring.dirty && authoring.source.isNotBlank()) {
+            shell.pendingConfirm = PendingConfirm(authoring.fileName ?: "This flow", proceed)
+            return
+        }
+        scope.launch { proceed() }
+    }
+
     fun openProject(root: Path) {
-        scope.launch { openProjectAwaiting(root) }
+        val same = projectState.root?.toAbsolutePath()?.normalize() ==
+            root.toAbsolutePath().normalize()
+        // Reopening the project already open keeps the buffer, so there is nothing to lose.
+        if (same) {
+            scope.launch { openProjectAwaiting(root) }
+            return
+        }
+        confirmingUnsaved { openProjectAwaiting(root) }
     }
 
     /** Creates the layout in [root], then opens it. */
@@ -598,8 +724,15 @@ private fun FlowScopeApp(
     }
 
     fun closeProject() {
+        val root = projectState.root?.toAbsolutePath()?.normalize()
+        val openFile = authoring.currentFile?.toAbsolutePath()?.normalize()
         projectState.project = null
+        projectState.detectedPackage = null
         projectState.status = "No project open"
+        // A file from the closed project would otherwise stay open under the `~/.flowscope/`
+        // fallback and save itself back into a project the user just left. A scratch buffer that
+        // never belonged to it is untouched.
+        if (root != null && openFile != null && openFile.startsWith(root)) clearEditor()
         scope.launch { refreshProjectListing() }
         addEvent("□", "Project closed", "Saves now go to $FlowScopeHome", channel = Channel.Session)
     }
@@ -631,35 +764,6 @@ private fun FlowScopeApp(
         scope.launch(Dispatchers.IO) {
             revealInFileManager(target)
         }
-    }
-
-    // ------------------------------------------------------------------- files
-
-    /** Renders a path for a status line: relative to the open project, else `~`-shortened. */
-    fun shown(path: Path): String = displayPath(path, projectState.root)
-
-    suspend fun openFileAwaiting(path: Path) {
-        run {
-            val read = withContext(Dispatchers.IO) {
-                runCatching { Files.readString(path, StandardCharsets.UTF_8) }
-            }
-            read.onSuccess { contents ->
-                authoring.adopt(path, contents)
-                authoring.lastRun = null
-                authoring.status = "Opened · ${shown(path)}"
-                shell.surface = WorkSurface.Flow
-                projectState.root?.let { root ->
-                    withContext(Dispatchers.IO) { Preferences.rememberRecentProject(root, path) }
-                }
-            }.onFailure { failure ->
-                authoring.status = failure.message ?: "Could not open that file"
-                addEvent("×", "File not opened", authoring.status, severity = Severity.Error)
-            }
-        }
-    }
-
-    fun openFile(path: Path) {
-        scope.launch { openFileAwaiting(path) }
     }
 
     /** The names already taken in [directory], so a new file never silently overwrites one. */
@@ -737,13 +841,55 @@ private fun FlowScopeApp(
      * nothing is ever clobbered: a buffer with no file of its own gets a name derived from its
      * `name` directive, de-duplicated against what is already there.
      */
+    /**
+     * Writes the buffer to its file and returns where it landed, or null when it could not be
+     * written.
+     *
+     * Separate from [saveTest] and suspending because the unsaved-changes prompt has to know the
+     * save actually succeeded before it lets the switch continue — a fire-and-forget save would
+     * close the editor on a buffer that never reached disk.
+     */
+    suspend fun writeBuffer(saveAs: Boolean = false): Path? {
+        if (authoring.source.isBlank()) {
+            authoring.status = "Create or record a test first"
+            return null
+        }
+        deviceState.busy = true
+        val existing = authoring.currentFile
+        val target = if (existing != null && !saveAs) existing
+            else deriveTarget(authoring.source, authoring.kind).toAbsolutePath()
+        val contents = flowFileContents(authoring.source)
+        authoring.status = "Saving…"
+        val written = runCatching {
+            withContext(Dispatchers.IO) {
+                Files.createDirectories(target.parent)
+                Files.writeString(target, contents, StandardCharsets.UTF_8)
+                target
+            }
+        }
+        deviceState.busy = false
+        return written.onSuccess {
+            authoring.markSaved(it, contents)
+            authoring.status = "Saved · ${shown(it)}"
+            addEvent("✓", "Saved ${it.fileName}", authoring.status)
+            refreshProjectListing()
+        }.onFailure { failure ->
+            authoring.status = failure.message ?: "Test operation failed"
+            addEvent("×", "Save failed", authoring.status, severity = Severity.Error)
+        }.getOrNull()
+    }
+
     fun saveTest(runAfterSave: Boolean, saveAs: Boolean = false) {
         val device = deviceState.selected
         if (authoring.source.isBlank()) {
             authoring.status = "Create or record a test first"
             return
         }
-        if (runAfterSave && device == null) {
+        if (!runAfterSave) {
+            scope.launch { writeBuffer(saveAs) }
+            return
+        }
+        if (device == null) {
             authoring.status = "Connect a device before running the test"
             return
         }
@@ -754,15 +900,12 @@ private fun FlowScopeApp(
             val target = if (existing != null && !saveAs) existing
                 else deriveTarget(authoring.source, kind).toAbsolutePath()
             val contents = flowFileContents(authoring.source)
-            authoring.status = if (runAfterSave) "Running…" else "Saving…"
+            authoring.status = "Running…"
 
             runCatching {
                 withContext(Dispatchers.IO) {
                     Files.createDirectories(target.parent)
                     Files.writeString(target, contents, StandardCharsets.UTF_8)
-                    if (!runAfterSave) {
-                        return@withContext SaveOutcome(target, true, null, null, null)
-                    }
                     if (kind == EditorKind.Suite) {
                         val suite = FlowSuiteParser.parse(target)
                         val runner = FlowSuiteRunner(
@@ -801,29 +944,23 @@ private fun FlowScopeApp(
                 }
             }.onSuccess { outcome ->
                 authoring.markSaved(outcome.target, contents)
-                authoring.status = if (runAfterSave) {
-                    "${if (outcome.passed) "Passed" else "Failed"} · " +
-                        shown(outcome.reportRoot ?: outcome.target)
-                } else "Saved · ${shown(outcome.target)}"
-                if (runAfterSave) {
-                    authoring.lastRun = FlowRunResult(
-                        passed = outcome.passed,
-                        label = outcome.label ?: if (outcome.passed) "PASSED" else "FAILED",
-                        reportRoot = outcome.reportRoot?.toString(),
-                    )
-                    outcome.completionNotice?.let(DesktopNotifications::show)
-                }
+                authoring.status = "${if (outcome.passed) "Passed" else "Failed"} · " +
+                    shown(outcome.reportRoot ?: outcome.target)
+                authoring.lastRun = FlowRunResult(
+                    passed = outcome.passed,
+                    label = outcome.label ?: if (outcome.passed) "PASSED" else "FAILED",
+                    reportRoot = outcome.reportRoot?.toString(),
+                )
+                outcome.completionNotice?.let(DesktopNotifications::show)
                 addEvent(
                     if (outcome.passed) "✓" else "×",
-                    if (runAfterSave) {
-                        "${if (kind == EditorKind.Suite) "Suite" else "Test"} " +
-                            if (outcome.passed) "passed" else "failed"
-                    } else "Saved ${outcome.target.fileName}",
+                    "${if (kind == EditorKind.Suite) "Suite" else "Test"} " +
+                        if (outcome.passed) "passed" else "failed",
                     authoring.status,
                     severity = if (outcome.passed) Severity.Normal else Severity.Error,
                 )
                 refreshProjectListing()
-                if (runAfterSave && contents.lineSequence().any { " web-" in it }) {
+                if (contents.lineSequence().any { " web-" in it }) {
                     refreshWebViewInspection()
                 }
                 outcome.webChanges.forEach { change ->
@@ -831,16 +968,14 @@ private fun FlowScopeApp(
                 }
             }.onFailure { failure ->
                 authoring.status = failure.message ?: "Test operation failed"
-                if (runAfterSave) {
-                    authoring.lastRun = FlowRunResult(false, "FAILED", null)
-                    DesktopNotifications.show(
-                        runErrorNotice(
-                            testNameFromSource(contents)
-                                ?: target.fileName.toString().substringBeforeLast('.'),
-                            regression = kind == EditorKind.Suite,
-                        ),
-                    )
-                }
+                authoring.lastRun = FlowRunResult(false, "FAILED", null)
+                DesktopNotifications.show(
+                    runErrorNotice(
+                        testNameFromSource(contents)
+                            ?: target.fileName.toString().substringBeforeLast('.'),
+                        regression = kind == EditorKind.Suite,
+                    ),
+                )
                 addEvent("×", "Test error", authoring.status, severity = Severity.Error)
             }
             deviceState.busy = false
@@ -976,12 +1111,15 @@ private fun FlowScopeApp(
         }
     }
 
-    // Session restore: reopen the last project and the file that was open in it.
+    // Session restore: reopen the last project, which reopens the file that was open in it.
     //
     // Keyed on Unit and loading the recents itself, deliberately. Keying on the recents list meant
     // the effect fired once while the list was still empty, disabled itself, and then refused to
     // run when the real list arrived — so the last project was never reopened. Each step is
     // awaited, so `restoring` only clears once the project really is open.
+    //
+    // The file is not reopened separately here: opening a project is a switch, and a switch already
+    // restores that project's own last file through the one code path that checks it belongs there.
     LaunchedEffect(Unit) {
         val recents = withContext(Dispatchers.IO) { Preferences.loadRecentProjects() }
         projectState.recent = recents
@@ -992,10 +1130,6 @@ private fun FlowScopeApp(
             return@LaunchedEffect
         }
         openProjectAwaiting(mostRecent.root)
-        mostRecent.lastOpenFile?.let { relative ->
-            val file = mostRecent.root.resolve(relative)
-            if (withContext(Dispatchers.IO) { Files.isRegularFile(file) }) openFileAwaiting(file)
-        }
         projectState.restoring = false
     }
 
@@ -1423,19 +1557,6 @@ private fun FlowScopeApp(
         }
     }
 
-    // 5. Recall the package last used against this device before falling back to the foreground app.
-    LaunchedEffect(deviceState.selected?.serial(), deviceState.installedPackages) {
-        val serial = deviceState.selected?.serial() ?: return@LaunchedEffect
-        if (deviceState.packageName.isNotEmpty() || deviceState.installedPackages.isEmpty()) {
-            return@LaunchedEffect
-        }
-        val remembered = deviceState.recentPackages[serial]
-        if (remembered != null && remembered in deviceState.installedPackages) {
-            deviceState.packageName = remembered
-            addEvent("◎", "Recalled last target", "$remembered on $serial", channel = Channel.Session)
-        }
-    }
-
     fun exportTimeline(toClipboard: Boolean) {
         val lines = timeline.events.asReversed().joinToString("\n") { it.toJsonLine() }
         if (lines.isBlank()) {
@@ -1676,6 +1797,20 @@ private fun FlowScopeApp(
                 checkpointCount = session.evidence.size,
                 settingsSelected = shell.surface == WorkSurface.Settings,
                 project = projectChrome,
+                run = RunControl(
+                    // The same conditions the "run" command uses, plus a file that parses: a run
+                    // of invalid source only fails slowly on the device.
+                    enabled = authoring.source.isNotBlank() &&
+                        deviceState.selected != null &&
+                        session.recording == null &&
+                        authoring.validation.isValid,
+                    running = deviceState.busy,
+                    kind = authoring.kind,
+                    shortcut = shortcutFor(
+                        if (authoring.kind == EditorKind.Suite) "run.suite" else "run",
+                    ),
+                    onRun = { saveTest(true) },
+                ),
                 onRecord = ::toggleRecording,
                 onCheckpoint = ::captureCheckpoint,
                 onSettings = shell::toggleSettings,
@@ -1911,7 +2046,7 @@ private fun FlowScopeApp(
                                     onSourceChanged = { authoring.source = it },
                                     status = authoring.status,
                                     busy = deviceState.busy,
-                                    canRun = session.recording == null && deviceState.selected != null,
+                                    validation = authoring.validation,
                                     device = deviceState.selected,
                                     lastResult = authoring.lastRun,
                                     kind = authoring.kind,
@@ -1919,7 +2054,6 @@ private fun FlowScopeApp(
                                     dirty = authoring.dirty,
                                     rail = flowRail,
                                     onSave = { saveTest(false) },
-                                    onRun = { saveTest(true) },
                                     onSelectStep = { number, text ->
                                         shell.selection = Selection.Step(number, text)
                                     },
@@ -1989,6 +2123,7 @@ private fun FlowScopeApp(
                             },
                             manifest = projectState.manifest,
                             installedPackages = deviceState.installedPackages,
+                            detectedPackage = projectState.detectedPackage,
                             suites = projectState.suites.map { it.label },
                             onManifestChanged = ::writeManifest,
                             onOpenManifest = { dispatch("project.manifest") },
@@ -2018,6 +2153,22 @@ private fun FlowScopeApp(
         }
         if (shell.paletteOpen) {
             CommandPalette(commands = commands, onDismiss = { shell.paletteOpen = false })
+        }
+        shell.pendingConfirm?.let { pending ->
+            ConfirmPrompt(
+                fileName = pending.fileName,
+                onSave = {
+                    shell.pendingConfirm = null
+                    // Only continue once the bytes are on disk: a failed write must leave the
+                    // editor exactly where it is, with the buffer intact.
+                    scope.launch { if (writeBuffer() != null) pending.proceed() }
+                },
+                onDiscard = {
+                    shell.pendingConfirm = null
+                    scope.launch { pending.proceed() }
+                },
+                onCancel = { shell.pendingConfirm = null },
+            )
         }
     }
     }
@@ -2279,7 +2430,7 @@ private fun FlowEditorSurface(
     onSourceChanged: (String) -> Unit,
     status: String,
     busy: Boolean,
-    canRun: Boolean,
+    validation: FlowValidation,
     device: Device?,
     lastResult: FlowRunResult?,
     kind: EditorKind,
@@ -2287,16 +2438,11 @@ private fun FlowEditorSurface(
     dirty: Boolean,
     rail: FlowRail,
     onSave: () -> Unit,
-    onRun: () -> Unit,
     onSelectStep: (Int, String) -> Unit,
 ) {
-    // design.md §5.6 — validation on a 400ms debounce, through the parser the CLI uses.
+    // Validation is computed by the shell so the session bar's run button and this surface cannot
+    // disagree about whether the open file is runnable.
     var cardView by remember { mutableStateOf(false) }
-    var validation by remember(kind) { mutableStateOf(validateSource(source, kind)) }
-    LaunchedEffect(source, kind) {
-        delay(400)
-        validation = validateSource(source, kind)
-    }
 
     val scroll = rememberScrollState()
     val lines = remember(source) { source.split("\n") }
@@ -2484,15 +2630,12 @@ private fun FlowEditorSurface(
         HorizontalDivider(color = Border)
         FlowRunBar(
             busy = busy,
-            canRun = canRun && validation.isValid,
             valid = validation.isValid,
             device = device,
             status = status,
             lastResult = lastResult,
-            kind = kind,
             dirty = dirty,
             onSave = onSave,
-            onRun = onRun,
         )
     }
 }
@@ -2533,19 +2676,17 @@ private fun ValidationChip(validation: FlowValidation) {
     }
 }
 
-// design.md §5.6 / §6.2 — the run bar names the target device so you never fire at the wrong one.
+// design.md §5.6 / §6.2 — names the target device so you never fire at the wrong one. Running
+// itself is the session bar's green play button: one run control, beside the package it runs.
 @Composable
 private fun FlowRunBar(
     busy: Boolean,
-    canRun: Boolean,
     valid: Boolean,
     device: Device?,
     status: String,
     lastResult: FlowRunResult?,
-    kind: EditorKind = EditorKind.Flow,
     dirty: Boolean = true,
     onSave: () -> Unit,
-    onRun: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth().height(52.dp).background(Ink150).padding(horizontal = 14.dp),
@@ -2591,30 +2732,19 @@ private fun FlowRunBar(
             }
         }
         Spacer(Modifier.width(10.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            Button(onClick = onRun, enabled = !busy && canRun) {
-                Text(
-                    when {
-                        busy -> "Running…"
-                        kind == EditorKind.Suite -> "Run suite on device"
-                        else -> "Run on device"
-                    },
-                    fontSize = 12.sp,
-                )
-            }
-            device?.let {
-                Text(
-                    "${it.displayName()} · ${shortSerial(it.serial())}",
-                    color = TextLow,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 9.sp,
-                )
-            } ?: Text(
-                if (!valid) "fix errors to run" else "no device selected",
+        // What a run would target, next to the state of the file it would run.
+        device?.let {
+            Text(
+                "${it.displayName()} · ${shortSerial(it.serial())}",
                 color = TextLow,
+                fontFamily = FontFamily.Monospace,
                 fontSize = 9.sp,
             )
-        }
+        } ?: Text(
+            if (!valid) "fix errors to run" else "no device selected",
+            color = TextLow,
+            fontSize = 9.sp,
+        )
     }
 }
 

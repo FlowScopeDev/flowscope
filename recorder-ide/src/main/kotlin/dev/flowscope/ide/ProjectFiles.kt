@@ -200,3 +200,28 @@ internal fun existingPathIn(text: String): Path? {
     if (!looksAbsolute) return null
     return runCatching { Path.of(trimmed).takeIf { Files.exists(it) } }.getOrNull()
 }
+
+/**
+ * The file remembered for [root] in [recents], when it still belongs to that project.
+ *
+ * Deliberately strict about containment. A remembered path is only ever a *hint* about where the
+ * user left off, and before this check the IDE would record the outgoing project's open file
+ * against the incoming project's root — producing entries like
+ * `…/examples/sample-app<TAB>../../../../Other/flows/tests/login.flow`, which then reopened another
+ * project's test under the new project's name. An entry that escapes the root is dropped rather
+ * than repaired: there is no way to tell which project it was meant for.
+ *
+ * Existence is the caller's job — this stays free of the filesystem so it can be unit-tested.
+ */
+internal fun recentOpenFileFor(root: Path, recents: List<RecentProject>): Path? {
+    val normalisedRoot = runCatching { root.toAbsolutePath().normalize() }.getOrNull() ?: return null
+    val entry = recents.firstOrNull {
+        runCatching { it.root.toAbsolutePath().normalize() == normalisedRoot }.getOrDefault(false)
+    } ?: return null
+    val relative = entry.lastOpenFile?.trim()?.ifEmpty { null } ?: return null
+    return runCatching {
+        val candidate = Path.of(relative)
+        if (candidate.isAbsolute) return null
+        normalisedRoot.resolve(candidate).normalize().takeIf { it.startsWith(normalisedRoot) }
+    }.getOrNull()
+}

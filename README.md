@@ -22,7 +22,9 @@ emit agent events.
 
 Choose a connected device, enter an application ID, select **Zero-code** or **Instrumented**, and
 start recording. The device screen remains live while checkpoints capture a screenshot, hierarchy,
-and window state.
+and window state. The green play button beside the application ID saves the open file and runs it
+on the selected device; it is disabled until there is a device and the file parses, and its hover
+hint says which of the two is missing.
 
 For low-latency interaction, install [scrcpy](https://github.com/Genymobile/scrcpy) and FFmpeg.
 FlowScope automatically starts the matching `scrcpy-server`, decodes its H.264 stream, and renders it
@@ -395,6 +397,17 @@ project anywhere on disk — the checked-in test plus the runner remains the com
 In the IDE, the project chip in the session bar opens, creates, and switches projects, and the Flow
 tab's file rail lists the project's tests, suites, and recent runs. With no project open the IDE
 behaves exactly as before, saving under `~/.flowscope/`.
+
+Switching projects switches everything that belongs to a project:
+
+- **The target application ID** is taken from the new project's `defaults.package`. When it has
+  none, FlowScope reads the `applicationId` (or `namespace`) from the project's own Gradle build and
+  offers it in **Project settings** — detection pre-fills the target but never rewrites
+  `flowscope.json` on its own.
+- **The editor** reopens the file that project was last on, or opens empty when it has none. A file
+  from the previous project is never carried across, and never recorded as the new project's file.
+- **Unsaved edits** stop the switch with a prompt offering Save, Discard, or Cancel. Save only
+  continues once the file is actually written.
 
 ## CLI for coding agents
 
