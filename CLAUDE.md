@@ -156,7 +156,8 @@ runtime dependency of a test: that would break the product contract above.
 stays runnable from a plain JDK. Keep its accepted subset documented and its rejections tested.
 
 Any change to `.flow`, `.suite`, or `flowscope.json` requires parser validation, standalone runner
-behavior, `flowscope schema` output, a README example, and parser or runner tests in the same change.
+behavior, `flowscope schema` output, a README example, and parser or runner tests in the same change, and an update to the `skills/flowscope-tests` skill (`reference.md`, plus `SKILL.md` if the workflow or
+rules change) in the same change.
 
 ## Instrumented event protocol
 
@@ -251,6 +252,8 @@ downloads from that release lives in the separate `FlowScopeDev/homebrew-tap` re
 
 ## Documentation maintenance
 
-Keep `README.md` and `design.md` aligned with behavior in the same change. Update this file when
+Keep `README.md` and `design.md` aligned with behavior in the same change. Keep `skills/flowscope-tests` aligned too whenever a
+change touches the `.flow` language, selectors, the stable CLI surface, exit codes, reports, or the
+authoring workflow it describes; re-validate its template after editing. Update this file when
 architecture, stable CLI commands, formats, security rules, or verification commands change. Do not
 add a second agent guide; update this one.
