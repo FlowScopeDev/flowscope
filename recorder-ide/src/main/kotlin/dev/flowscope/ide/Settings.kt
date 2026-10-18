@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 internal fun SettingsSurface(
+    showDisplay: Boolean,
+    onShowDisplayChanged: (Boolean) -> Unit,
     mode: ThemeMode,
     onModeChanged: (ThemeMode) -> Unit,
     commands: List<Command> = emptyList(),
@@ -55,7 +57,7 @@ internal fun SettingsSurface(
             Text("Settings", color = TextHi, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Appearance and keyboard shortcuts for this computer.",
+                "Appearance, device display and keyboard shortcuts for this computer.",
                 color = TextMid,
                 fontSize = 13.sp,
             )
@@ -83,6 +85,23 @@ internal fun SettingsSurface(
                         Box(Modifier.fillMaxWidth().height(1.dp).background(Ink300))
                     }
                 }
+            }
+
+            Spacer(Modifier.height(34.dp))
+            Text(
+                "DEVICE",
+                color = TextMid,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                letterSpacing = 1.2.sp,
+            )
+            Spacer(Modifier.height(10.dp))
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                    .background(Ink150)
+                    .border(1.dp, Ink300, RoundedCornerShape(8.dp)),
+            ) {
+                DisplayToggleRow(showDisplay, onShowDisplayChanged)
             }
 
             // design.md §6.1 — the same command table drives the keymap and the palette, so this
@@ -178,5 +197,41 @@ private fun ThemeModeRow(candidate: ThemeMode, selected: Boolean, onClick: () ->
             Spacer(Modifier.height(3.dp))
             Text(candidate.detail, color = TextMid, fontSize = 11.sp)
         }
+    }
+}
+
+@Composable
+private fun DisplayToggleRow(show: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .background(Ink150)
+            .clickable(role = Role.Switch, onClick = { onChange(!show) })
+            .semantics {
+                role = Role.Switch
+                selected = show
+                contentDescription = "Show device display"
+            }
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Show device display", color = TextHi, fontSize = 13.sp)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "Turn off to stop the live stream and screenshots and save CPU. Recording, the " +
+                    "Tree and test runs keep working through ADB.",
+                color = TextMid,
+                fontSize = 11.sp,
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Text(
+            if (show) "ON" else "OFF",
+            color = if (show) SignalIce else TextMid,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Ink250)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
     }
 }

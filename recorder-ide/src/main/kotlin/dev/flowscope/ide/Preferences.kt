@@ -14,6 +14,19 @@ internal object Preferences {
     private val recentFile: Path get() = FlowScopeHome.resolve("recent-packages.txt")
     private val themeFile: Path get() = FlowScopeHome.resolve("theme.txt")
     private val recentProjectsFile: Path get() = FlowScopeHome.resolve("recent-projects.txt")
+    private val showDeviceFile: Path get() = FlowScopeHome.resolve("show-device.txt")
+
+    fun loadShowDevice(): Boolean = runCatching {
+        if (!Files.exists(showDeviceFile)) true
+        else parseShowDevice(Files.readString(showDeviceFile, StandardCharsets.UTF_8))
+    }.getOrDefault(true)
+
+    fun saveShowDevice(show: Boolean) {
+        runCatching {
+            Files.createDirectories(showDeviceFile.parent)
+            Files.writeString(showDeviceFile, formatShowDevice(show), StandardCharsets.UTF_8)
+        }
+    }
 
     fun loadThemeMode(): ThemeMode = runCatching {
         if (!Files.exists(themeFile)) ThemeMode.System
@@ -117,6 +130,11 @@ internal object Preferences {
         target
     }.getOrNull()
 }
+
+/** Anything other than an explicit `false` shows the display: the safe default is a visible device. */
+internal fun parseShowDevice(value: String?): Boolean = value?.trim()?.lowercase() != "false"
+
+internal fun formatShowDevice(show: Boolean): String = "$show\n"
 
 internal fun formatThemeMode(mode: ThemeMode): String = "${mode.persistedValue}\n"
 

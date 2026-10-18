@@ -57,7 +57,9 @@ The desktop workspace is functional end to end:
 - **Performance** collects package-scoped `dumpsys meminfo` and `gfxinfo` output.
 - **Settings** opens from the gear immediately left of Record in the session bar. Appearance can follow the
   operating system or be pinned to Light or Dark; the choice is applied immediately and saved in
-  `~/.flowscope/theme.txt`.
+  `~/.flowscope/theme.txt`. **Show device display** (also in the command palette) can be turned off to stop the
+  scrcpy/FFmpeg stream and screenshot polling and save CPU; recording, the Tree and test runs keep working
+  through ADB. The choice is saved in `~/.flowscope/show-device.txt`.
 - **Run notifications** use the operating system notification center when an IDE-started test or
   regression finishes. Test notifications identify the test result; regression notifications include
   passed, failed, and skipped totals. CLI and CI runs remain silent.

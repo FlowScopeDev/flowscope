@@ -41,6 +41,11 @@ internal class DeviceState {
     var bootingAvds by mutableStateOf<Set<String>>(emptySet())
     val avds: List<AvdEntry> get() = mergeAvds(avdNames, runningAvds, bootingAvds, ownedAvds)
 
+    /**
+     * Whether the device display is shown. Off, the scrcpy/FFmpeg stream and screenshot polling
+     * stop; recording, the tree and runs go through ADB and keep working.
+     */
+    var showDisplay by mutableStateOf(true)
     var screenshot by mutableStateOf<ImageBitmap?>(null)
     var embeddedFrame by mutableStateOf<ImageBitmap?>(null)
     var embeddedSession by mutableStateOf<EmbeddedScrcpyClient.Session?>(null)

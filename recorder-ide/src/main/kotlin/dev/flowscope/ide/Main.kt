@@ -219,6 +219,7 @@ private fun FlowScopeApp(
     LaunchedEffect(Unit) {
         shell.reduceMotion = withContext(Dispatchers.IO) { detectReduceMotion() }
         deviceState.favourites = withContext(Dispatchers.IO) { Preferences.loadFavourites() }
+        deviceState.showDisplay = withContext(Dispatchers.IO) { Preferences.loadShowDevice() }
         deviceState.recentPackages = withContext(Dispatchers.IO) { Preferences.loadRecentPackages() }
         // Recents are loaded by the session-restore effect, which needs them sequentially.
     }
@@ -373,7 +374,7 @@ private fun FlowScopeApp(
         }
     }
 
-    LaunchedEffect(deviceState.selected?.serial()) {
+    LaunchedEffect(deviceState.selected?.serial(), deviceState.showDisplay) {
         deviceState.embeddedSession?.let { previous -> withContext(Dispatchers.IO) { previous.close() } }
         deviceState.embeddedSession = null
         deviceState.embeddedFrame = null
@@ -383,6 +384,7 @@ private fun FlowScopeApp(
             deviceState.mirrorStatus = if (scrcpy.available()) "scrcpy ready" else "scrcpy not installed · screenshot fallback active"
         }
         deviceState.screenshot = null
+        if (!deviceState.showDisplay) return@LaunchedEffect
         val serial = deviceState.selected?.serial() ?: return@LaunchedEffect
         while (isActive) {
             runCatching {
@@ -997,6 +999,18 @@ private fun FlowScopeApp(
         projectState.restoring = false
     }
 
+    fun setShowDisplay(show: Boolean) {
+        deviceState.showDisplay = show
+        // Dropping the frames now keeps a stale image from lingering behind the hidden column.
+        if (!show) {
+            deviceState.embeddedFrame = null
+            deviceState.embeddedStatus = "Display hidden · actions still run through ADB"
+        }
+        scope.launch(Dispatchers.IO) { Preferences.saveShowDevice(show) }
+    }
+
+    fun toggleDisplay() = setShowDisplay(!deviceState.showDisplay)
+
     fun collectPerformance() {
         val device = deviceState.selected
         if (device == null || deviceState.packageName.isBlank()) {
@@ -1369,7 +1383,8 @@ private fun FlowScopeApp(
     // place matters — when a separate initial start also existed, a slow first connect (push +
     // server boot + two socket connects) outlasted this loop's check and both started a server,
     // leaving two scrcpy servers contending for one device.
-    LaunchedEffect(deviceState.selected?.serial()) {
+    LaunchedEffect(deviceState.selected?.serial(), deviceState.showDisplay) {
+        if (!deviceState.showDisplay) return@LaunchedEffect
         val serial = deviceState.selected?.serial() ?: return@LaunchedEffect
         while (isActive) {
             if (deviceState.streaming) {
@@ -1524,6 +1539,8 @@ private fun FlowScopeApp(
         Command("collapse.drawer", if (shell.drawerOpen) "Hide detail drawer" else "Show detail drawer",
             shortcutFor("collapse.drawer"),
             true) { shell.drawerOpen = !shell.drawerOpen },
+        Command("display.toggle", if (deviceState.showDisplay) "Hide device display" else "Show device display",
+            "", true, ::toggleDisplay),
         Command("perf.collect", "Collect performance snapshot", "", !deviceState.busy, ::collectPerformance),
         Command("open.folder", "Open activeRecording folder", "", session.lastRoot != null, ::openSessionFolder),
         Command("mirror", "Toggle external mirror", "", deviceState.selected != null, ::toggleMirror),
@@ -1679,6 +1696,8 @@ private fun FlowScopeApp(
                         HorizontalDivider(color = Border)
                         SettingsSurface(
                             commands = commands,
+                            showDisplay = deviceState.showDisplay,
+                            onShowDisplayChanged = ::setShowDisplay,
                             mode = themeMode,
                             onModeChanged = { mode ->
                                 onThemeModeChanged(mode)
@@ -1693,7 +1712,12 @@ private fun FlowScopeApp(
                 val metrics = shellMetrics(maxWidth, maxHeight, deviceState.aspect, shell.drawerOpen)
                 Row(Modifier.fillMaxSize()) {
                     // design.md §4.2 — present on every surface, not just the recorder page.
-                    if (metrics.deviceCollapsed) {
+                    if (!deviceState.showDisplay) {
+                        HiddenDeviceStrip(
+                            recording = session.isRecording,
+                            onShow = ::toggleDisplay,
+                        )
+                    } else if (metrics.deviceCollapsed) {
                         CollapsedDeviceStrip(
                             liveImage = deviceState.liveImage,
                             recording = session.isRecording,

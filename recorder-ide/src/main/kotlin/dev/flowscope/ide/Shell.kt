@@ -1152,6 +1152,33 @@ internal fun CollapsedDeviceStrip(
 }
 
 
+// The display is switched off: no stream and no screenshots. A slim strip keeps the record state
+// visible and is the one-click way back.
+@Composable
+internal fun HiddenDeviceStrip(recording: Boolean, onShow: () -> Unit) {
+    HoverTip("Show device display") {
+        Column(
+            Modifier.width(CollapsedColumnWidth).fillMaxHeight().background(Ink150)
+                .clickable(role = Role.Button, onClick = onShow)
+                .semantics { contentDescription = "Show device display" }
+                .padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                Modifier.size(48.dp, 96.dp).clip(RoundedCornerShape(6.dp)).background(Ink000),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("OFF", color = TextMid, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+            }
+            Spacer(Modifier.height(8.dp))
+            Box(
+                Modifier.size(8.dp).clip(CircleShape)
+                    .background(if (recording) SignalRed else Ink400),
+            )
+        }
+    }
+}
+
 @Composable
 private fun SearchIcon(tint: Color) {
     Canvas(Modifier.size(12.dp)) {
