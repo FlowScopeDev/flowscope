@@ -15,6 +15,16 @@ import java.util.regex.Pattern;
 
 public final class FlowTestRunner {
     private static final long POLL_MILLIS = 200;
+    /**
+     * Steps that look an element up before (or instead of) changing anything, so they may start from
+     * the hierarchy settle() recorded. Their own input goes through command(), which drops the cache.
+     */
+    private static final Set<String> REUSES_SETTLED_DUMP = Set.of(
+        "wait-visible", "assert-visible", "assert-not-visible", "screenshot", "tap", "tap-if-visible", "type");
+    /** How long consecutive hierarchies are compared after a mutation (design: up to 1.5 s). */
+    private static final long SETTLE_WINDOW_NANOS = 1_500_000_000L;
+    /** The dump taken at the end of settle() may answer the next lookup for this long. */
+    private static final long SETTLED_DUMP_MAX_AGE_NANOS = 3_000_000_000L;
     private static final Pattern VARIABLE = Pattern.compile("\\$\\{(env|var)\\.([A-Za-z_][A-Za-z0-9_.-]*)}");
     private static final Pattern GRANTED = Pattern.compile("^\\s*([A-Za-z][A-Za-z0-9_.]+): granted=true(?:,.*)?$");
     private final AdbClient adb;
@@ -81,18 +91,31 @@ public final class FlowTestRunner {
         try {
             preflight();
             Instant started = Instant.now();
+            if (test.mode() == CaptureMode.INSTRUMENTED) {
+                agentEvents = AgentEventCapture.start(adb, device.serial(), test.packageName());
+            }
             boolean before = runPhase(FlowTest.Phase.BEFORE, true);
             boolean main;
             if (before) main = runPhase(FlowTest.Phase.TEST, true);
             else { skipPhase(FlowTest.Phase.TEST, "before phase failed"); main = false; }
             boolean after = runPhase(FlowTest.Phase.AFTER, false);
             boolean passed = before && main && after;
+            if (agentEvents != null) agentEvents.stop();
             writeReports(passed, started, Instant.now());
             return passed;
         } finally {
             web.close();
         }
     }
+
+    // `uiautomator dump` starts a new process each time (about 2 s on a real device), so dumps are the
+    // dominant cost of a run. These counters feed the per-step report; the cache removes redundant dumps.
+    private int dumpCount;
+    private AgentEventCapture agentEvents;
+    private final Map<Integer, Instant[]> stepWindows = new HashMap<>();
+    private long dumpNanos;
+    private byte[] settledDump;
+    private long settledAtNanos;
 
     private boolean runPhase(FlowTest.Phase phase, boolean stopOnFailure) {
         boolean passed = true, stopped = false;
@@ -103,24 +126,33 @@ public final class FlowTestRunner {
             String guard = step.arguments().get("if-var");
             if (guard != null && !variables.containsKey(guard)) { addSkipped(i, step, "variable not set: " + guard); continue; }
             long started = System.nanoTime();
+            Instant stepStarted = Instant.now();
+            // Any other step can change the UI before it looks, so it must not see a remembered dump.
+            if (!REUSES_SETTLED_DUMP.contains(step.action())) settledDump = null;
+            int dumpsBefore = dumpCount;
+            long dumpNanosBefore = dumpNanos;
             try {
                 Map<String, String> details = execute(step, i);
-                results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details));
+                results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details,
+                    dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.action());
             } catch (Exception failure) {
                 passed = false;
                 captureEvidence("failure-" + String.format("%02d", i + 1));
                 String message = redact(message(failure));
-                results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, Map.of()));
+                results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, Map.of(),
+                    dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.action(), message);
                 if (stopOnFailure) stopped = true;
+            } finally {
+                stepWindows.put(i + 1, new Instant[] {stepStarted, Instant.now()});
             }
         }
         return passed;
     }
 
     private void addSkipped(int i, FlowTest.Step step, String reason) {
-        results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of()));
+        results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of(), 0, 0));
         System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.action());
     }
 
@@ -851,19 +883,74 @@ public final class FlowTestRunner {
     }
     private UiHierarchy.UiNode findNode(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
-        do { var found = UiHierarchy.find(UiHierarchy.parse(dumpHierarchy()), args); if (found != null) return found; Thread.sleep(POLL_MILLIS); } while (System.nanoTime() < deadline); return null;
+        boolean first = true;
+        do {
+            // Only the first look may reuse the dump settle() just took; later polls must see live UI.
+            byte[] dump = first ? currentHierarchy() : dumpHierarchy();
+            first = false;
+            var found = UiHierarchy.find(UiHierarchy.parse(dump), args);
+            if (found != null) return found;
+            Thread.sleep(POLL_MILLIS);
+        } while (System.nanoTime() < deadline);
+        return null;
     }
     private void requireAbsent(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
-        do { if (UiHierarchy.find(UiHierarchy.parse(dumpHierarchy()), args) == null) return; Thread.sleep(POLL_MILLIS); } while (System.nanoTime() < deadline);
+        boolean first = true;
+        do {
+            byte[] dump = first ? currentHierarchy() : dumpHierarchy();
+            first = false;
+            if (UiHierarchy.find(UiHierarchy.parse(dump), args) == null) return;
+            Thread.sleep(POLL_MILLIS);
+        } while (System.nanoTime() < deadline);
         throw new IllegalStateException("Element remained visible: " + selectorDescription(args));
     }
     private byte[] dumpHierarchy() throws Exception {
+        long begin = System.nanoTime();
+        try {
+            return readHierarchy();
+        } finally {
+            dumpCount++;
+            dumpNanos += System.nanoTime() - begin;
+        }
+    }
+
+    /** The hierarchy settle() last observed if it is still fresh, otherwise a new dump. */
+    private byte[] currentHierarchy() throws Exception {
+        byte[] cached = settledDump;
+        if (cached != null && System.nanoTime() - settledAtNanos < SETTLED_DUMP_MAX_AGE_NANOS) return cached;
+        return dumpHierarchy();
+    }
+
+    private byte[] readHierarchy() throws Exception {
         var dump = adb.run(List.of("-s", device.serial(), "shell", "uiautomator", "dump", "/data/local/tmp/flowscope-test-window.xml"));
         if (dump.exitCode() != 0) throw new IOException("UI hierarchy failed: " + (dump.stdout() + dump.stderr()).strip());
         return adb.execOut(device.serial(), "cat", "/data/local/tmp/flowscope-test-window.xml");
     }
-    private void settle() { try { byte[] old = dumpHierarchy(); long end = System.nanoTime() + 1_500_000_000L; do { Thread.sleep(250); byte[] now = dumpHierarchy(); if (Arrays.equals(old, now)) return; old = now; } while (System.nanoTime() < end); } catch (Exception ignored) {} }
+    /**
+     * Waits for the UI to stop changing after a mutation and remembers the final hierarchy so the next
+     * lookup need not dump again. Consecutive hierarchies are compared for up to 1.5 s; when one dump
+     * alone takes that long it has already watched the UI for the whole window, so a second dump would
+     * only add latency.
+     */
+    private void settle() {
+        settledDump = null;
+        try {
+            long begin = System.nanoTime();
+            byte[] old = dumpHierarchy();
+            if (System.nanoTime() - begin >= SETTLE_WINDOW_NANOS) { rememberSettled(old); return; }
+            long end = begin + SETTLE_WINDOW_NANOS;
+            do {
+                Thread.sleep(250);
+                byte[] now = dumpHierarchy();
+                if (Arrays.equals(old, now)) { rememberSettled(now); return; }
+                old = now;
+            } while (System.nanoTime() < end);
+            rememberSettled(old);
+        } catch (Exception ignored) {}
+    }
+
+    private void rememberSettled(byte[] dump) { settledDump = dump; settledAtNanos = System.nanoTime(); }
     private void typeText(String value) throws Exception { if (!value.matches("[a-zA-Z0-9@._+ -]*")) throw new IllegalArgumentException("type currently supports letters, numbers, spaces, and @ . _ + -"); shell("input", "text", value.replace(" ", "%s")); }
     private void scroll(String direction) throws Exception {
         var sizeResult = adb.run(List.of("-s", device.serial(), "shell", "wm", "size")); Matcher size = Pattern.compile("(\\d+)x(\\d+)").matcher(sizeResult.stdout());
@@ -873,7 +960,114 @@ public final class FlowTestRunner {
     private void captureEvidence(String name) { try { captureScreenshot(name); } catch(Exception ignored){} try { Files.write(root.resolve("evidence").resolve(name+".xml"),dumpHierarchy()); } catch(Exception ignored){} }
     private void captureScreenshot(String name) throws Exception { Files.write(root.resolve("evidence").resolve(safeFile(name)+".png"),adb.execOut(device.serial(),"screencap","-p")); }
     private void shell(String... args) throws Exception { String[] command=new String[args.length+1];command[0]="shell";System.arraycopy(args,0,command,1,args.length);command(command); }
-    private void command(String... args) throws Exception { List<String> command=new ArrayList<>(List.of("-s",device.serial()));command.addAll(List.of(args));var result=adb.run(command);if(result.exitCode()!=0)throw new IOException("ADB failed: "+(result.stdout()+result.stderr()).strip()); }
+    private void command(String... args) throws Exception { settledDump = null; List<String> command=new ArrayList<>(List.of("-s",device.serial()));command.addAll(List.of(args));var result=adb.run(command);if(result.exitCode()!=0)throw new IOException("ADB failed: "+(result.stdout()+result.stderr()).strip()); }
+
+
+    private List<StepResult> slowestSteps() {
+        return results.stream().sorted(Comparator.comparingLong((StepResult r) -> r.durationMillis).reversed())
+            .limit(5).toList();
+    }
+
+    private String performanceJson(Instant started, Instant ended) {
+        StringBuilder out = new StringBuilder("{\"totalMillis\": ")
+            .append(Duration.between(started, ended).toMillis())
+            .append(", \"uiDumps\": ").append(dumpCount)
+            .append(", \"uiDumpMillis\": ").append(Duration.ofNanos(dumpNanos).toMillis())
+            .append(", \"slowestSteps\": [");
+        List<StepResult> slow = slowestSteps();
+        for (int i = 0; i < slow.size(); i++) {
+            StepResult r = slow.get(i);
+            if (i > 0) out.append(", ");
+            out.append("{\"number\": ").append(r.number).append(", \"action\": ").append(Json.quote(r.step.action()))
+                .append(", \"durationMillis\": ").append(r.durationMillis).append("}");
+        }
+        return out.append("]}").toString();
+    }
+
+    private String performanceHtml(Instant started, Instant ended) {
+        long total = Duration.between(started, ended).toMillis();
+        long dumpMillis = Duration.ofNanos(dumpNanos).toMillis();
+        StringBuilder out = new StringBuilder("<h2>Performance</h2><p>")
+            .append(total).append(" ms total · ").append(dumpCount).append(" UI hierarchy dumps taking ")
+            .append(dumpMillis).append(" ms");
+        if (total > 0) out.append(" (").append(Math.round(100.0 * dumpMillis / total)).append("% of the run)");
+        out.append("</p><table><tr><th>Slowest steps</th><th>Action</th><th>Duration</th><th>UI dumps</th></tr>");
+        for (StepResult r : slowestSteps()) {
+            out.append("<tr><td>#").append(r.number).append("</td><td>").append(html(r.step.action()))
+                .append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(r.dumps)
+                .append(" (").append(r.dumpMillis).append(" ms)</td></tr>");
+        }
+        return out.append("</table>").toString();
+    }
+
+    /** The step whose window contains the event, else the latest step that had started by then. */
+    private Integer stepAt(Instant at) {
+        Integer latest = null;
+        Instant latestStart = null;
+        for (var entry : stepWindows.entrySet()) {
+            Instant start = entry.getValue()[0];
+            if (!start.isAfter(at) && (latestStart == null || start.isAfter(latestStart))) {
+                latest = entry.getKey();
+                latestStart = start;
+            }
+        }
+        return latest;
+    }
+
+    private String agentEventsJson(Instant started) {
+        if (agentEvents == null) {
+            return "{\"captured\": false, \"note\": \"zero-code mode does not use the agent\"}";
+        }
+        if (!agentEvents.captured()) {
+            return "{\"captured\": false, \"note\": " + Json.quote(agentEvents.unavailableReason()) + "}";
+        }
+        StringBuilder out = new StringBuilder("{\"captured\": true, \"counts\": {");
+        int c = 0;
+        for (var entry : agentEvents.counts().entrySet()) {
+            if (c++ > 0) out.append(", ");
+            out.append(Json.quote(entry.getKey())).append(": ").append(entry.getValue());
+        }
+        out.append("}, \"events\": [");
+        List<AgentEventCapture.Event> events = agentEvents.events();
+        for (int i = 0; i < events.size(); i++) {
+            var event = events.get(i);
+            Integer step = stepAt(event.arrivedAt());
+            if (i > 0) out.append(", ");
+            out.append("{\"offsetMillis\": ").append(Duration.between(started, event.arrivedAt()).toMillis())
+                .append(", \"step\": ").append(step == null ? "null" : step)
+                .append(", \"kind\": ").append(Json.quote(event.kind()))
+                .append(", \"summary\": ").append(Json.quote(event.summary())).append("}");
+        }
+        return out.append("]}").toString();
+    }
+
+    private String agentEventsHtml(Instant started) {
+        if (agentEvents == null) return "";
+        if (!agentEvents.captured()) {
+            return "<h2>Agent events</h2><p>Not captured: " + html(agentEvents.unavailableReason()) + ".</p>";
+        }
+        StringBuilder out = new StringBuilder("<h2>Agent events</h2><p>");
+        int c = 0;
+        for (var entry : agentEvents.counts().entrySet()) {
+            if (c++ > 0) out.append(" · ");
+            out.append(html(entry.getKey())).append(" ").append(entry.getValue());
+        }
+        if (c == 0) out.append("No events arrived. Is the debug agent in this build?");
+        out.append("</p>");
+        List<AgentEventCapture.Event> events = agentEvents.events();
+        if (!events.isEmpty()) {
+            out.append("<table><tr><th>Time</th><th>Step</th><th>Kind</th><th>Event</th></tr>");
+            for (var event : events) {
+                Integer step = stepAt(event.arrivedAt());
+                out.append("<tr><td>+").append(Duration.between(started, event.arrivedAt()).toMillis())
+                    .append(" ms</td><td>").append(step == null ? "" : "#" + step).append("</td><td>")
+                    .append(html(event.kind())).append("</td><td>").append(html(event.summary()))
+                    .append("</td></tr>");
+            }
+            out.append("</table>");
+        }
+        return out.toString();
+    }
 
     private void writeReports(boolean passed, Instant started, Instant ended) throws IOException {
         Files.writeString(root.resolve("report.json"), reportJson(passed, started, ended), StandardCharsets.UTF_8);
@@ -884,14 +1078,16 @@ public final class FlowTestRunner {
         String primary=results.stream().filter(r->r.status.equals("failed")&&r.step.phase()!=FlowTest.Phase.AFTER).map(r->r.error).findFirst().orElse(null); List<String> teardown=results.stream().filter(r->r.status.equals("failed")&&r.step.phase()==FlowTest.Phase.AFTER).map(r->r.error).toList();
         StringBuilder out=new StringBuilder("{\n  \"schemaVersion\": 2,\n  \"kind\": \"test\",\n").append("  \"name\": ").append(Json.quote(test.name())).append(",\n  \"packageName\": ").append(Json.quote(test.packageName())).append(",\n  \"mode\": ").append(Json.quote(test.mode().cliName())).append(",\n  \"deviceSerial\": ").append(Json.quote(device.serial())).append(",\n  \"startedAt\": ").append(Json.quote(started.toString())).append(",\n  \"endedAt\": ").append(Json.quote(ended.toString())).append(",\n  \"status\": ").append(Json.quote(passed?"passed":"failed")).append(",\n  \"primaryFailure\": ").append(Json.quote(primary)).append(",\n  \"teardownFailures\": [");
         for(int i=0;i<teardown.size();i++){if(i>0)out.append(", ");out.append(Json.quote(teardown.get(i)));} out.append("],\n  \"webView\": ").append(previousWebState == null ? "null" : WebViewInspector.json(previousWebState.sanitized())).append(",\n  \"steps\": [\n");
-        for(int i=0;i<results.size();i++){var r=results.get(i);out.append("    {\"number\": ").append(r.number).append(", \"line\": ").append(r.step.line()).append(", \"phase\": ").append(Json.quote(r.step.phase().value())).append(", \"action\": ").append(Json.quote(r.step.action())).append(", \"status\": ").append(Json.quote(r.status)).append(", \"durationMillis\": ").append(r.durationMillis).append(", \"error\": ").append(Json.quote(r.error)).append(", \"details\": {");int d=0;for(var e:r.details.entrySet()){if(d++>0)out.append(", ");out.append(Json.quote(e.getKey())).append(": ").append(Json.quote(e.getValue()));}out.append("}}");if(i+1<results.size())out.append(',');out.append('\n');} return out.append("  ]\n}\n").toString();
+        for(int i=0;i<results.size();i++){var r=results.get(i);out.append("    {\"number\": ").append(r.number).append(", \"line\": ").append(r.step.line()).append(", \"phase\": ").append(Json.quote(r.step.phase().value())).append(", \"action\": ").append(Json.quote(r.step.action())).append(", \"status\": ").append(Json.quote(r.status)).append(", \"durationMillis\": ").append(r.durationMillis).append(", \"uiDumps\": ").append(r.dumps).append(", \"uiDumpMillis\": ").append(r.dumpMillis).append(", \"error\": ").append(Json.quote(r.error)).append(", \"details\": {");int d=0;for(var e:r.details.entrySet()){if(d++>0)out.append(", ");out.append(Json.quote(e.getKey())).append(": ").append(Json.quote(e.getValue()));}out.append("}}");if(i+1<results.size())out.append(',');out.append('\n');} out.append("  ],\n  \"performance\": ").append(performanceJson(started, ended));
+        out.append(",\n  \"agentEvents\": ").append(agentEventsJson(started));
+        return out.append("\n}\n").toString();
     }
-    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(r.step.action())).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+(passed?"passed":"failed")+"\">"+(passed?"PASSED":"FAILED")+"</strong><p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p><table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>";}
+    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(r.step.action())).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+(passed?"passed":"failed")+"\">"+(passed?"PASSED":"FAILED")+"</strong><p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p><table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>"+performanceHtml(started,ended)+agentEventsHtml(started);}
     private String junitXml(boolean passed,long millis){String failure=failureMessage();return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\""+xml(test.name())+"\" tests=\"1\" failures=\""+(passed?0:1)+"\" time=\""+(millis/1000.0)+"\"><testcase classname=\""+xml(test.packageName())+"\" name=\""+xml(test.name())+"\" time=\""+(millis/1000.0)+"\">"+(passed?"":"<failure message=\""+xml(failure)+"\">"+xml(failure)+"</failure>")+"</testcase></testsuite>\n";}
 
     private static long elapsed(long n){return Duration.ofNanos(System.nanoTime()-n).toMillis();} private static String message(Exception e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();} private static String safeFile(String n){return n.replaceAll("[^a-zA-Z0-9._-]","_");}
     private String safeUrl(URI u){String path=u.getPath()==null?"":u.getPath();for(String value:variables.values())if(value!=null&&!value.isBlank())path=path.replace(value,"{captured}");return u.getScheme()+"://"+u.getAuthority()+path;}
     private String redact(String value){String redacted=value;for(String secret:environment.values())if(secret!=null&&!secret.isBlank())redacted=redacted.replace(secret,"{env}");for(String captured:variables.values())if(captured!=null&&!captured.isBlank())redacted=redacted.replace(captured,"{captured}");return redacted;}
     private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(Set.of("id","text","text-contains","desc","class")::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->Set.of("id","text","text-contains","desc","class").contains(e.getKey())).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){return details.entrySet().stream().map(e->e.getKey().equals("evidence")?"<a href=\""+html(e.getValue())+"\">evidence</a>":html(e.getKey()+"="+e.getValue())).collect(java.util.stream.Collectors.joining(" · "));} private static String html(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
-    private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details){}
+    private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details,int dumps,long dumpMillis){}
 }

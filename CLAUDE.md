@@ -149,6 +149,9 @@ The Android agent writes one compact JSON object per Logcat entry using tag `Flo
 numbers, or financial/KYC data. Network events should use redacted URL templates and metadata, not
 bodies. Background events should use stable logical work names, not arbitrary arguments.
 
+Instrumented test runs also stream these events (matched by the package's UID, so they survive
+process restarts) into the report's `agentEvents` section, keeping only action/component names, route
+templates, status codes, and work names.
 The host filters Logcat framing lines so `events.jsonl` contains JSON objects only. Keep individual
 events comfortably below Logcat's entry limit.
 
@@ -174,6 +177,10 @@ must never alter a run result. CLI and CI execution must not produce desktop not
 ## Timing and reliability
 
 - UI polling interval: 200 ms.
+- `uiautomator dump` starts a process each time (about 2 s on a real device), so dumps dominate a
+  run. `settle()` remembers its final hierarchy and the next lookup may reuse it for 3 s; only the
+  first poll of a lookup may do so. A single dump that outlasts the 1.5 s stability window counts as
+  settled. Reports record per-step dump counts and times; keep that instrumentation when changing waits.
 - Default selector timeout: 10 seconds, overridable by the test or step.
 - After a mutation, compare consecutive hierarchies for up to 1.5 seconds; do not turn observed
   recording delays into replay sleeps.
