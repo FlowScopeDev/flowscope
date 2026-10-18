@@ -395,6 +395,11 @@ flowscope test run examples/flows/tests/example-launch.flow --serial <serial>
 The current desktop interface is specified in [design.md](design.md). Repository instructions for
 Claude, Codex, and other coding agents live only in [CLAUDE.md](CLAUDE.md).
 
+## Contributors
+
+FlowScope is maintained by [@imabhishekkumar](https://github.com/imabhishekkumar). See
+[CONTRIBUTORS.md](CONTRIBUTORS.md) for everyone who has helped, and how to be added.
+
 ## License
 
 FlowScope is licensed under the [Apache License 2.0](LICENSE).
