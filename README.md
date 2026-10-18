@@ -84,6 +84,9 @@ The installed executable is named `flowscope`.
 ```bash
 flowscope doctor
 flowscope devices
+flowscope emulators
+flowscope emulator start <avd> [--headless] [--wait] [--timeout <ms>]
+flowscope emulator stop <serial>
 flowscope mirror --serial <adb-serial>
 flowscope mirror --serial <adb-serial> --read-only
 flowscope record --package com.example.debug --mode zero-code
@@ -377,6 +380,12 @@ flowscope test run <file.flow> [--project <dir>] --serial <serial> --output <dir
 flowscope suite validate <file.suite> [--project <dir>]
 flowscope suite run [<file.suite>] [--project <dir>] --serial <serial> --output <directory>
 ```
+
+`flowscope emulator start Pixel_7 --headless --wait` launches an installed AVD without a window and
+prints its serial once Android has booted, so a CI job can follow it with `flowscope suite run`. It
+needs the SDK `emulator` binary (`ANDROID_HOME`, `ANDROID_SDK_ROOT`, or `EMULATOR`); FlowScope does
+not bundle it. `emulator stop` only stops emulators FlowScope started. The IDE's device menu lists the
+same AVDs with Start, Start headless and Stop controls.
 
 `flowscope schema` prints the `.flow` language, the `.suite` format, and the project layout, so an
 agent can discover all three from one command.

@@ -111,6 +111,10 @@ internal fun SessionBar(
     selected: Device?,
     onDeviceSelected: (Device) -> Unit,
     onRefresh: () -> Unit,
+    avds: List<AvdEntry>,
+    emulatorAvailable: Boolean,
+    onStartAvd: (name: String, headless: Boolean) -> Unit,
+    onStopAvd: (serial: String) -> Unit,
     packageName: String,
     onPackageNameChanged: (String) -> Unit,
     installedPackages: List<String>,
@@ -208,7 +212,13 @@ internal fun SessionBar(
                 HorizontalDivider(color = Ink300)
                 if (devices.isEmpty()) {
                     DropdownMenuItem(
-                        text = { Text("No devices found", color = TextMid, fontSize = 12.sp) },
+                        text = {
+                            Text(
+                                if (avds.isEmpty()) "No devices found" else "No devices. Start an emulator below",
+                                color = TextMid,
+                                fontSize = 12.sp,
+                            )
+                        },
                         onClick = { deviceMenu = false },
                     )
                 } else {
@@ -228,6 +238,32 @@ internal fun SessionBar(
                             onClick = { onDeviceSelected(device); deviceMenu = false },
                         )
                     }
+                }
+                if (!emulatorAvailable) {
+                    HorizontalDivider(color = Ink300)
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "No emulator found. Install the SDK emulator or set ANDROID_HOME",
+                                color = TextMid,
+                                fontSize = 11.sp,
+                                modifier = Modifier.widthIn(max = 300.dp),
+                            )
+                        },
+                        enabled = false,
+                        onClick = {},
+                    )
+                } else if (avds.isNotEmpty()) {
+                    HorizontalDivider(color = Ink300)
+                    Text(
+                        "EMULATORS",
+                        color = TextMid,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.2.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                    avds.forEach { avd -> AvdRow(avd, onStartAvd, onStopAvd) }
                 }
             }
         }
@@ -802,6 +838,64 @@ internal fun SurfaceTabs(
                 modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClick = onToggleDrawer)
                     .padding(horizontal = 4.dp, vertical = 6.dp),
             )
+        }
+    }
+}
+
+/** One installed AVD: its state, and Start / Start headless / Stop as 32×32 icon controls. */
+@Composable
+private fun AvdRow(
+    avd: AvdEntry,
+    onStart: (name: String, headless: Boolean) -> Unit,
+    onStop: (serial: String) -> Unit,
+) {
+    Row(
+        Modifier.widthIn(min = 260.dp).padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(avd.name, color = TextHi, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                when (val status = avd.status) {
+                    AvdStatus.Stopped -> "stopped"
+                    AvdStatus.Booting -> "booting…"
+                    is AvdStatus.Running -> "running · ${status.serial}"
+                },
+                color = if (avd.status == AvdStatus.Booting) SignalIce else TextMid,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        when (val status = avd.status) {
+            AvdStatus.Stopped -> {
+                AvdAction("▶", "Start emulator ${avd.name}", true) { onStart(avd.name, false) }
+                AvdAction("▷", "Start emulator ${avd.name} headless", true) { onStart(avd.name, true) }
+            }
+            AvdStatus.Booting -> AvdAction("▶", "Start emulator ${avd.name}", false) {}
+            is AvdStatus.Running -> AvdAction(
+                "■",
+                if (avd.owned) "Stop emulator ${avd.name}" else "Stop emulator ${avd.name} (not started by FlowScope)",
+                avd.owned,
+            ) { onStop(status.serial) }
+        }
+    }
+}
+
+@Composable
+private fun AvdAction(glyph: String, label: String, enabled: Boolean, onClick: () -> Unit) {
+    HoverTip(label) {
+        Box(
+            Modifier.size(32.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .semantics {
+                    contentDescription = label
+                    role = Role.Button
+                }
+                .clickable(enabled = enabled, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(glyph, color = if (enabled) TextHi else Ink400, fontSize = 13.sp)
         }
     }
 }

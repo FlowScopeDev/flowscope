@@ -88,6 +88,19 @@ public class AdbClient {
         return Device.parse(result.stdout());
     }
 
+    /** True once Android reports `sys.boot_completed=1`; false while booting or unreachable. */
+    public boolean bootCompleted(String serial) throws IOException, InterruptedException {
+        CommandResult result = run(List.of("-s", serial, "shell", "getprop", "sys.boot_completed"));
+        return result.exitCode() == 0 && result.stdout().strip().equals("1");
+    }
+
+    /** The AVD name behind an emulator serial (`adb emu avd name`), or null if it cannot be read. */
+    public String avdName(String serial) throws IOException, InterruptedException {
+        CommandResult result = run(List.of("-s", serial, "emu", "avd", "name"));
+        if (result.exitCode() != 0) return null;
+        return EmulatorClient.parseAvdName(result.stdout());
+    }
+
     /**
      * Installed application IDs on the device, third-party packages first so the list is useful
      * for picking a target under test. Returns an empty list if the device cannot be queried.

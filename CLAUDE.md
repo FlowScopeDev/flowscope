@@ -41,6 +41,9 @@ Treat these commands as an API used by humans, CI, and coding agents:
 ```text
 flowscope doctor
 flowscope devices
+flowscope emulators
+flowscope emulator start <avd> [--headless] [--wait] [--timeout <ms>]
+flowscope emulator stop <serial>
 flowscope mirror [--serial <id>] [--read-only]
 flowscope record --package <id> --mode zero-code|instrumented [--serial <id>]
 flowscope snapshot --package <id> --mode zero-code|instrumented [--serial <id>]
@@ -65,6 +68,14 @@ the three it replaced disagreed with each other, and one silently ignored traili
 
 A file argument that names an existing path is always honoured first, with or without a project, so
 an invocation that works today keeps working. Only then does a project's resolution ladder apply.
+
+Emulators are launched through the SDK `emulator` binary, never bundled or downloaded. Resolution
+order is `EMULATOR`, then `ANDROID_HOME` / `ANDROID_SDK_ROOT`, the usual SDK homes, then `PATH`;
+`flowscope doctor` reports the result. `emulator start` launches the AVD detached and returns unless
+`--wait` is given (it then prints the serial once `sys.boot_completed` is `1`). Each launch is
+recorded in `~/.flowscope/emulators.json` (strict `Json.java` subset, dead pids pruned), and
+`emulator stop` refuses, with exit `2`, any serial FlowScope did not launch. The IDE never stops
+emulators on exit: they are long-lived.
 
 scrcpy is an optional low-latency interaction surface, not a capture source of truth. FlowScope
 speaks scrcpy's control protocol directly for input (taps, drags, keys, text, clipboard), which is

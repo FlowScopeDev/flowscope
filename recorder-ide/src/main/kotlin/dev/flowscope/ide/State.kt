@@ -33,6 +33,14 @@ internal class DeviceState {
     var captureMode by mutableStateOf(CaptureMode.ZERO_CODE)
     var busy by mutableStateOf(false)
 
+    /** Installed AVDs, what ADB sees running (serial to AVD), and the ones launched from here. */
+    var emulatorAvailable by mutableStateOf(false)
+    var avdNames by mutableStateOf<List<String>>(emptyList())
+    var runningAvds by mutableStateOf<Map<String, String>>(emptyMap())
+    var ownedAvds by mutableStateOf<Set<String>>(emptySet())
+    var bootingAvds by mutableStateOf<Set<String>>(emptySet())
+    val avds: List<AvdEntry> get() = mergeAvds(avdNames, runningAvds, bootingAvds, ownedAvds)
+
     var screenshot by mutableStateOf<ImageBitmap?>(null)
     var embeddedFrame by mutableStateOf<ImageBitmap?>(null)
     var embeddedSession by mutableStateOf<EmbeddedScrcpyClient.Session?>(null)

@@ -108,6 +108,7 @@ import dev.flowscope.host.AdbClient
 import dev.flowscope.host.CaptureMode
 import dev.flowscope.host.Device
 import dev.flowscope.host.EmbeddedScrcpyClient
+import dev.flowscope.host.EmulatorClient
 import dev.flowscope.host.FlowProject
 import dev.flowscope.host.FlowSuite
 import dev.flowscope.host.FlowSuiteParser
@@ -196,6 +197,7 @@ private fun FlowScopeApp(
 ) {
     val adb = remember { AdbClient() }
     val scrcpy = remember { ScrcpyClient() }
+    val emulator = remember { EmulatorClient() }
     val embeddedScrcpy = remember { EmbeddedScrcpyClient(adb, scrcpy) }
     val embeddedFrames = remember {
         FrameChannel<EmbeddedScrcpyClient.Frame>(FrameChannel.CONFLATED)
@@ -293,6 +295,56 @@ private fun FlowScopeApp(
             }
             .onFailure { session.status = it.message ?: "ADB is unavailable" }
         deviceState.busy = false
+    }
+
+    suspend fun refreshAvds() {
+        deviceState.emulatorAvailable = emulator.available()
+        if (!emulator.available()) return
+        deviceState.avdNames = runCatching { withContext(Dispatchers.IO) { emulator.listAvds() } }
+            .getOrDefault(emptyList())
+    }
+
+    // Which AVD each running emulator is costs one `adb emu` call per emulator, so it is read when
+    // the set of attached devices changes rather than on every 3 s poll.
+    LaunchedEffect(deviceState.devices.map { it.serial() }) {
+        if (!emulator.available()) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            runCatching {
+                deviceState.runningAvds = emulator.runningEmulators(adb)
+                deviceState.ownedAvds = emulator.ownedAvds()
+            }
+        }
+    }
+    LaunchedEffect(Unit) { refreshAvds() }
+
+    fun startAvd(name: String, headless: Boolean) {
+        scope.launch {
+            deviceState.bootingAvds = deviceState.bootingAvds + name
+            session.status = "Starting $name…"
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    emulator.start(adb, name, headless)
+                    emulator.waitForBoot(adb, name, EmulatorClient.DEFAULT_BOOT_TIMEOUT_MS)
+                }
+            }.onSuccess { serial ->
+                deviceState.ownedAvds = deviceState.ownedAvds + name
+                refreshDevices()
+                deviceState.devices.firstOrNull { it.serial() == serial }
+                    ?.takeIf { session.recording == null }
+                    ?.let { deviceState.selected = it }
+                session.status = "$name is ready as $serial"
+            }.onFailure { session.status = it.message ?: "Could not start $name" }
+            deviceState.bootingAvds = deviceState.bootingAvds - name
+        }
+    }
+
+    fun stopAvd(serial: String) {
+        scope.launch {
+            runCatching { withContext(Dispatchers.IO) { emulator.stop(adb, serial) } }
+                .onSuccess { session.status = "Stopped $serial" }
+                .onFailure { session.status = it.message ?: "Could not stop $serial" }
+            refreshDevices()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -1578,7 +1630,11 @@ private fun FlowScopeApp(
                 devices = deviceState.devices,
                 selected = deviceState.selected,
                 onDeviceSelected = { deviceState.selected = it },
-                onRefresh = { scope.launch { refreshDevices() } },
+                onRefresh = { scope.launch { refreshDevices(); refreshAvds() } },
+                avds = deviceState.avds,
+                emulatorAvailable = deviceState.emulatorAvailable,
+                onStartAvd = ::startAvd,
+                onStopAvd = ::stopAvd,
                 packageName = deviceState.packageName,
                 onPackageNameChanged = { deviceState.packageName = it },
                 installedPackages = deviceState.installedPackages,

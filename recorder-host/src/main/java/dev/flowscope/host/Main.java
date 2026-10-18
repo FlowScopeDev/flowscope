@@ -38,6 +38,8 @@ public final class Main {
         return switch (args.getFirst()) {
             case "doctor" -> doctor(new AdbClient());
             case "devices" -> devices(new AdbClient());
+            case "emulators" -> emulators(new AdbClient(), new EmulatorClient(), args.subList(1, args.size()));
+            case "emulator" -> emulator(new AdbClient(), new EmulatorClient(), args.subList(1, args.size()));
             case "mirror" -> mirror(new AdbClient(), args.subList(1, args.size()));
             case "record" -> record(new AdbClient(), args.subList(1, args.size()));
             case "snapshot" -> snapshot(new AdbClient(), args.subList(1, args.size()));
@@ -64,6 +66,7 @@ public final class Main {
         System.out.print(version.stdout());
         ScrcpyClient scrcpy = new ScrcpyClient();
         System.out.println("scrcpy: " + scrcpy.versionSummary());
+        System.out.println("emulator: " + new EmulatorClient().summary());
         Optional<FlowProject> project = FlowProject.discover(Path.of("."));
         System.out.println("project: " + project
             .map(found -> found.manifest().name() + " · " + found.root())
@@ -93,6 +96,70 @@ public final class Main {
                 }
             }
         }
+    }
+
+    // --------------------------------------------------------------- emulator
+
+    static int emulators(AdbClient adb, EmulatorClient client, List<String> args) throws Exception {
+        CliOptions.parse(args, NO_FLAGS, NO_FLAGS).requireNoExtraPositionals(0, "emulators");
+        List<String> avds = client.listAvds();
+        if (avds.isEmpty()) {
+            System.out.println("No AVDs found. Create one in Android Studio's Device Manager.");
+            return 0;
+        }
+        java.util.Map<String, String> running = client.runningEmulators(adb);
+        for (String avd : avds) {
+            String serial = running.entrySet().stream()
+                .filter(entry -> entry.getValue().equals(avd)).map(java.util.Map.Entry::getKey)
+                .findFirst().orElse(null);
+            System.out.printf("%-28s %s%n", avd, serial == null ? "stopped" : "running " + serial);
+        }
+        return 0;
+    }
+
+    static int emulator(AdbClient adb, EmulatorClient client, List<String> args) throws Exception {
+        if (args.isEmpty()) {
+            System.err.println("emulator requires: start <avd> or stop <serial>");
+            return 2;
+        }
+        List<String> rest = args.subList(1, args.size());
+        return switch (args.getFirst()) {
+            case "start" -> {
+                CliOptions options = CliOptions.parse(rest, Set.of("--timeout"),
+                    Set.of("--headless", "--wait"));
+                options.requireNoExtraPositionals(1, "emulator start");
+                String avd = options.positional(0);
+                if (avd == null || avd.isBlank()) {
+                    System.err.println("emulator start requires <avd>");
+                    yield 2;
+                }
+                long timeout = options.positiveLong("--timeout", EmulatorClient.DEFAULT_BOOT_TIMEOUT_MS);
+                client.start(adb, avd, options.flag("--headless"));
+                if (!options.flag("--wait")) {
+                    System.out.println("Started " + avd + ". Run `flowscope devices` once it has booted.");
+                    yield 0;
+                }
+                String serial = client.waitForBoot(adb, avd, timeout);
+                System.out.println(serial);
+                yield 0;
+            }
+            case "stop" -> {
+                CliOptions options = CliOptions.parse(rest, NO_FLAGS, NO_FLAGS);
+                options.requireNoExtraPositionals(1, "emulator stop");
+                String serial = options.positional(0);
+                if (serial == null || serial.isBlank()) {
+                    System.err.println("emulator stop requires <serial>");
+                    yield 2;
+                }
+                client.stop(adb, serial);
+                System.out.println("Stopped " + serial);
+                yield 0;
+            }
+            default -> {
+                System.err.println("Unknown emulator command: " + args.getFirst());
+                yield 2;
+            }
+        };
     }
 
     private static int devices(AdbClient adb) throws Exception {
@@ -575,6 +642,9 @@ public final class Main {
 
               doctor
               devices
+              emulators
+              emulator start <avd> [--headless] [--wait] [--timeout <millis>]
+              emulator stop <serial>
               mirror [--serial <adb-serial>] [--read-only]
               record --package <application-id> [--mode zero-code|instrumented]
                      [--serial <adb-serial>] [--output <directory>]
