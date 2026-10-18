@@ -262,8 +262,16 @@ private fun FlowScopeApp(
         session.webViewError = null
     }
 
-    suspend fun refreshDevices() {
-        deviceState.busy = true
+    /**
+     * Re-reads the attached devices.
+     *
+     * [silent] skips the busy flag, for the three-second poll. `busy` drives visible affordances —
+     * the Record button's "WORKING…" label and the run button's in-flight icon — so letting a
+     * background poll raise it made both flash a state the user never triggered, for the ~60ms an
+     * `adb devices` call takes. A poll is not work the user asked for, so it does not say so.
+     */
+    suspend fun refreshDevices(silent: Boolean = false) {
+        if (!silent) deviceState.busy = true
         runCatching { withContext(Dispatchers.IO) { adb.devices() } }
             .onSuccess { found ->
                 deviceState.devices = found.filter { it.state() == "device" }
@@ -274,7 +282,7 @@ private fun FlowScopeApp(
                     if (deviceState.devices.none { it.serial() == currentSerial }) {
                         deviceState.lostSerial = currentSerial
                     }
-                    deviceState.busy = false
+                    if (!silent) deviceState.busy = false
                     return@onSuccess
                 }
                 deviceState.selected = deviceState.devices.firstOrNull { it.serial() == currentSerial }
@@ -302,7 +310,7 @@ private fun FlowScopeApp(
                 }
             }
             .onFailure { session.status = it.message ?: "ADB is unavailable" }
-        deviceState.busy = false
+        if (!silent) deviceState.busy = false
     }
 
     suspend fun refreshAvds() {
@@ -369,7 +377,9 @@ private fun FlowScopeApp(
         while (isActive) {
             delay(3_000)
             // Poll during recording too: a disconnected device must not look like a live session.
-            if (!deviceState.busy) refreshDevices()
+            // Silent: `busy` still gates the poll, so a real operation is never interleaved, but
+            // the poll itself must not claim the UI is working.
+            if (!deviceState.busy) refreshDevices(silent = true)
         }
     }
 
