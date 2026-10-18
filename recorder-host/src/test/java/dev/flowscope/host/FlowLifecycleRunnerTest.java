@@ -125,7 +125,7 @@ class FlowLifecycleRunnerTest {
         private final String dumpsys;
         FakeAdb() { this(""); }
         FakeAdb(String dumpsys) { this.dumpsys = dumpsys; }
-        @Override public CommandResult run(List<String> arguments) {
+        @Override public CommandResult run(List<String> arguments, long timeoutMillis) {
             commands.add(List.copyOf(arguments));
             if (arguments.contains("dumpsys")) return new CommandResult(0, dumpsys, "");
             if (arguments.contains("resolve-activity")) return new CommandResult(0,

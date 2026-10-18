@@ -138,7 +138,7 @@ class EmulatorClientTest {
         }
 
         @Override
-        public CommandResult run(List<String> arguments) {
+        public CommandResult run(List<String> arguments, long timeoutMillis) {
             String joined = String.join(" ", arguments);
             commands.add(joined);
             if (joined.equals("devices -l")) {

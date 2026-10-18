@@ -38,6 +38,7 @@ public final class FlowTestRunner {
     private final Map<String, String> variables = new LinkedHashMap<>();
     private final List<StepResult> results = new ArrayList<>();
     private WebViewState previousWebState;
+    private Set<String> sweepBefore;
 
     public FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot) throws IOException {
         this(adb, device, test, outputRoot, RunDirectories.stamp() + "-" + RunDirectories.sanitize(test.name()));
@@ -88,8 +89,14 @@ public final class FlowTestRunner {
     }
 
     public boolean run() throws Exception {
+        Thread sweepHook = null;
         try {
             preflight();
+            // Snapshot only after preflight: a flow rejected up front must not touch the device.
+            Set<String> uiautomatorBefore = uiautomatorSnapshot();
+            sweepHook = new Thread(() -> sweepUiautomator(uiautomatorBefore), "flowscope-uiautomator-sweep");
+            Runtime.getRuntime().addShutdownHook(sweepHook);
+            sweepBefore = uiautomatorBefore;
             Instant started = Instant.now();
             if (test.mode() == CaptureMode.INSTRUMENTED) {
                 agentEvents = AgentEventCapture.start(adb, device.serial(), test.packageName());
@@ -105,6 +112,38 @@ public final class FlowTestRunner {
             return passed;
         } finally {
             web.close();
+            if (sweepHook != null) {
+                sweepUiautomator(sweepBefore);
+                try {
+                    Runtime.getRuntime().removeShutdownHook(sweepHook);
+                } catch (IllegalStateException shuttingDown) {
+                    // The JVM is already exiting and the hook owns the sweep.
+                }
+            }
+        }
+    }
+
+    /** The device's uiautomator pids before the run, or null when they cannot be read. */
+    private Set<String> uiautomatorSnapshot() {
+        try {
+            return adb.uiautomatorPids(device.serial());
+        } catch (Exception unreadable) {
+            return null;
+        }
+    }
+
+    /**
+     * Kills uiautomator processes this run left behind (a dump that outlived a killed or timed-out
+     * run). Only pids absent from the starting snapshot are touched, and never fails the run.
+     */
+    private void sweepUiautomator(Set<String> before) {
+        if (before == null) return;
+        try {
+            adb.killNewUiautomator(device.serial(), before);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (Exception ignored) {
+            // The device may already be gone; cleanup is best effort.
         }
     }
 
@@ -923,7 +962,7 @@ public final class FlowTestRunner {
     }
 
     private byte[] readHierarchy() throws Exception {
-        var dump = adb.run(List.of("-s", device.serial(), "shell", "uiautomator", "dump", "/data/local/tmp/flowscope-test-window.xml"));
+        var dump = adb.run(List.of("-s", device.serial(), "shell", "uiautomator", "dump", "/data/local/tmp/flowscope-test-window.xml"), AdbClient.DUMP_TIMEOUT_MILLIS);
         if (dump.exitCode() != 0) throw new IOException("UI hierarchy failed: " + (dump.stdout() + dump.stderr()).strip());
         return adb.execOut(device.serial(), "cat", "/data/local/tmp/flowscope-test-window.xml");
     }

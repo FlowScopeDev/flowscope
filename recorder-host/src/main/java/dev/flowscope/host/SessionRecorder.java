@@ -37,7 +37,9 @@ public final class SessionRecorder implements AutoCloseable {
     private Thread agentEventsPump;
     private Process accessibility;
     private Thread accessibilityPump;
-    private String accessibilityPid;
+    private volatile String accessibilityPid;
+    /** Kills the on-device monitor if the JVM dies without close(), so it is not orphaned. */
+    private final Thread shutdownHook = new Thread(this::killAccessibilityRemote, "flowscope-recorder-shutdown");
     private int checkpointNumber;
     private volatile BiConsumer<String, String> observer = (channel, line) -> {};
 
@@ -89,7 +91,7 @@ public final class SessionRecorder implements AutoCloseable {
         try {
             String remote = "/data/local/tmp/flowscope-resolve-window.xml";
             AdbClient.CommandResult dump = adb.run(List.of("-s", device.serial(), "shell",
-                "uiautomator", "dump", remote));
+                "uiautomator", "dump", remote), AdbClient.DUMP_TIMEOUT_MILLIS);
             if (dump.exitCode() != 0) {
                 throw new IOException("UI hierarchy failed: " + (dump.stdout() + dump.stderr()).strip());
             }
@@ -125,6 +127,7 @@ public final class SessionRecorder implements AutoCloseable {
     }
 
     public void start() throws IOException, InterruptedException {
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
         writeManifest(null);
         String packagePid = findPackagePid();
         startFilteredLogcat(packagePid);
@@ -171,7 +174,7 @@ public final class SessionRecorder implements AutoCloseable {
             adb.execOut(device.serial(), "screencap", "-p"));
 
         AdbClient.CommandResult dump = adb.run(List.of("-s", device.serial(), "shell",
-            "uiautomator", "dump", "/data/local/tmp/ui-flow-window.xml"));
+            "uiautomator", "dump", "/data/local/tmp/ui-flow-window.xml"), AdbClient.DUMP_TIMEOUT_MILLIS);
         if (dump.exitCode() == 0) {
             Files.write(directory.resolve("hierarchy.xml"),
                 adb.execOut(device.serial(), "cat", "/data/local/tmp/ui-flow-window.xml"));
@@ -273,6 +276,7 @@ public final class SessionRecorder implements AutoCloseable {
         if (accessibilityPid == null) {
             stop(accessibility);
             accessibility = null;
+            sweepUiautomator(existingPids);
             throw new IOException("Could not start the accessibility event monitor");
         }
         Path target = root.resolve("accessibility-events.txt");
@@ -307,10 +311,7 @@ public final class SessionRecorder implements AutoCloseable {
 
     private Set<String> uiautomatorPids() throws IOException {
         try {
-            AdbClient.CommandResult result = adb.run(List.of(
-                "-s", device.serial(), "shell", "pidof", "uiautomator"));
-            if (result.exitCode() != 0 || result.stdout().isBlank()) return new HashSet<>();
-            return new HashSet<>(List.of(result.stdout().strip().split("\\s+")));
+            return new HashSet<>(adb.uiautomatorPids(device.serial()));
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while locating the accessibility monitor", interrupted);
@@ -341,6 +342,13 @@ public final class SessionRecorder implements AutoCloseable {
     @Override
     public void close() throws IOException {
         if (!closed.compareAndSet(false, true)) return;
+        try {
+            Runtime.getRuntime().removeShutdownHook(shutdownHook);
+        } catch (IllegalStateException shuttingDown) {
+            // The JVM is already exiting and the hook owns cleanup.
+        } catch (IllegalArgumentException neverStarted) {
+            // start() was not called, so no hook was registered.
+        }
         stop(logcat);
         join(logcatPump);
         stop(agentEvents);
@@ -354,7 +362,7 @@ public final class SessionRecorder implements AutoCloseable {
         accessibilityPid = null;
         if (remotePid != null) {
             try {
-                adb.run(List.of("-s", device.serial(), "shell", "kill", remotePid));
+                adb.killProcesses(device.serial(), Set.of(remotePid));
             } catch (IOException ignored) {
                 // The device may disconnect while a recording is being closed.
             } catch (InterruptedException interrupted) {
@@ -365,6 +373,27 @@ public final class SessionRecorder implements AutoCloseable {
         accessibility = null;
         join(accessibilityPump);
         accessibilityPump = null;
+    }
+
+    private void killAccessibilityRemote() {
+        String remotePid = accessibilityPid;
+        if (remotePid == null) return;
+        try {
+            adb.killProcesses(device.serial(), Set.of(remotePid));
+        } catch (Exception ignored) {
+            // The device may already be gone.
+        }
+    }
+
+    /** Best effort: kills uiautomator processes that appeared after {@code before}. */
+    private void sweepUiautomator(Set<String> before) {
+        try {
+            adb.killNewUiautomator(device.serial(), before);
+        } catch (IOException ignored) {
+            // The device may already be gone.
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static void stop(Process process) {

@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -18,21 +20,97 @@ public class AdbClient {
         this.executable = resolveAdb();
     }
 
+    /** For tests: drives an arbitrary executable in place of adb. */
+    AdbClient(String executable) {
+        this.executable = executable;
+    }
+
     public String executable() {
         return executable;
     }
 
+    /** Upper bound for an ordinary adb call; installs are the slowest legitimate users. */
+    public static final long DEFAULT_TIMEOUT_MILLIS = 300_000;
+    /** `uiautomator dump` normally takes about 2 s; one that outlasts this is hung. */
+    public static final long DUMP_TIMEOUT_MILLIS = 30_000;
+
     public CommandResult run(List<String> arguments) throws IOException, InterruptedException {
+        return run(arguments, DEFAULT_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * Runs one adb command and kills it if it outlasts {@code timeoutMillis}, so a hung call cannot
+     * block a run forever or leave its host process behind. Every other {@code run} funnels through
+     * here, which is also the single method a test double overrides.
+     */
+    public CommandResult run(List<String> arguments, long timeoutMillis)
+        throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
         command.add(executable);
         command.addAll(arguments);
         Process process = new ProcessBuilder(command).start();
-        byte[] stdout = process.getInputStream().readAllBytes();
-        byte[] stderr = process.getErrorStream().readAllBytes();
-        int exitCode = process.waitFor();
-        return new CommandResult(exitCode,
-            new String(stdout, StandardCharsets.UTF_8),
-            new String(stderr, StandardCharsets.UTF_8));
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        Thread outPump = Thread.ofVirtual().start(() -> drain(process.getInputStream(), stdout));
+        Thread errPump = Thread.ofVirtual().start(() -> drain(process.getErrorStream(), stderr));
+        try {
+            if (!process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly();
+                throw new IOException("adb timed out after " + timeoutMillis + " ms: "
+                    + String.join(" ", arguments));
+            }
+            outPump.join();
+            errPump.join();
+        } catch (InterruptedException interrupted) {
+            process.destroyForcibly();
+            throw interrupted;
+        }
+        return new CommandResult(process.exitValue(),
+            stdout.toString(StandardCharsets.UTF_8), stderr.toString(StandardCharsets.UTF_8));
+    }
+
+    private static void drain(java.io.InputStream in, ByteArrayOutputStream out) {
+        try {
+            in.transferTo(out);
+        } catch (IOException ignored) {
+            // The process was destroyed; whatever arrived is all there is.
+        }
+    }
+
+    /** Pids of every `uiautomator` process on the device; empty when none or unreadable. */
+    public Set<String> uiautomatorPids(String serial) throws IOException, InterruptedException {
+        CommandResult result = run(List.of("-s", serial, "shell", "pidof", "uiautomator"));
+        Set<String> pids = new LinkedHashSet<>();
+        if (result.exitCode() != 0) return pids;
+        for (String pid : result.stdout().strip().split("\\s+")) {
+            if (pid.matches("\\d+")) pids.add(pid);
+        }
+        return pids;
+    }
+
+    /**
+     * Kills the `uiautomator` processes that were not present in {@code before}. Never a blanket
+     * kill: Appium or `am instrument` may be using uiautomator on the same device.
+     */
+    public int killNewUiautomator(String serial, Set<String> before)
+        throws IOException, InterruptedException {
+        Set<String> strays = uiautomatorPids(serial);
+        strays.removeAll(before);
+        return killProcesses(serial, strays);
+    }
+
+    /** Kills each numeric pid, escalating to SIGKILL when it is still listed afterwards. */
+    public int killProcesses(String serial, Set<String> pids) throws IOException, InterruptedException {
+        int killed = 0;
+        for (String pid : pids) {
+            if (!pid.matches("\\d+")) continue;
+            run(List.of("-s", serial, "shell", "kill", pid));
+            if (uiautomatorPids(serial).contains(pid)) {
+                run(List.of("-s", serial, "shell", "kill", "-9", pid));
+            }
+            killed++;
+        }
+        return killed;
     }
 
     public Process start(List<String> arguments) throws IOException {

@@ -324,7 +324,7 @@ class FlowExtendedActionsTest {
         private final String handlers;
         FakeAdb() { this("com.example.debug/.DeepLinkActivity\n"); }
         FakeAdb(String handlers) { this.handlers = handlers; }
-        @Override public CommandResult run(List<String> arguments) {
+        @Override public CommandResult run(List<String> arguments, long timeoutMillis) {
             commands.add(List.copyOf(arguments));
             if (arguments.contains("query-activities")) return new CommandResult(0,
                 handlers, "");

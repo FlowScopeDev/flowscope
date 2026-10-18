@@ -192,6 +192,10 @@ must never alter a run result. CLI and CI execution must not produce desktop not
   run. `settle()` remembers its final hierarchy and the next lookup may reuse it for 3 s; only the
   first poll of a lookup may do so. A single dump that outlasts the 1.5 s stability window counts as
   settled. Reports record per-step dump counts and times; keep that instrumentation when changing waits.
+- Every adb call is bounded (`AdbClient.run`; 30 s for `uiautomator dump`, 5 min otherwise) and a hung one
+  is killed. A run and a recording each snapshot the device's `uiautomator` pids and, on exit or JVM
+  shutdown, kill only the pids that appeared after the snapshot. Never a blanket `pkill`: Appium or
+  `am instrument` may be using uiautomator on the same device.
 - Default selector timeout: 10 seconds, overridable by the test or step.
 - After a mutation, compare consecutive hierarchies for up to 1.5 seconds; do not turn observed
   recording delays into replay sleeps.

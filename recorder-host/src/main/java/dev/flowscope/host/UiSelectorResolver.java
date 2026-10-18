@@ -34,7 +34,7 @@ public final class UiSelectorResolver {
         throws IOException, InterruptedException {
         String remote = "/data/local/tmp/flowscope-inspect-window.xml";
         AdbClient.CommandResult dump = adb.run(
-            List.of("-s", serial, "shell", "uiautomator", "dump", remote));
+            List.of("-s", serial, "shell", "uiautomator", "dump", remote), AdbClient.DUMP_TIMEOUT_MILLIS);
         if (dump.exitCode() != 0) return null;
         try {
             return resolve(adb.execOut(serial, "cat", remote), x, y);
