@@ -422,6 +422,10 @@ Switching projects switches everything that belongs to a project:
 
 ## CLI for coding agents
 
+To have Claude Code, Codex or another agent write tests for your app, copy the
+[`flowscope-tests` skill](skills/README.md) into your project. It covers finding real selectors from
+a snapshot, writing, validating and running `.flow` files, and the rules that keep them durable.
+
 Agents should discover capabilities instead of guessing syntax:
 
 ```bash

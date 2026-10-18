@@ -30,6 +30,8 @@ Do not silently fall back between modes. Record the selected mode in every sessi
 - `android-agent/`: standalone Gradle build (needs the Android SDK, not part of the root build)
   publishing `io.github.flowscopedev:flowscope-agent` (real, self-installing via ContentProvider) and
   `flowscope-agent-no-op` (same API, empty) for client apps. Keep both public APIs identical.
+- `skills/`: agent skills users copy into their own projects (`flowscope-tests` teaches an agent to write
+  and run `.flow` tests). Keep its `reference.md` and examples in step with `flowscope schema`.
 - `examples/`: a reference FlowScope project. It must pass `flowscope project validate examples`.
   `examples/sample-app/` is a standalone Android app (XML views and Compose) that depends only on the
   published agent artifacts; its flows are `examples/flows/tests/sample-*.flow` in `sample.suite`.

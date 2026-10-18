@@ -12,6 +12,7 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Added
 
+- A `flowscope-tests` agent skill (`skills/`) that teaches Claude Code, Codex and other coding agents to write, validate and run `.flow` tests.
 - Flow language: `long-press`, `swipe`, `scroll-to`, `press-key`, `clear-text` and `hide-keyboard`,
   plus the selector modifiers `index` and the state filters `enabled`, `checked`, `focused`,
   `clickable` and `selected`.
