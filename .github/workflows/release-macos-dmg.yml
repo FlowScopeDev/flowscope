@@ -3,6 +3,10 @@ name: Release macOS DMG
 # Tag a release as v<packageVersion> (matching recorder-ide/build.gradle.kts) to build the macOS
 # DMG and publish it, with a SHA-256 checksum, as a GitHub Release. The Homebrew cask in
 # FlowScopeDev/homebrew-tap downloads from this release.
+#
+# Published as a pre-release until the rest of PLAN-v1.0.md's must-have list lands (Windows pass,
+# frozen contracts, CI, IDE text-entry testing). Flip it to a full release from the GitHub UI (or
+# `gh release edit v<version> --latest`) once that's true — no new tag needed.
 on:
   push:
     tags: ["v*"]
@@ -45,6 +49,7 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: true
           files: |
             ${{ env.dmg_path }}
             ${{ env.sha256_path }}
