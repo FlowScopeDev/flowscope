@@ -145,6 +145,15 @@ internal class AuthoringState {
      */
     var validation by mutableStateOf(validateSource("", EditorKind.Flow))
 
+    /**
+     * True only while a test or suite is actually replaying.
+     *
+     * Distinct from `DeviceState.busy`, which every ADB call raises — including the three-second
+     * device poll. Driving the run button from `busy` made it flash its in-flight state for the
+     * ~60ms of each poll, so the chrome reported a run that was never happening.
+     */
+    var running by mutableStateOf(false)
+
     fun appendStep(step: String) {
         source = source.trimEnd() + "\n$step\n"
     }

@@ -896,6 +896,7 @@ private fun FlowScopeApp(
         val kind = authoring.kind
         scope.launch {
             deviceState.busy = true
+            authoring.running = true
             val existing = authoring.currentFile
             val target = if (existing != null && !saveAs) existing
                 else deriveTarget(authoring.source, kind).toAbsolutePath()
@@ -978,6 +979,7 @@ private fun FlowScopeApp(
                 )
                 addEvent("×", "Test error", authoring.status, severity = Severity.Error)
             }
+            authoring.running = false
             deviceState.busy = false
         }
     }
@@ -1804,7 +1806,7 @@ private fun FlowScopeApp(
                         deviceState.selected != null &&
                         session.recording == null &&
                         authoring.validation.isValid,
-                    running = deviceState.busy,
+                    running = authoring.running,
                     kind = authoring.kind,
                     shortcut = shortcutFor(
                         if (authoring.kind == EditorKind.Suite) "run.suite" else "run",
