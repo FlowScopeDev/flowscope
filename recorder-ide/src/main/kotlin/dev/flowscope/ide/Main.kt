@@ -1873,6 +1873,7 @@ private fun FlowScopeApp(
                             }
                         },
                             onToggleMirror = ::toggleMirror,
+                        onHideDisplay = { setShowDisplay(false) },
                         )
                     }
                     VerticalDivider(Modifier.fillMaxHeight().width(1.dp), color = Border)

@@ -110,6 +110,7 @@ internal fun DeviceColumn(
     onDeviceKey: (EmbeddedScrcpyClient.DeviceKey) -> Unit,
     onDeviceText: (String) -> Unit,
     onToggleMirror: () -> Unit,
+    onHideDisplay: () -> Unit,
 ) {
     Column(modifier.background(Ink150).padding(DeviceColumnPadding)) {
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -131,6 +132,7 @@ internal fun DeviceColumn(
             onDeviceKey = onDeviceKey,
             onDeviceText = onDeviceText,
             onToggleMirror = onToggleMirror,
+            onHideDisplay = onHideDisplay,
         )
     }
 }
@@ -462,6 +464,7 @@ internal fun DeviceDock(
     onDeviceKey: (EmbeddedScrcpyClient.DeviceKey) -> Unit,
     onDeviceText: (String) -> Unit,
     onToggleMirror: () -> Unit,
+    onHideDisplay: () -> Unit,
 ) {
     var textMenu by remember { mutableStateOf(false) }
     var overflowMenu by remember { mutableStateOf(false) }
@@ -548,7 +551,9 @@ internal fun DeviceDock(
             if (streaming) "SCRCPY" else "SCREENSHOT",
             if (streaming) SignalGreen else SignalAmber,
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(2.dp))
+        DockButton("Hide device display", true, onHideDisplay)
+        Spacer(Modifier.width(2.dp))
 
         Box {
             DockButton("More", true) { overflowMenu = true }
@@ -598,6 +603,23 @@ internal fun DockButton(label: String, enabled: Boolean, onClick: () -> Unit) {
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()),
                     style = Stroke(width = stroke),
                 )
+                "Hide device display" -> {
+                    // An eye with a slash through it.
+                    drawOval(
+                        tint,
+                        topLeft = Offset(0f, size.height * .26f),
+                        size = androidx.compose.ui.geometry.Size(size.width, size.height * .48f),
+                        style = Stroke(width = stroke),
+                    )
+                    drawCircle(tint, radius = size.minDimension * .12f)
+                    drawLine(
+                        tint,
+                        Offset(size.width * .12f, size.height * .92f),
+                        Offset(size.width * .88f, size.height * .08f),
+                        stroke,
+                        StrokeCap.Round,
+                    )
+                }
                 "Type to device" -> {
                     drawRoundRect(
                         tint,
