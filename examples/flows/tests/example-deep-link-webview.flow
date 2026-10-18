@@ -1,0 +1,14 @@
+flowscope 1
+name "Deep link into a WebView"
+package com.example.debug
+mode zero-code
+timeout 15000
+
+step assert-deep-link-handler uri="https://example.com/checkout"
+step open-deep-link uri="https://example.com/checkout" cold-start=true
+step web-wait css="form#checkout"
+step web-type css="input[name=email]" value="${env.TEST_EMAIL}"
+step web-tap css="button[type=submit]"
+step web-assert-url path="/checkout/success"
+step web-assert-text css="h1" text="Payment complete"
+after web-screenshot name=checkout-final

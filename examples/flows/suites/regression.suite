@@ -1,0 +1,6 @@
+flowscope-suite 1
+name "Example regression"
+continue-on-failure true
+
+test tests/example-launch.flow
+test tests/example-login.flow

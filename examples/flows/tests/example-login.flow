@@ -1,0 +1,17 @@
+flowscope 1
+name "Example login flow"
+package com.example.app
+mode zero-code
+timeout 10000
+
+before clear-app-data
+step launch
+step tap-if-visible text="Dismiss" timeout=3000
+step wait-visible id=com.example.app:id/email
+step tap id=com.example.app:id/email
+step type id=com.example.app:id/email value="user@example.com"
+step tap id=com.example.app:id/sign_in
+step assert-visible text="Welcome" timeout=30000
+step screenshot name=welcome
+after screenshot name=final-state
+after force-stop

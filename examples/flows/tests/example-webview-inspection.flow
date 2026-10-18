@@ -1,0 +1,17 @@
+flowscope 1
+name "Inspect the FlowScope WebView fixture"
+package dev.flowscope.fixture
+mode instrumented
+timeout 15000
+
+step launch
+step web-wait page=fixture.flowscope.dev css="#ready"
+step web-assert-cookie page=fixture.flowscope.dev name=fixture_session domain=fixture.flowscope.dev path=/ \
+  secure=true http-only=true same-site=Lax
+step web-assert-storage page=fixture.flowscope.dev area=local key=customerId value="fixture-customer"
+step web-assert-storage page=fixture.flowscope.dev area=session key=checkoutState value="ready"
+step web-assert-interface page=fixture.flowscope.dev name=FixtureAndroid methods="ping,version" source=agent
+step web-assert-secure-context page=fixture.flowscope.dev value=true
+step web-snapshot page=fixture.flowscope.dev name=fixture-web-state
+after web-clear-cookies page=fixture.flowscope.dev domain=fixture.flowscope.dev
+after web-clear-storage page=fixture.flowscope.dev origin="https://fixture.flowscope.dev" types=local,session

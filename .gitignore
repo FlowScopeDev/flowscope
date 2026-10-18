@@ -1,0 +1,45 @@
+.gradle/
+.kotlin/
+build/
+**/build/
+.idea/
+*.iml
+local.properties
+
+# Machine-local configuration and credentials
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p12
+*.pem
+
+# Recorder output can contain screenshots, UI text, logs, and application data
+sessions/
+**/sessions/
+test-runs/
+**/test-runs/
+testing-results/
+**/testing-results/
+reports/
+**/reports/
+captures/
+**/captures/
+
+# Internal planning and local verification notes
+plan.md
+docs/
+TESTING.md
+TESTING-RESULTS*.md
+testing.md
+testing-results*.md
+
+# OS and editor output
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+out/
+dist/
