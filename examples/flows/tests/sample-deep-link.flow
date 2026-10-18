@@ -1,0 +1,15 @@
+flowscope 1
+name "Sample: custom-scheme and https deep links"
+package io.github.flowscopedev.sample
+mode zero-code
+timeout 10000
+
+before force-stop
+step assert-deep-link-handler uri="flowscope-sample://item/42"
+step open-deep-link uri="flowscope-sample://item/42" cold-start=true
+step assert-visible text="Deep link opened: item 42"
+step assert-visible text="scheme: flowscope-sample"
+step open-deep-link uri="https://sample.flowscope.dev/item/7"
+step assert-visible text="Deep link opened: item 7"
+step assert-visible text="scheme: https"
+after force-stop

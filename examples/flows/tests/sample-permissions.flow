@@ -1,0 +1,16 @@
+flowscope 1
+name "Sample: runtime permission grant and revoke"
+package io.github.flowscopedev.sample
+mode zero-code
+timeout 10000
+
+before revoke-permission permission=android.permission.CAMERA
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_permissions
+step assert-visible text="Camera: not granted"
+step grant-permission permission=android.permission.CAMERA
+step back
+step tap id=io.github.flowscopedev.sample:id/open_permissions
+step assert-visible text="Camera: granted"
+after revoke-permission permission=android.permission.CAMERA
+after force-stop

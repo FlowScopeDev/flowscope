@@ -1,0 +1,23 @@
+flowscope 1
+name "Sample: WebView inspection (xml host)"
+package io.github.flowscopedev.sample
+mode instrumented
+timeout 15000
+
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_web_xml
+step web-wait css="#ready"
+step web-type css="input[name=email]" value="user@example.com"
+step web-tap css="#pay"
+step web-assert-text css="#result" text="Payment complete"
+step web-tap css="#ping"
+step web-assert-text css="#result" text="pong"
+step web-assert-cookie name=sample_session domain=sample.flowscope.dev path=/ secure=true http-only=true same-site=Lax
+step web-assert-storage area=local key=customerId value="sample-customer"
+step web-assert-storage area=session key=checkoutState value="ready"
+step web-assert-interface name=SampleAndroid methods="ping,appVersion" source=agent
+step web-assert-secure-context value=true
+step web-snapshot name=sample-web-state-xml
+after web-clear-cookies domain=sample.flowscope.dev
+after web-clear-storage origin="https://sample.flowscope.dev" types=local,session
+after force-stop

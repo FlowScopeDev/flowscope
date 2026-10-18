@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:theme="@style/AppTheme">
+
+        <activity android:name=".HomeActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".LoginXmlActivity" android:label="Login (XML)" />
+        <activity android:name=".LoginComposeActivity" android:label="Login (Compose)" />
+        <activity android:name=".ListXmlActivity" android:label="List (XML)" />
+        <activity android:name=".DetailXmlActivity" android:label="Detail (XML)" />
+        <activity android:name=".ListComposeActivity" android:label="List (Compose)" />
+        <activity android:name=".DetailComposeActivity" android:label="Detail (Compose)" />
+        <activity android:name=".WebXmlActivity" android:label="WebView (XML)" />
+        <activity android:name=".WebComposeActivity" android:label="WebView (Compose)" />
+        <activity android:name=".PermissionsActivity" android:label="Permissions" />
+        <activity android:name=".NetworkActivity" android:label="Network and work" />
+        <activity android:name=".ReferrerActivity" android:label="Install referrer" />
+
+        <!-- flowscope-sample://item/42 and https://sample.flowscope.dev/item/42 (unverified). -->
+        <activity android:name=".DeepLinkActivity" android:exported="true" android:label="Deep link">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="flowscope-sample" android:host="item" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="sample.flowscope.dev" android:pathPrefix="/item" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

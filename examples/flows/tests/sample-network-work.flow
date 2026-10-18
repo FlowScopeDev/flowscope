@@ -1,0 +1,13 @@
+flowscope 1
+name "Sample: network and background-work hooks"
+package io.github.flowscopedev.sample
+mode instrumented
+timeout 10000
+
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_network
+step tap id=fetch_profile
+step assert-visible text="Network: 200 OK" timeout=5000
+step tap id=run_sync
+step assert-visible text="Work: finished" timeout=5000
+after force-stop

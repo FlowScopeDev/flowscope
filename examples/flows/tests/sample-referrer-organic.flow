@@ -1,0 +1,11 @@
+flowscope 1
+name "Sample: no referrer falls back to organic"
+package io.github.flowscopedev.sample
+mode instrumented
+timeout 10000
+
+before clear-install-referrer
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_referrer
+step assert-visible text="Source: organic"
+after force-stop

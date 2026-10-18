@@ -124,6 +124,10 @@ The agent is versioned on its own (`VERSION_NAME`, currently `0.1.0`). The CLI b
 `recorder-ide/build.gradle.kts`; macOS packaging requires a major version of at least 1), so the
 three numbers need not match.
 
+`examples/sample-app/` is a complete client app that consumes the published artifacts and exercises each
+feature in both XML views and Compose; its flows run with `flowscope suite run flows/suites/sample.suite
+--project examples`.
+
 For authoritative WebView bridge and settings metadata, use the API-compatible wrappers in debug
 and release code:
 

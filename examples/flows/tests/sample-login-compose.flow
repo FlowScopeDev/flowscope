@@ -1,0 +1,23 @@
+flowscope 1
+name "Sample: Compose login validation and success"
+package io.github.flowscopedev.sample
+mode zero-code
+timeout 10000
+
+# type taps the field first and appends, so each case starts from a fresh process.
+before clear-app-data
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_login_compose
+step type id=email value="user@example.com"
+step type id=password value="wrong-password"
+step tap id=sign_in
+step assert-visible text="Incorrect email or password"
+step force-stop
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_login_compose
+step type id=email value="user@example.com"
+step type id=password value="correct-horse"
+step tap id=sign_in
+step assert-visible text="Welcome, user@example.com"
+step screenshot name=welcome-compose
+after force-stop

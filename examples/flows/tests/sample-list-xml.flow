@@ -1,0 +1,22 @@
+flowscope 1
+name "Sample: XML list, scroll, and detail"
+package io.github.flowscopedev.sample
+mode zero-code
+timeout 10000
+
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_list_xml
+step wait-visible text="Item 1"
+step scroll direction=up
+step scroll direction=up
+step scroll direction=up
+step assert-not-visible text="Item 1"
+step scroll direction=down
+step scroll direction=down
+step scroll direction=down
+step tap text="Item 1"
+step assert-visible id=io.github.flowscopedev.sample:id/detail_title
+step assert-visible text="This is the detail text for item 1."
+step back
+step wait-visible text="Item 1"
+after force-stop

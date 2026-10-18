@@ -1,0 +1,15 @@
+flowscope-suite 1
+name "Sample app regression"
+continue-on-failure true
+
+test tests/sample-login-xml.flow
+test tests/sample-login-compose.flow
+test tests/sample-list-xml.flow
+test tests/sample-list-compose.flow
+test tests/sample-deep-link.flow
+test tests/sample-permissions.flow
+test tests/sample-network-work.flow
+test tests/sample-install-referrer.flow
+test tests/sample-referrer-organic.flow
+test tests/sample-web-xml.flow
+test tests/sample-web-compose.flow

@@ -1,0 +1,13 @@
+flowscope 1
+name "Sample: injected install referrer"
+package io.github.flowscopedev.sample
+mode instrumented
+timeout 10000
+
+before set-install-referrer value="utm_source=flowscope&utm_campaign=smoke"
+step launch
+step tap id=io.github.flowscopedev.sample:id/open_referrer
+step assert-visible text="Source: flowscope"
+step assert-visible text="Campaign: smoke"
+after clear-install-referrer
+after force-stop

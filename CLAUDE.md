@@ -31,6 +31,8 @@ Do not silently fall back between modes. Record the selected mode in every sessi
   publishing `io.github.flowscopedev:flowscope-agent` (real, self-installing via ContentProvider) and
   `flowscope-agent-no-op` (same API, empty) for client apps. Keep both public APIs identical.
 - `examples/`: a reference FlowScope project. It must pass `flowscope project validate examples`.
+  `examples/sample-app/` is a standalone Android app (XML views and Compose) that depends only on the
+  published agent artifacts; its flows are `examples/flows/tests/sample-*.flow` in `sample.suite`.
 
 ## Stable CLI surface
 
