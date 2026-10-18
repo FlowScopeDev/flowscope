@@ -398,3 +398,14 @@ Claude, Codex, and other coding agents live only in [CLAUDE.md](CLAUDE.md).
 ## License
 
 FlowScope is licensed under the [Apache License 2.0](LICENSE).
+
+### Third-party tools
+
+FlowScope does not bundle or download any of these; you install them yourself, and each keeps its own
+license.
+
+- [scrcpy](https://github.com/Genymobile/scrcpy) by Genymobile (Apache-2.0) powers the low-latency
+  device view. FlowScope starts its `scrcpy-server` and speaks its control protocol.
+- [FFmpeg](https://ffmpeg.org) decodes scrcpy's H.264 stream. Its license (LGPL or GPL) depends on how
+  your copy was built.
+- Android platform tools (`adb`) and the SDK's `apkanalyzer` are used as installed on your machine.
