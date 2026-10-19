@@ -414,6 +414,9 @@ public final class Main {
         FlowTestRunner runner = new FlowTestRunner(
             new AdbClient(), selected, flowTest, outputFor(options, project, Path.of("test-runs")));
         boolean passed = runner.run();
+        // Name the phase that broke on stderr: a cleanup failure and a failed assertion are very
+        // different problems, and nobody should have to open report.json to tell them apart.
+        if (!passed) System.err.println("FAILED: " + runner.failureMessage());
         System.out.println("Report: " + runner.root().resolve("report.json"));
         return passed ? 0 : 1;
     }
@@ -583,6 +586,7 @@ public final class Main {
             keyboard is showing).
             Mutating actions wait for UI stability; assertions poll until timeout.
             before runs setup in order; step is the test; after always runs every cleanup action.
+            A failed cleanup is reported separately from the test failure and still fails the run.
             Device actions: clear-app-data, force-stop, grant-permission permission=...,
             revoke-permission permission=..., and reset-app-permissions.
             Deep-link actions: open-deep-link uri=... [activity=...], assert-deep-link-handler uri=...,

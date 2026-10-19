@@ -14,7 +14,7 @@ timeout 10000             # default selector timeout in ms
 
 before <action>           # setup, runs in order
 step <action>             # the test
-after <action>            # cleanup, always runs
+after <action>            # cleanup, always runs; failures reported separately
 ```
 
 Blank lines and `#` comments are ignored. Double quotes keep spaces. A trailing `\` continues a line.
@@ -110,3 +110,9 @@ flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>]
 
 Exit codes: `0` success, `1` a test failed, `2` invalid input. Every run writes `report.json`,
 `report.html` and `junit.xml`.
+
+A failed run names the phase that broke, so fix the right thing. `report.json` splits
+`primaryFailure` (a `before` or `step` action) from `teardownFailures` (an `after` action), and the
+CLI prints `FAILED: setup failed · …`, `FAILED: cleanup failed · …`, or the test failure on its own.
+A cleanup failure also exits `1`: the device or the fixtures are dirty even though the test body
+passed, so repair the `after` action rather than the assertions.

@@ -945,11 +945,22 @@ private fun FlowScopeApp(
                         )
                         val passed = runner.run()
                         val steps = parsed.steps().size
+                        val teardown = runner.teardownFailures()
+                        // The body held and only cleanup broke. Reporting that as a plain failure
+                        // sends the author hunting through the test for a bug that is not there.
+                        val cleanupOnly =
+                            !passed && runner.primaryFailure() == null && teardown.isNotEmpty()
                         SaveOutcome(
                             target, passed, runner.root(),
-                            if (passed) "PASSED $steps/$steps" else "FAILED",
+                            when {
+                                passed -> "PASSED $steps/$steps"
+                                cleanupOnly -> "FAILED · CLEANUP"
+                                else -> "FAILED"
+                            },
                             testCompletionNotice(parsed.name(), passed, steps),
                             runner.webChanges(),
+                            teardown,
+                            cleanupOnly,
                         )
                     }
                 }
@@ -963,10 +974,16 @@ private fun FlowScopeApp(
                     reportRoot = outcome.reportRoot?.toString(),
                 )
                 outcome.completionNotice?.let(DesktopNotifications::show)
+                val subject = if (kind == EditorKind.Suite) "Suite" else "Test"
                 addEvent(
                     if (outcome.passed) "✓" else "×",
-                    "${if (kind == EditorKind.Suite) "Suite" else "Test"} " +
-                        if (outcome.passed) "passed" else "failed",
+                    when {
+                        outcome.passed -> "$subject passed"
+                        // Naming this one "failed" would contradict the run bar and the report,
+                        // both of which say the test body passed.
+                        outcome.cleanupOnly -> "$subject cleanup failed"
+                        else -> "$subject failed"
+                    },
                     authoring.status,
                     severity = if (outcome.passed) Severity.Normal else Severity.Error,
                 )
@@ -976,6 +993,11 @@ private fun FlowScopeApp(
                 }
                 outcome.webChanges.forEach { change ->
                     addEvent("◇", "WebView state changed", change, channel = Channel.Network)
+                }
+                // Detail stays inside FlowScope: the completion notification above is deliberately
+                // generic, so the timeline is where a cleanup failure gets named.
+                outcome.teardownFailures.forEach { cleanup ->
+                    addEvent("×", "Cleanup failed", cleanup, severity = Severity.Error)
                 }
             }.onFailure { failure ->
                 authoring.status = failure.message ?: "Test operation failed"
@@ -2920,6 +2942,10 @@ private data class SaveOutcome(
     val label: String?,
     val completionNotice: CompletionNotice?,
     val webChanges: List<String> = emptyList(),
+    /** Failed `after` steps. A dirty teardown is not the same event as a failed assertion. */
+    val teardownFailures: List<String> = emptyList(),
+    /** The test body passed and only cleanup broke, so nothing may call this a test failure. */
+    val cleanupOnly: Boolean = false,
 )
 
 private fun suiteLabel(suite: FlowSuite, passed: Boolean): String {

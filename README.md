@@ -207,7 +207,14 @@ flowscope test run tests/login.flow --serial <adb-serial>
 `before` prepares and verifies the initial state, `step` is the test body, and `after` always runs
 cleanup even when setup or the test fails. Replay uses selector conditions and UI stability checks
 rather than recorded delays. Every run writes `report.json`, an offline `report.html`, and
-`junit.xml`; failures also save a screenshot and UI hierarchy. Every report includes a
+`junit.xml`; failures also save a screenshot and UI hierarchy.
+
+Each of the three phases is reported distinctly, because a leaked fixture and a failed assertion
+need different fixes. `report.json` separates `primaryFailure` (setup or test) from
+`teardownFailures`; `report.html` gives cleanup its own **Cleanup failures** heading; `junit.xml`
+names the phase in the failure message and lists every cleanup failure in the failure body; and the
+CLI prints one `FAILED: …` line naming the phase. A failed cleanup still fails the run (exit `1`) —
+a dirty device or an undeleted fixture would poison the next one. Every report includes a
 **Performance** section (total time, UI hierarchy dumps and their share of the run, slowest steps),
 and `instrumented` runs add an **Agent events** section: the app's own semantic actions, network
 calls (route templates and status only), and background work, each attributed to the step during which

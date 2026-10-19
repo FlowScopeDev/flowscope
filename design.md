@@ -210,6 +210,11 @@ Lifecycle instructions are grouped as `BEFORE`, `TEST`, and `AFTER` in card view
 their offline HTML report from the rail and retain a separate reveal-folder action. JSON remains the
 machine-readable source for the IDE, while JUnit output supports CI.
 
+The outcome summary names the phase that broke rather than reporting a bare failure. A run whose
+body passed but whose cleanup failed reads `FAILED · CLEANUP`, and each cleanup failure is posted to
+the timeline as its own error entry — never folded into the test's own failure, which would send the
+author looking for a bug that is not in the test.
+
 When an IDE-started run completes, FlowScope posts one native system notification after its reports
 are ready. A test notification names the test and its result. A regression notification names the
 suite and summarizes passed, failed, and skipped tests. Detailed failures stay in FlowScope and the

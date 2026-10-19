@@ -20,7 +20,8 @@ class FlowSuiteReportTest {
                     "passed", 3210, "01-Login_smoke/report.json", null),
                 new FlowSuiteRunner.TestOutcome(2, 7, "tests/terms.flow", "Terms and continue",
                     "failed", 18044, "02-Terms_and_continue/report.json",
-                    "Element did not become visible: [text=Welcome]"))));
+                    "Element did not become visible: [text=Welcome]",
+                    List.of("force-stop: device not found")))));
 
         assertEquals("""
             {
@@ -38,11 +39,12 @@ class FlowSuiteReportTest {
               "tests": [
                 {"number": 1, "line": 6, "reference": "tests/login.flow", "name": "Login smoke",\
              "status": "passed", "durationMillis": 3210,\
-             "report": "01-Login_smoke/report.json", "error": null},
+             "report": "01-Login_smoke/report.json", "error": null, "teardownErrors": []},
                 {"number": 2, "line": 7, "reference": "tests/terms.flow",\
              "name": "Terms and continue", "status": "failed", "durationMillis": 18044,\
              "report": "02-Terms_and_continue/report.json",\
-             "error": "Element did not become visible: [text=Welcome]"}
+             "error": "Element did not become visible: [text=Welcome]",\
+             "teardownErrors": ["force-stop: device not found"]}
               ]
             }
             """, json);
@@ -102,6 +104,29 @@ class FlowSuiteReportTest {
         assertEquals(true, html.contains("01-A/report.html"));
         assertEquals(true, junit.contains("Smoke &amp; regression"));
         assertEquals(true, junit.contains("bad &lt;state&gt;"));
+    }
+
+    @Test
+    void cleanupFailuresReachEverySuiteArtefactNotJustTheTestReport() {
+        FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
+            "Nightly", "flows/suites/n.suite", "/app", "ABC", false, STARTED, ENDED,
+            // `error` is what the runner stores: FlowTestRunner.failureMessage(), already composed.
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "failed", 10,
+                "01-A/report.json",
+                "tap: no element matched · cleanup also failed (1): api-request: expected 204, got 500",
+                List.of("api-request: expected 204, got 500"))));
+
+        // The structured array is for a CI script, which should not have to parse a sentence.
+        assertEquals(true, FlowSuiteRunner.reportJson(report)
+            .contains("\"teardownErrors\": [\"api-request: expected 204, got 500\"]"));
+        // The human-facing surfaces carry it inside the verdict, which already names the phase, and
+        // link to the per-test report for the breakdown — so neither says it twice.
+        String junit = FlowSuiteRunner.junitXml(report);
+        assertEquals(true, junit.contains("cleanup also failed (1)"));
+        // The per-test report linked from this row holds the phase-by-phase breakdown. The aggregate
+        // must not restate it, or every cell says the same thing twice.
+        assertEquals(false, junit.contains("cleanup: api-request"));
+        assertEquals(true, FlowSuiteRunner.reportHtml(report).contains("cleanup also failed (1)"));
     }
 
     private static FlowSuiteRunner.TestOutcome outcome(String status) {

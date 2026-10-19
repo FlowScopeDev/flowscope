@@ -37,7 +37,14 @@ public final class FlowSuiteRunner {
     public record Progress(int number, int total, String reference, String status) {}
 
     public record TestOutcome(int number, int line, String reference, String name, String status,
-                              long durationMillis, String report, String error) {}
+                              long durationMillis, String report, String error,
+                              List<String> teardownErrors) {
+        /** A test with clean teardown, or one that never got far enough to have any. */
+        public TestOutcome(int number, int line, String reference, String name, String status,
+            long durationMillis, String report, String error) {
+            this(number, line, reference, name, status, durationMillis, report, error, List.of());
+        }
+    }
 
     public record SuiteReport(String name, String suiteFile, String projectRoot,
                               String deviceSerial, boolean continueOnFailure,
@@ -142,6 +149,7 @@ public final class FlowSuiteRunner {
             Instant testStarted = Instant.now();
             boolean passed;
             String error = null;
+            List<String> teardownErrors = List.of();
             FlowTestRunner runner =
                 new FlowTestRunner(adb, device, current.test(), root, current.directoryName());
             try {
@@ -149,6 +157,9 @@ public final class FlowSuiteRunner {
                 // A failed step assertion returns false rather than throwing, so the reason has to
                 // be read back from the runner or the aggregate report would say only "failed".
                 if (!passed) error = runner.failureMessage();
+                // Read unconditionally: a test whose body passed but whose cleanup failed is already
+                // `failed`, and a leaked fixture must reach the aggregate report either way.
+                teardownErrors = runner.teardownFailures();
             } catch (Exception failure) {
                 // The device or ADB died mid-test. That is this test's failure, and
                 // continue-on-failure still decides whether the suite goes on.
@@ -160,7 +171,7 @@ public final class FlowSuiteRunner {
             String status = passed ? "passed" : "failed";
             outcomes.add(new TestOutcome(number, current.entry().line(),
                 current.entry().reference(), current.test().name(), status, elapsed,
-                current.directoryName() + "/report.json", error));
+                current.directoryName() + "/report.json", error, teardownErrors));
 
             System.out.printf("DONE %02d/%02d  %s · %s · %.1fs%n",
                 number, total, status, current.test().name(), elapsed / 1000.0);
@@ -237,6 +248,7 @@ public final class FlowSuiteRunner {
                 .append(", \"durationMillis\": ").append(test.durationMillis())
                 .append(", \"report\": ").append(Json.quote(test.report()))
                 .append(", \"error\": ").append(Json.quote(test.error()))
+                .append(", \"teardownErrors\": ").append(jsonStrings(test.teardownErrors()))
                 .append("}");
         }
         out.append(report.tests().isEmpty() ? "]\n" : "\n  ]\n");
@@ -281,12 +293,25 @@ public final class FlowSuiteRunner {
                 .append(xml(test.reference())).append("\" time=\"")
                 .append(test.durationMillis() / 1000.0).append("\">");
             if (test.status().equals("failed")) {
+                // `error` is the test's own failureMessage(), which already names the phase and every
+                // cleanup failure. The phase-by-phase breakdown stays in the per-test junit.xml this
+                // row links to; repeating it here would say the same thing twice.
                 out.append("<failure message=\"").append(xml(test.error())).append("\">")
                     .append(xml(test.error())).append("</failure>");
             } else if (test.status().equals("skipped")) out.append("<skipped/>");
             out.append("</testcase>\n");
         }
         return out.append("</testsuite>\n").toString();
+    }
+
+    /** A JSON array of strings, quoted by the same strict writer as every other report field. */
+    private static String jsonStrings(List<String> values) {
+        StringBuilder out = new StringBuilder("[");
+        for (int index = 0; index < values.size(); index++) {
+            if (index > 0) out.append(", ");
+            out.append(Json.quote(values.get(index)));
+        }
+        return out.append("]").toString();
     }
 
     private static String html(String value) {

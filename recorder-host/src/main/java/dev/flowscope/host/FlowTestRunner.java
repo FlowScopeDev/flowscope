@@ -83,10 +83,52 @@ public final class FlowTestRunner {
             .filter(Objects::nonNull).flatMap(value -> Arrays.stream(value.split("; "))).toList();
     }
 
+    /**
+     * The first failed setup or test step, or null when both phases passed.
+     *
+     * <p>Deliberately excludes the `after` phase. Cleanup is a different kind of event, and folding
+     * it in here would present a dirty teardown as a failed assertion.
+     */
+    public String primaryFailure() {
+        return results.stream()
+            .filter(r -> r.status.equals("failed") && r.step.phase() != FlowTest.Phase.AFTER)
+            .findFirst().map(FlowTestRunner::describe).orElse(null);
+    }
+
+    /** Every failed cleanup step, formatted the same way. Empty when teardown was clean. */
+    public List<String> teardownFailures() {
+        return results.stream()
+            .filter(r -> r.status.equals("failed") && r.step.phase() == FlowTest.Phase.AFTER)
+            .map(FlowTestRunner::describe).toList();
+    }
+
+    /**
+     * One line naming the phase that broke, or null when the run passed. Every surface with room for
+     * a single string — the CLI, `junit.xml`'s message attribute, a suite outcome — reads this, so
+     * none of them can mistake a cleanup failure for a test failure.
+     */
     public String failureMessage() {
-        return results.stream().filter(r -> r.status.equals("failed")).findFirst()
-            .map(r -> r.error == null ? r.step.action() + " failed" : r.step.action() + ": " + r.error)
-            .orElse(null);
+        String primary = primaryFailure();
+        List<String> teardown = teardownFailures();
+        if (primary == null) {
+            return teardown.isEmpty() ? null : "cleanup failed · " + String.join(" · ", teardown);
+        }
+        String verdict = (setupFailed() ? "setup failed · " : "") + primary;
+        if (teardown.isEmpty()) return verdict;
+        return verdict + " · cleanup also failed (" + teardown.size() + "): "
+            + String.join(" · ", teardown);
+    }
+
+    /** True when the primary failure came from `before`, so the test body never ran. */
+    private boolean setupFailed() {
+        return results.stream()
+            .filter(r -> r.status.equals("failed") && r.step.phase() != FlowTest.Phase.AFTER)
+            .findFirst().map(r -> r.step.phase() == FlowTest.Phase.BEFORE).orElse(false);
+    }
+
+    private static String describe(StepResult result) {
+        return result.error == null ? result.step.action() + " failed"
+            : result.step.action() + ": " + result.error;
     }
 
     public boolean run() throws Exception {
@@ -1245,15 +1287,48 @@ public final class FlowTestRunner {
         Files.writeString(root.resolve("junit.xml"), junitXml(passed, Duration.between(started, ended).toMillis()), StandardCharsets.UTF_8);
     }
     private String reportJson(boolean passed, Instant started, Instant ended) {
-        String primary=results.stream().filter(r->r.status.equals("failed")&&r.step.phase()!=FlowTest.Phase.AFTER).map(r->r.error).findFirst().orElse(null); List<String> teardown=results.stream().filter(r->r.status.equals("failed")&&r.step.phase()==FlowTest.Phase.AFTER).map(r->r.error).toList();
+        // Both read the shared phase-aware API, so the report, junit.xml and the console agree
+        // instead of spelling the same failure three different ways.
+        String primary=primaryFailure(); List<String> teardown=teardownFailures();
         StringBuilder out=new StringBuilder("{\n  \"schemaVersion\": 2,\n  \"kind\": \"test\",\n").append("  \"name\": ").append(Json.quote(test.name())).append(",\n  \"packageName\": ").append(Json.quote(test.packageName())).append(",\n  \"mode\": ").append(Json.quote(test.mode().cliName())).append(",\n  \"deviceSerial\": ").append(Json.quote(device.serial())).append(",\n  \"startedAt\": ").append(Json.quote(started.toString())).append(",\n  \"endedAt\": ").append(Json.quote(ended.toString())).append(",\n  \"status\": ").append(Json.quote(passed?"passed":"failed")).append(",\n  \"primaryFailure\": ").append(Json.quote(primary)).append(",\n  \"teardownFailures\": [");
         for(int i=0;i<teardown.size();i++){if(i>0)out.append(", ");out.append(Json.quote(teardown.get(i)));} out.append("],\n  \"webView\": ").append(previousWebState == null ? "null" : WebViewInspector.json(previousWebState.sanitized())).append(",\n  \"steps\": [\n");
         for(int i=0;i<results.size();i++){var r=results.get(i);out.append("    {\"number\": ").append(r.number).append(", \"line\": ").append(r.step.line()).append(", \"phase\": ").append(Json.quote(r.step.phase().value())).append(", \"action\": ").append(Json.quote(r.step.action())).append(", \"status\": ").append(Json.quote(r.status)).append(", \"durationMillis\": ").append(r.durationMillis).append(", \"uiDumps\": ").append(r.dumps).append(", \"uiDumpMillis\": ").append(r.dumpMillis).append(", \"error\": ").append(Json.quote(r.error)).append(", \"details\": {");int d=0;for(var e:r.details.entrySet()){if(d++>0)out.append(", ");out.append(Json.quote(e.getKey())).append(": ").append(Json.quote(e.getValue()));}out.append("}}");if(i+1<results.size())out.append(',');out.append('\n');} out.append("  ],\n  \"performance\": ").append(performanceJson(started, ended));
         out.append(",\n  \"agentEvents\": ").append(agentEventsJson(started));
         return out.append("\n}\n").toString();
     }
-    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(r.step.action())).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+(passed?"passed":"failed")+"\">"+(passed?"PASSED":"FAILED")+"</strong><p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p><table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>"+performanceHtml(started,ended)+agentEventsHtml(started);}
-    private String junitXml(boolean passed,long millis){String failure=failureMessage();return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\""+xml(test.name())+"\" tests=\"1\" failures=\""+(passed?0:1)+"\" time=\""+(millis/1000.0)+"\"><testcase classname=\""+xml(test.packageName())+"\" name=\""+xml(test.name())+"\" time=\""+(millis/1000.0)+"\">"+(passed?"":"<failure message=\""+xml(failure)+"\">"+xml(failure)+"</failure>")+"</testcase></testsuite>\n";}
+    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(r.step.action())).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+(passed?"passed":"failed")+"\">"+(passed?"PASSED":"FAILED")+"</strong>"+verdictHtml()+"<p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p>"+teardownHtml()+"<table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>"+performanceHtml(started,ended)+agentEventsHtml(started);}
+    private String junitXml(boolean passed,long millis){String failure=failureMessage();return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\""+xml(test.name())+"\" tests=\"1\" failures=\""+(passed?0:1)+"\" time=\""+(millis/1000.0)+"\"><testcase classname=\""+xml(test.packageName())+"\" name=\""+xml(test.name())+"\" time=\""+(millis/1000.0)+"\">"+(passed?"":"<failure message=\""+xml(failure==null?"failed":failure)+"\">"+xml(failureDetail())+"</failure>")+"</testcase></testsuite>\n";}
+
+    /**
+     * The `<failure>` body: the primary failure labelled by its phase, then one line per cleanup
+     * failure. A junit summary shows only the message attribute, so the body is the only place a
+     * teardown failure can survive alongside a test failure instead of being dropped.
+     */
+    private String failureDetail() {
+        StringBuilder detail = new StringBuilder();
+        String primary = primaryFailure();
+        if (primary != null) detail.append(setupFailed() ? "setup: " : "test: ").append(primary);
+        for (String cleanup : teardownFailures()) {
+            if (!detail.isEmpty()) detail.append('\n');
+            detail.append("cleanup: ").append(cleanup);
+        }
+        return detail.isEmpty() ? "failed" : detail.toString();
+    }
+
+    /** The one-line verdict, so a reader never has to scan the step table to find the broken phase. */
+    private String verdictHtml() {
+        String verdict = failureMessage();
+        return verdict == null ? "" : "<p class=\"failed\">" + html(verdict) + "</p>";
+    }
+
+    /** Cleanup failures get their own heading: they are easy to miss as two rows in a long table. */
+    private String teardownHtml() {
+        List<String> teardown = teardownFailures();
+        if (teardown.isEmpty()) return "";
+        StringBuilder out = new StringBuilder("<h2>Cleanup failures</h2><ul>");
+        for (String cleanup : teardown) out.append("<li class=\"failed\">").append(html(cleanup)).append("</li>");
+        return out.append("</ul>").toString();
+    }
 
     private static long elapsed(long n){return Duration.ofNanos(System.nanoTime()-n).toMillis();} private static String message(Exception e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();} private static String safeFile(String n){return n.replaceAll("[^a-zA-Z0-9._-]","_");}
     private String safeUrl(URI u){String path=u.getPath()==null?"":u.getPath();for(String value:variables.values())if(value!=null&&!value.isBlank())path=path.replace(value,"{captured}");return u.getScheme()+"://"+u.getAuthority()+path;}

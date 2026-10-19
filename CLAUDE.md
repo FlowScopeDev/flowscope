@@ -113,6 +113,13 @@ part of the assertion but are weaker across localization. Do not encode raw coor
 tests. Do not generate fixed sleeps: mutation steps wait briefly for UI stability and condition steps
 poll until their timeout.
 
+The three phases are reported distinctly and a failed `after` must never be presented as a test
+failure: it means the device or the fixtures are dirty, not that an assertion broke. `report.json`
+splits `primaryFailure` from `teardownFailures`, and every surface with room for one string reads
+`FlowTestRunner.failureMessage`, which names the phase. A `junit.xml` failure body must keep every
+cleanup failure — the message attribute alone used to drop them, hiding a leaked fixture from CI. A
+cleanup failure still fails the run.
+
 API requests execute on the host with Java's platform TLS. Secrets come from `${env.NAME}` and
 captured scalar JSON fields use `${var.name}` within the current test only. Reports retain sanitized
 request metadata but never environment values, headers, bodies, or captured values. Device lifecycle
@@ -244,6 +251,14 @@ ever appends to an existing `.gitignore`.
 Before finishing a behavior change, compile both modules. For recorder changes, make a short session
 against a connected device when available and validate gzip/JSONL output. For runner changes, validate
 the examples and execute an appropriate smoke test.
+
+`.github/workflows/ci.yml` is the required push and pull-request build: it tests the host and IDE,
+validates the CLI examples, builds/lints both Android agent artifacts and the WebView fixture, and
+builds the sample app against locally published agent artifacts. `.github/workflows/sample-suite-emulator.yml`
+is the device-level gate: it installs that same local agent and sample app on an API 35 emulator and
+runs all tests in `examples/flows/suites/sample.suite`. Keep both workflows secret-free and retain
+their read-only repository permission. Emulator reports may be uploaded, but they must remain subject
+to the same report redaction rules as local and CLI runs.
 
 macOS desktop releases are tagged `v<version>` matching `packageVersion` in
 `recorder-ide/build.gradle.kts`, which triggers `.github/workflows/release-macos-dmg.yml` to build

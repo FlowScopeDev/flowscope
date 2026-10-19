@@ -45,7 +45,8 @@ not exist.
 - Never use raw coordinates and never add fixed sleeps. Mutating steps wait for the UI to settle;
   `wait-visible` and the assert steps poll until their timeout. Raise `timeout=` on slow steps.
 - One behaviour per test, short and independent. Start from a known state: `before clear-app-data`,
-  `before grant-permission ...`, and end with `after force-stop`. Cleanup in `after` always runs.
+  `before grant-permission ...`, and end with `after force-stop`. Cleanup in `after` always runs,
+  and a failed cleanup is reported as its own failure — read the phase before editing the test.
 - Use `tap-if-visible` for optional dialogs (permission prompts, banners, onboarding).
 - Assert outcomes the user can see: `assert-visible`, `assert-not-visible`, state filters such as
   `checked=true`. Add a `screenshot` at the end of important flows.

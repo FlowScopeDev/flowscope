@@ -63,6 +63,86 @@ class FlowLifecycleRunnerTest {
         assertTrue(report.contains("\"status\": \"skipped\""));
         assertTrue(adb.commands.stream().anyMatch(command -> command.contains("force-stop")));
         assertTrue(adb.commands.stream().anyMatch(command -> command.contains("revoke")));
+        // The verdict names the phase: setup broke, the body never ran, cleanup was clean.
+        assertTrue(runner.failureMessage().startsWith("setup failed · "), runner.failureMessage());
+        assertTrue(runner.teardownFailures().isEmpty());
+    }
+
+    @Test
+    void cleanupOnlyFailureIsNamedAsCleanupAndStillFailsTheRun() throws Exception {
+        FlowTest test = FlowTestParser.parseSource("""
+            flowscope 1
+            package com.example.debug
+            step force-stop
+            after api-request method=DELETE url="https://service.example/fixtures/7"               expect-status=204
+            """, "cleanup.flow");
+        FlowTestRunner runner = new FlowTestRunner(new FakeAdb(), DEVICE, test, temp, "cleanup",
+            new RecordingHttp(new FlowHttpClient.Response(500, "{}")), Map.of());
+
+        // A dirty teardown leaves a leaked fixture behind, so the run still fails.
+        assertFalse(runner.run());
+        assertNull(runner.primaryFailure());
+        assertEquals(1, runner.teardownFailures().size());
+        assertTrue(runner.failureMessage().startsWith("cleanup failed · "), runner.failureMessage());
+
+        String report = Files.readString(runner.root().resolve("report.json"));
+        assertTrue(report.contains("\"primaryFailure\": null"), report);
+        assertTrue(report.contains("\"teardownFailures\": [\"api-request:"), report);
+
+        String junit = Files.readString(runner.root().resolve("junit.xml"));
+        assertTrue(junit.contains("message=\"cleanup failed"), junit);
+        assertTrue(junit.contains("cleanup: api-request:"), junit);
+        // Nothing may claim the test body failed: it passed.
+        assertFalse(junit.contains("test: "), junit);
+
+        String html = Files.readString(runner.root().resolve("report.html"));
+        assertTrue(html.contains("Cleanup failures"), html);
+    }
+
+    @Test
+    void aTestFailureKeepsItsCleanupFailuresInJunitRatherThanDroppingThem() throws Exception {
+        FlowTest test = FlowTestParser.parseSource("""
+            flowscope 1
+            package com.example.debug
+            step api-request method=GET url="https://service.example/thing" expect-status=200
+            after api-request method=DELETE url="https://service.example/fixtures/7"               expect-status=204
+            """, "both.flow");
+        FlowTestRunner runner = new FlowTestRunner(new FakeAdb(), DEVICE, test, temp, "both",
+            new RecordingHttp(new FlowHttpClient.Response(418, "{}"),
+                new FlowHttpClient.Response(500, "{}")), Map.of());
+
+        assertFalse(runner.run());
+        assertNotNull(runner.primaryFailure());
+        assertEquals(1, runner.teardownFailures().size());
+
+        // The regression this change fixes: the single message attribute used to be the only place
+        // a failure could land, so the cleanup error vanished from the one artifact CI reads.
+        String junit = Files.readString(runner.root().resolve("junit.xml"));
+        assertTrue(junit.contains("cleanup also failed (1)"), junit);
+        assertTrue(junit.contains("test: api-request:"), junit);
+        assertTrue(junit.contains("cleanup: api-request:"), junit);
+    }
+
+    @Test
+    void aFailedCleanupNeverLeaksACapturedValueIntoAnyReport() throws Exception {
+        FlowTest test = FlowTestParser.parseSource("""
+            flowscope 1
+            package com.example.debug
+            before api-request method=POST url="https://service.example/fixtures"               expect-status=201 capture.id=data.id
+            step force-stop
+            after api-request method=DELETE url="https://service.example/fixtures/${var.id}"               expect-status=204 if-var=id
+            """, "redact.flow");
+        FlowTestRunner runner = new FlowTestRunner(new FakeAdb(), DEVICE, test, temp, "redact",
+            new RecordingHttp(new FlowHttpClient.Response(201, "{\"data\":{\"id\":\"customer-7\"}}"),
+                new FlowHttpClient.Response(500, "{}")), Map.of());
+
+        assertFalse(runner.run());
+        assertEquals(1, runner.teardownFailures().size());
+        assertFalse(runner.failureMessage().contains("customer-7"), runner.failureMessage());
+        for (String name : List.of("report.json", "report.html", "junit.xml")) {
+            String written = Files.readString(runner.root().resolve(name));
+            assertFalse(written.contains("customer-7"), name + " leaked a captured value");
+        }
     }
 
     @Test
