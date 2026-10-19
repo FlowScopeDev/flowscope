@@ -204,6 +204,20 @@ flowscope test validate tests/login.flow
 flowscope test run tests/login.flow --serial <adb-serial>
 ```
 
+Twelve worked examples ship in `examples/flows/tests/sample-*.flow`, written against the
+[sample app](examples/sample-app/). Between them they cover the same screen in XML views and in
+Compose, gestures and scrolling, text input and validation, runtime permissions, deep links,
+WebViews, install-referrer simulation, and network and background work — the fastest way to see
+what a real test looks like.
+
+Eleven of them run as `sample.suite`, which CI replays on an Android API 35 emulator on every push,
+so they cannot drift from the app. `sample-gestures.flow` is the exception and says so in its first
+line: it is parser-validated but not yet verified on a device.
+
+```bash
+flowscope suite run flows/suites/sample.suite --project examples --serial <adb-serial>
+```
+
 `before` prepares and verifies the initial state, `step` is the test body, and `after` always runs
 cleanup even when setup or the test fails. Replay uses selector conditions and UI stability checks
 rather than recorded delays. Every run writes `report.json`, an offline `report.html`, and
