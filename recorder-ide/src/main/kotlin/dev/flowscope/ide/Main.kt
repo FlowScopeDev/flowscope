@@ -110,6 +110,7 @@ import dev.flowscope.host.Device
 import dev.flowscope.host.EmbeddedScrcpyClient
 import dev.flowscope.host.EmulatorClient
 import dev.flowscope.host.FlowProject
+import dev.flowscope.host.FlowScopeVersion
 import dev.flowscope.host.FlowSuite
 import dev.flowscope.host.FlowSuiteParser
 import dev.flowscope.host.FlowSuiteRunner
@@ -124,6 +125,7 @@ import dev.flowscope.host.ScrcpyControl
 import dev.flowscope.host.SessionRecorder
 import dev.flowscope.host.UiHierarchy
 import dev.flowscope.host.UiSelectorResolver
+import dev.flowscope.host.UpdateCheck
 import dev.flowscope.host.WebViewInspector
 import androidx.compose.ui.geometry.Rect
 import kotlinx.coroutines.Dispatchers
@@ -209,6 +211,7 @@ private fun FlowScopeApp(
     val timeline = remember { TimelineState() }
     val session = remember { SessionState() }
     var secretsFile by remember { mutableStateOf(Preferences.loadSecretsFile()) }
+    var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
     val deviceState = remember {
         DeviceState().apply {
             embeddedStatus = embeddedScrcpy.availabilitySummary()
@@ -782,6 +785,32 @@ private fun FlowScopeApp(
                 addEvent("×", "Project settings not saved", projectState.status,
                     severity = Severity.Error)
             }
+        }
+    }
+
+    /**
+     * Asks GitHub whether a newer release exists. Only ever called from the Settings button:
+     * FlowScope has no background check and sends nothing but its own version.
+     */
+    fun checkForUpdates() {
+        if (updateStatus == UpdateStatus.Checking) return
+        updateStatus = UpdateStatus.Checking
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { UpdateCheck.check(FlowScopeVersion.current()) }.getOrElse {
+                    UpdateCheck.Outcome.Unavailable("could not reach github.com")
+                }
+            }
+            updateStatus = UpdateStatus.Done(outcome)
+            val message = describeUpdate(UpdateStatus.Done(outcome))
+            addEvent(
+                if (message.tone == UpdateTone.Alert) "!" else "\u2713",
+                "Update check",
+                // The public release page may appear here; the response body never does.
+                listOfNotNull(message.text, message.releaseUrl).joinToString(" \u00b7 "),
+                severity = if (outcome is UpdateCheck.Outcome.Unavailable) Severity.Warning
+                else Severity.Normal,
+            )
         }
     }
 
@@ -1904,6 +1933,14 @@ private fun FlowScopeApp(
                                 secretsFile = null
                                 scope.launch(Dispatchers.IO) { Preferences.saveSecretsFile(null) }
                             },
+                            about = AboutPanel(
+                                version = FlowScopeVersion.current(),
+                                status = updateStatus,
+                                onCheck = ::checkForUpdates,
+                                onOpenRelease = { url ->
+                                    scope.launch(Dispatchers.IO) { openInBrowser(url) }
+                                },
+                            ),
                             modifier = Modifier.weight(1f),
                         )
                     }

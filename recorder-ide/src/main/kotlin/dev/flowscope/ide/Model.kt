@@ -230,3 +230,56 @@ internal enum class InteractionMode(val label: String, val detail: String) {
     Inspect("INSPECT", "Resolves selectors and generates steps"),
     Mirror("MIRROR", "Raw passthrough · no selector, no steps"),
 }
+
+/**
+ * State of the Settings "Check for updates" action. FlowScope has no telemetry, so this never
+ * leaves [UpdateStatus.Idle] until someone presses the button.
+ */
+internal sealed interface UpdateStatus {
+    /** Nothing has been checked this session. */
+    data object Idle : UpdateStatus
+
+    data object Checking : UpdateStatus
+
+    data class Done(val outcome: dev.flowscope.host.UpdateCheck.Outcome) : UpdateStatus
+}
+
+/** How strongly a status reads. Always paired with [UpdateMessage.text]: colour is never the signal. */
+internal enum class UpdateTone { Neutral, Good, Alert }
+
+internal data class UpdateMessage(
+    val text: String,
+    val tone: UpdateTone,
+    /** GitHub's public release page, present only when there is a newer release to look at. */
+    val releaseUrl: String? = null,
+)
+
+/**
+ * Describes an [UpdateStatus] in words. Pure, so the wording is tested without Compose or a
+ * network: every state carries its own sentence, because a coloured dot alone would fail
+ * CLAUDE.md's rule that colour must not be the only carrier of meaning.
+ */
+internal fun describeUpdate(status: UpdateStatus): UpdateMessage = when (status) {
+    UpdateStatus.Idle -> UpdateMessage("Not checked — FlowScope never checks on its own.", UpdateTone.Neutral)
+    UpdateStatus.Checking -> UpdateMessage("Checking…", UpdateTone.Neutral)
+    is UpdateStatus.Done -> when (val outcome = status.outcome) {
+        is dev.flowscope.host.UpdateCheck.Outcome.UpToDate ->
+            UpdateMessage("Up to date — ${outcome.version()} is the newest release.", UpdateTone.Good)
+        is dev.flowscope.host.UpdateCheck.Outcome.Available -> UpdateMessage(
+            "Update available — ${outcome.version()}", UpdateTone.Alert, outcome.releaseUrl(),
+        )
+        is dev.flowscope.host.UpdateCheck.Outcome.NoRelease ->
+            UpdateMessage("No published release yet.", UpdateTone.Neutral)
+        is dev.flowscope.host.UpdateCheck.Outcome.Unavailable ->
+            UpdateMessage("Could not check — ${outcome.reason()}", UpdateTone.Alert)
+        else -> UpdateMessage("Could not check.", UpdateTone.Alert)
+    }
+}
+
+/** Everything the Settings About section needs; a holder for the same reason as [FlowRail]. */
+internal data class AboutPanel(
+    val version: String,
+    val status: UpdateStatus,
+    val onCheck: () -> Unit,
+    val onOpenRelease: (String) -> Unit,
+)

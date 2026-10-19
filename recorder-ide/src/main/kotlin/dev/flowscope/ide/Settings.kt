@@ -49,6 +49,7 @@ internal fun SettingsSurface(
     secretsFile: Path?,
     onChooseSecretsFile: () -> Unit,
     onClearSecretsFile: () -> Unit,
+    about: AboutPanel,
     commands: List<Command> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
@@ -63,7 +64,8 @@ internal fun SettingsSurface(
             Text("Settings", color = TextHi, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Appearance, secrets, device display and keyboard shortcuts for this computer.",
+                "Appearance, secrets, device display, keyboard shortcuts and version for this " +
+                    "computer.",
                 color = TextMid,
                 fontSize = 13.sp,
             )
@@ -163,6 +165,23 @@ internal fun SettingsSurface(
                 }
             }
 
+            Spacer(Modifier.height(34.dp))
+            Text(
+                "ABOUT",
+                color = TextMid,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                letterSpacing = 1.2.sp,
+            )
+            Spacer(Modifier.height(10.dp))
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                    .background(Ink150)
+                    .border(1.dp, Ink300, RoundedCornerShape(8.dp)),
+            ) {
+                AboutRow(about)
+            }
+
             // design.md §6.1 — the same command table drives the keymap and the palette, so this
             // list cannot drift out of date the way a hand-written cheat sheet would.
             val shortcuts = commands.filter { it.shortcut.isNotBlank() }
@@ -195,8 +214,55 @@ internal fun SettingsSurface(
                         }
                     }
                 }
-                Spacer(Modifier.height(40.dp))
             }
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+/**
+ * Version, and an explicitly requested update check. Nothing here contacts the network until the
+ * button is pressed: FlowScope has no telemetry and no background check to opt out of.
+ */
+@Composable
+private fun AboutRow(about: AboutPanel) {
+    val message = describeUpdate(about.status)
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("FlowScope", color = TextHi, fontSize = 13.sp)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                about.version,
+                color = TextMid,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                message.text,
+                color = when (message.tone) {
+                    UpdateTone.Good -> SignalGreen
+                    UpdateTone.Alert -> SignalAmber
+                    UpdateTone.Neutral -> TextMid
+                },
+                fontSize = 11.sp,
+            )
+            message.releaseUrl?.let { url ->
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(onClick = { about.onOpenRelease(url) }) {
+                    Text("Open release notes", fontSize = 12.sp)
+                }
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        OutlinedButton(
+            onClick = about.onCheck,
+            enabled = about.status != UpdateStatus.Checking,
+        ) {
+            Text("Check for updates", fontSize = 12.sp)
         }
     }
 }

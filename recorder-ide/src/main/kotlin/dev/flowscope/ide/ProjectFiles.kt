@@ -187,6 +187,23 @@ internal fun openWithDefaultApplication(path: Path) {
 }
 
 /**
+ * Opens [url] in the user's browser, for the release page the update check found.
+ *
+ * Only `https` is followed, and `UpdateCheck.trustedReleaseUrl` has already pinned the value to
+ * this project's own releases path — a URL read off the network must not be handed to the shell on
+ * the strength of a button label alone.
+ */
+internal fun openInBrowser(url: String) {
+    runCatching {
+        val uri = java.net.URI(url)
+        if (uri.scheme != "https") return
+        if (java.awt.Desktop.isDesktopSupported()) {
+            java.awt.Desktop.getDesktop().browse(uri)
+        }
+    }
+}
+
+/**
  * The path [text] names, when the whole string is one and it exists on disk — otherwise null.
  *
  * Deliberately strict: it must be absolute and the entire trimmed string, so a sentence that
