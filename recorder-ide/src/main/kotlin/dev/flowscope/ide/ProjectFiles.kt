@@ -225,3 +225,27 @@ internal fun recentOpenFileFor(root: Path, recents: List<RecentProject>): Path? 
         normalisedRoot.resolve(candidate).normalize().takeIf { it.startsWith(normalisedRoot) }
     }.getOrNull()
 }
+
+/**
+ * Why [path] could not be opened, in words, with [shown] as its display label.
+ *
+ * `NoSuchFileException.getMessage()` is **only the path** — so a status line built from it reads
+ * exactly like the `Opened · <path>` message it replaces, and the user watches one path turn into
+ * another and concludes the click never landed. Any message that is just the path again is
+ * therefore treated as no message at all.
+ *
+ * Pure, so the wording is unit-testable without a filesystem.
+ */
+internal fun openFailureMessage(path: Path, failure: Throwable, shown: String): String {
+    val reason = when (failure) {
+        is java.nio.file.NoSuchFileException -> "the file no longer exists"
+        is java.nio.file.AccessDeniedException -> "permission denied"
+        else -> failure.message
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && it != path.toString() && it != shown }
+    }
+    return if (reason == null) "Could not open $shown" else "Could not open $shown · $reason"
+}
+
+/** True when [failure] means the file is simply not there any more, so the rail is out of date. */
+internal fun isMissingFile(failure: Throwable): Boolean = failure is java.nio.file.NoSuchFileException

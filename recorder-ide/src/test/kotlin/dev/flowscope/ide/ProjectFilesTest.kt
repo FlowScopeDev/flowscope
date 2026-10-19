@@ -428,3 +428,68 @@ class ExistingPathDetectionTest {
         )
     }
 }
+
+/**
+ * The wording a failed open shows the user. Its own class because the message is the whole point:
+ * a status line that reads like success is worse than no status line at all.
+ */
+class OpenFailureMessageTest {
+    /**
+     * The regression this wording exists for: `NoSuchFileException.getMessage()` is only the path,
+     * so the old status line read like the `Opened · <path>` message it replaced and the user
+     * concluded the click had never landed.
+     */
+    @Test
+    fun `a missing file explains itself instead of restating its path`() {
+        val path = Path.of("/projects/alpha/flows/tests/login.flow")
+        val message = openFailureMessage(
+            path,
+            java.nio.file.NoSuchFileException(path.toString()),
+            "flows/tests/login.flow",
+        )
+        assertEquals("Could not open flows/tests/login.flow · the file no longer exists", message)
+        assertTrue(message.contains("no longer exists"))
+    }
+
+    @Test
+    fun `a message that is only the path again counts as no message`() {
+        val path = Path.of("/projects/alpha/flows/tests/login.flow")
+        assertEquals(
+            "Could not open tests/login.flow",
+            openFailureMessage(path, RuntimeException(path.toString()), "tests/login.flow"),
+        )
+        assertEquals(
+            "Could not open tests/login.flow",
+            openFailureMessage(path, RuntimeException("   "), "tests/login.flow"),
+        )
+        assertEquals(
+            "Could not open tests/login.flow",
+            openFailureMessage(path, RuntimeException(), "tests/login.flow"),
+        )
+    }
+
+    @Test
+    fun `a real reason is kept`() {
+        val path = Path.of("/projects/alpha/flows/tests/login.flow")
+        assertEquals(
+            "Could not open tests/login.flow · permission denied",
+            openFailureMessage(
+                path,
+                java.nio.file.AccessDeniedException(path.toString()),
+                "tests/login.flow",
+            ),
+        )
+        assertEquals(
+            "Could not open tests/login.flow · Stream closed",
+            openFailureMessage(path, java.io.IOException("Stream closed"), "tests/login.flow"),
+        )
+    }
+
+    /** Only a vanished file makes the rail stale; another failure leaves the listing correct. */
+    @Test
+    fun `only a missing file marks the rail as out of date`() {
+        assertTrue(isMissingFile(java.nio.file.NoSuchFileException("/a/b.flow")))
+        assertFalse(isMissingFile(java.nio.file.AccessDeniedException("/a/b.flow")))
+        assertFalse(isMissingFile(java.io.IOException("Stream closed")))
+    }
+}

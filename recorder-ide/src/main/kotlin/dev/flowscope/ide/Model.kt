@@ -82,6 +82,8 @@ internal data class FlowRail(
     val open: Boolean,
     val projectOpen: Boolean,
     val tests: List<ProjectEntry>,
+    /** Rows the listing no longer backs, shown marked so a deleted file does not just vanish. */
+    val missing: List<ProjectEntry>,
     val suites: List<ProjectEntry>,
     val runs: List<dev.flowscope.host.RunReport>,
     val scratch: List<ProjectEntry>,

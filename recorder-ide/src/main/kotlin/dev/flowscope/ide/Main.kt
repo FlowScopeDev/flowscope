@@ -547,6 +547,12 @@ private fun FlowScopeApp(
             projectState.runs = loaded.third
         }
         projectState.scratch = emptyList()
+        // A marked row earns its way back by existing again; the mark is never cleared on a guess.
+        if (projectState.missing.isNotEmpty()) {
+            projectState.missing = withContext(Dispatchers.IO) {
+                projectState.missing.filterNot { Files.isRegularFile(it) }.toSet()
+            }
+        }
     }
 
     // ------------------------------------------------------------------- files
@@ -571,8 +577,14 @@ private fun FlowScopeApp(
                     withContext(Dispatchers.IO) { Preferences.rememberRecentProject(root, path) }
                 }
             }.onFailure { failure ->
-                authoring.status = failure.message ?: "Could not open that file"
+                authoring.status = openFailureMessage(path, failure, shown(path))
                 addEvent("×", "File not opened", authoring.status, severity = Severity.Error)
+                if (isMissingFile(failure)) {
+                    // The rail listed this file, so the listing is stale. Mark the row and re-list,
+                    // or the same dead row keeps inviting clicks that fail the same way.
+                    projectState.markMissing(path)
+                    refreshProjectListing()
+                }
             }
         }
     }
@@ -646,6 +658,8 @@ private fun FlowScopeApp(
                 project.root().toAbsolutePath().normalize()
             projectState.project = project
             projectState.status = "${project.manifest().name()} · ${project.root()}"
+            // Marked rows belong to the project that listed them, never to the one arriving.
+            if (switching) projectState.missing = emptySet()
             refreshProjectListing()
             if (switching) {
                 adoptProjectTarget(project)
@@ -738,6 +752,7 @@ private fun FlowScopeApp(
         val openFile = authoring.currentFile?.toAbsolutePath()?.normalize()
         projectState.project = null
         projectState.detectedPackage = null
+        projectState.missing = emptySet()
         projectState.status = "No project open"
         // A file from the closed project would otherwise stay open under the `~/.flowscope/`
         // fallback and save itself back into a project the user just left. A scratch buffer that
@@ -1711,6 +1726,11 @@ private fun FlowScopeApp(
         open = projectState.railOpen,
         projectOpen = projectState.isOpen,
         tests = projectState.tests,
+        // Labelled against the tests dir exactly like a live row, so a marked row reads the same.
+        missing = projectState.missing.sorted().map {
+            ProjectEntry(it, projectState.project?.testsDir()?.let { dir -> relativeLabel(dir, it) }
+                ?: it.fileName.toString())
+        },
         suites = projectState.suites,
         runs = projectState.runs,
         scratch = projectState.scratch,
@@ -2556,6 +2576,7 @@ private fun FlowEditorSurface(
         if (rail.open) {
             FlowFileRail(
                 tests = rail.tests,
+                missing = rail.missing,
                 suites = rail.suites,
                 runs = rail.runs,
                 scratch = rail.scratch,

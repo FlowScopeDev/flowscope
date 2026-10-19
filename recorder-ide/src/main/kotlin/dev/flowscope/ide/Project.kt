@@ -26,6 +26,28 @@ internal class ProjectState {
     var railOpen by mutableStateOf(true)
 
     /**
+     * Files the rail listed that turned out to be gone when the user tried to open one.
+     *
+     * The listing is a snapshot: delete a `.flow` outside the IDE and its row stays, stays
+     * clickable, and every click fails identically. Dropping the row on the next refresh would fix
+     * the clicking but make the file vanish with no explanation, so the row is kept and marked
+     * instead. Cleared when the project changes, and when the file comes back.
+     */
+    var missing by mutableStateOf<Set<Path>>(emptySet())
+
+    /**
+     * Marks [path] as gone, as one row.
+     *
+     * `plusElement`, never `+`: `java.nio.file.Path` is itself an `Iterable<Path>` over its name
+     * elements, so `missing + path` binds to the `Iterable` overload and adds a row per segment —
+     * which is exactly what happened, filling the rail with entries called `Users`, `Documents`
+     * and `Personal`.
+     */
+    fun markMissing(path: Path) {
+        missing = missing.plusElement(path)
+    }
+
+    /**
      * An application ID found in the project's own Gradle build, when `flowscope.json` names none.
      * Offered in project settings rather than written: the manifest is authored, checked-in input.
      */

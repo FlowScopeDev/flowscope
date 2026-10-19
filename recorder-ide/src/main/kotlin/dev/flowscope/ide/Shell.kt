@@ -92,6 +92,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.text.TextStyle
@@ -1685,6 +1686,7 @@ internal fun ProjectChip(chrome: ProjectChrome) {
 @Composable
 internal fun FlowFileRail(
     tests: List<ProjectEntry>,
+    missing: List<ProjectEntry>,
     suites: List<ProjectEntry>,
     runs: List<RunReport>,
     scratch: List<ProjectEntry>,
@@ -1735,9 +1737,16 @@ internal fun FlowFileRail(
             }
         } else {
             RailSection("TESTS", onNewTest)
-            if (tests.isEmpty()) RailEmpty("No tests yet")
+            if (tests.isEmpty() && missing.isEmpty()) RailEmpty("No tests yet")
             tests.forEach { entry ->
                 RailRow(entry.label, entry.path == openFile, null) { onOpen(entry.path) }
+            }
+            // Deleted outside the IDE. Kept visible so the file does not disappear unexplained, and
+            // made inert so it stops accepting clicks that can only fail.
+            missing.forEach { entry ->
+                HoverTip("Deleted outside FlowScope · ${entry.label}") {
+                    RailRow(entry.label, selected = false, trailing = "MISSING", enabled = false) {}
+                }
             }
 
             Spacer(Modifier.height(14.dp))
@@ -1804,26 +1813,38 @@ private fun RailEmpty(text: String) {
 }
 
 @Composable
-private fun RailRow(label: String, selected: Boolean, trailing: String?, onClick: () -> Unit) {
+private fun RailRow(
+    label: String,
+    selected: Boolean,
+    trailing: String?,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth()
             .background(if (selected) Ink250 else Color.Transparent)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             label,
-            color = if (selected) TextHi else TextMid,
+            color = when {
+                !enabled -> TextLow
+                selected -> TextHi
+                else -> TextMid
+            },
             fontSize = 11.5.sp,
             fontFamily = FontFamily.Monospace,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            // Struck through as well as dimmed: colour alone must never carry the meaning.
+            textDecoration = if (enabled) null else TextDecoration.LineThrough,
             modifier = Modifier.weight(1f),
         )
         trailing?.let {
             Spacer(Modifier.width(6.dp))
-            Text(it, color = TextLow, fontSize = 10.sp)
+            Text(it, color = if (enabled) TextLow else SignalRed, fontSize = 10.sp)
         }
     }
 }

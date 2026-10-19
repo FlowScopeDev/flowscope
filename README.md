@@ -414,6 +414,11 @@ In the IDE, the project chip in the session bar opens, creates, and switches pro
 tab's file rail lists the project's tests, suites, and recent runs. With no project open the IDE
 behaves exactly as before, saving under `~/.flowscope/`.
 
+The listing is a snapshot, so a `.flow` deleted outside the IDE leaves a row behind. Opening one
+says why — `Could not open flows/tests/login.flow · the file no longer exists` — and the row is then
+struck through and marked `MISSING` rather than disappearing unexplained, and stops accepting
+clicks. Reloading the project clears the mark once the file is back.
+
 Every step is also editable as a card, so a recorded flow can be reordered, disabled, duplicated or
 trimmed without hand-editing the file:
 

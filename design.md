@@ -210,6 +210,11 @@ Lifecycle instructions are grouped as `BEFORE`, `TEST`, and `AFTER` in card view
 their offline HTML report from the rail and retain a separate reveal-folder action. JSON remains the
 machine-readable source for the IDE, while JUnit output supports CI.
 
+A rail row whose file has been deleted outside FlowScope is struck through, dimmed, labelled
+`MISSING`, and made inert. It is never dropped silently: a file vanishing with no explanation reads
+as the IDE losing work. The strike-through carries the meaning alongside the colour, and the status
+line states the reason rather than echoing the path back.
+
 The outcome summary names the phase that broke rather than reporting a bare failure. A run whose
 body passed but whose cleanup failed reads `FAILED · CLEANUP`, and each cleanup failure is posted to
 the timeline as its own error entry — never folded into the test's own failure, which would send the
