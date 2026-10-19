@@ -228,7 +228,10 @@ flowscope suite run flows/suites/sample.suite --project examples --serial <adb-s
 `before` prepares and verifies the initial state, `step` is the test body, and `after` always runs
 cleanup even when setup or the test fails. Replay uses selector conditions and UI stability checks
 rather than recorded delays. Every run writes `report.json`, an offline `report.html`, and
-`junit.xml`; failures also save a screenshot and UI hierarchy.
+`junit.xml`; failures also save a screenshot and UI hierarchy. At an interactive terminal,
+`flowscope test run` also prints a line before each step starts — `RUN  TEST 07/40  tap` — so a long
+flow is not a blank wait; it stays off when stdout is piped, such as in CI. The IDE's run bar shows
+the same step-by-step progress live, as worded text rather than colour.
 
 Each of the three phases is reported distinctly, because a leaked fixture and a failed assertion
 need different fixes. `report.json` separates `primaryFailure` (setup or test) from

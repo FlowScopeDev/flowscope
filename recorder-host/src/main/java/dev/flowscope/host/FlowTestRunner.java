@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -38,6 +39,14 @@ public final class FlowTestRunner {
     private final List<StepResult> results = new ArrayList<>();
     private WebViewState previousWebState;
     private Set<String> sweepBefore;
+    private Consumer<StepProgress> listener = progress -> {};
+
+    /**
+     * Progress for a UI: one event before a step runs and one when it finishes. Never carries an
+     * interpolated argument value — only the literal action, phase and line number from the `.flow`
+     * file — so it is safe to render live, before any redaction pass.
+     */
+    public record StepProgress(int number, int total, String phase, String action, int line, String status) {}
 
     public FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot) throws IOException {
         this(adb, device, test, outputRoot, (Path) null);
@@ -105,6 +114,11 @@ public final class FlowTestRunner {
     }
 
     public Path root() { return root; }
+
+    public FlowTestRunner observe(Consumer<StepProgress> listener) {
+        this.listener = listener == null ? progress -> {} : listener;
+        return this;
+    }
 
     /** Metadata-only cookie/storage changes observed at WebView action boundaries. */
     public List<String> webChanges() {
@@ -230,6 +244,7 @@ public final class FlowTestRunner {
 
     private boolean runPhase(FlowTest.Phase phase, boolean stopOnFailure) {
         boolean passed = true, stopped = false;
+        int total = test.steps().size();
         for (int i = 0; i < test.steps().size(); i++) {
             FlowTest.Step step = test.steps().get(i);
             if (step.phase() != phase) continue;
@@ -237,6 +252,7 @@ public final class FlowTestRunner {
             if (!values.conditionsPass(step.arguments())) {
                 addSkipped(i, step, "condition not met"); continue;
             }
+            listener.accept(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "running"));
             long started = System.nanoTime();
             Instant stepStarted = Instant.now();
             // Any other step can change the UI before it looks, so it must not see a remembered dump.
@@ -248,6 +264,7 @@ public final class FlowTestRunner {
                 results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.action());
+                listener.accept(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed"));
             } catch (Exception failure) {
                 passed = false;
                 captureEvidence("failure-" + String.format("%02d", i + 1));
@@ -255,6 +272,7 @@ public final class FlowTestRunner {
                 results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, Map.of(),
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.action(), message);
+                listener.accept(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed"));
                 if (stopOnFailure) stopped = true;
             } finally {
                 stepWindows.put(i + 1, new Instant[] {stepStarted, Instant.now()});
@@ -266,6 +284,8 @@ public final class FlowTestRunner {
     private void addSkipped(int i, FlowTest.Step step, String reason) {
         results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of(), 0, 0));
         System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.action());
+        listener.accept(new StepProgress(i + 1, test.steps().size(), step.phase().value(), step.action(),
+            step.line(), "skipped"));
     }
 
     private void skipPhase(FlowTest.Phase phase, String reason) {

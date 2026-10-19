@@ -422,12 +422,29 @@ public final class Main {
         FlowTestRunner runner = new FlowTestRunner(
             new AdbClient(), selected, flowTest, outputFor(options, project, Path.of("test-runs")),
             options.path("--secrets-file", null));
+        if (progressEnabled()) runner.observe(Main::printStepProgress);
         boolean passed = runner.run();
         // Name the phase that broke on stderr: a cleanup failure and a failed assertion are very
         // different problems, and nobody should have to open report.json to tell them apart.
         if (!passed) System.err.println("FAILED: " + runner.failureMessage());
         System.out.println("Report: " + runner.root().resolve("report.json"));
         return passed ? 0 : 1;
+    }
+
+    /**
+     * A live "running" line is only useful at an interactive terminal. CI pipes stdout to a log
+     * file, where an extra line per step is noise rather than signal — the same reasoning that
+     * keeps desktop notifications out of CLI and CI runs.
+     */
+    private static boolean progressEnabled() {
+        return System.console() != null;
+    }
+
+    /** Announces a step before it runs; completion is already reported by the PASS/FAIL/SKIP lines. */
+    private static void printStepProgress(FlowTestRunner.StepProgress progress) {
+        if (!progress.status().equals("running")) return;
+        System.out.printf("RUN  %s %02d/%02d  %s (line %d)%n", progress.phase().toUpperCase(),
+            progress.number(), progress.total(), progress.action(), progress.line());
     }
 
     /**

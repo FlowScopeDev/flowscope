@@ -967,7 +967,9 @@ private fun FlowScopeApp(
                         val runner = FlowSuiteRunner(
                             adb, device!!, suite, target, projectState.project,
                             projectState.reportsDirectory, secretsFile,
-                        )
+                        ).observe { progress ->
+                            scope.launch { authoring.status = suiteProgressStatus(progress) }
+                        }
                         val passed = runner.run()
                         val report = RunReport.read(runner.root()).orElse(null)
                         SaveOutcome(
@@ -987,7 +989,9 @@ private fun FlowScopeApp(
                         val parsed = FlowTestParser.parse(target)
                         val runner = FlowTestRunner(
                             adb, device!!, parsed, projectState.reportsDirectory, secretsFile,
-                        )
+                        ).observe { progress ->
+                            scope.launch { authoring.status = stepProgressStatus(progress) }
+                        }
                         val passed = runner.run()
                         val steps = parsed.steps().size
                         val teardown = runner.teardownFailures()
@@ -3022,6 +3026,32 @@ private data class SaveOutcome(
 private fun suiteLabel(suite: FlowSuite, passed: Boolean): String {
     val total = suite.entries().size
     return if (passed) "PASSED $total/$total" else "FAILED"
+}
+
+/**
+ * A worded run-bar status for one step. [FlowTestRunner.StepProgress] never carries an
+ * interpolated argument, so this is safe to render live, before any redaction pass.
+ */
+private fun stepProgressStatus(progress: FlowTestRunner.StepProgress): String {
+    val verb = when (progress.status()) {
+        "running" -> "Running"
+        "passed" -> "Passed"
+        "failed" -> "Failed"
+        else -> progress.status().replaceFirstChar { it.uppercase() }
+    }
+    return "$verb · step ${progress.number()}/${progress.total()} · " +
+        "${progress.phase()} ${progress.action()} (line ${progress.line()})"
+}
+
+/** The same shape as [stepProgressStatus], one test-granularity level up, for a suite run. */
+private fun suiteProgressStatus(progress: FlowSuiteRunner.Progress): String {
+    val verb = when (progress.status()) {
+        "running" -> "Running"
+        "passed" -> "Passed"
+        "failed" -> "Failed"
+        else -> progress.status().replaceFirstChar { it.uppercase() }
+    }
+    return "$verb · test ${progress.number()}/${progress.total()} · ${progress.reference()}"
 }
 
 /** The rail's label for a file: its path relative to the section's directory. */

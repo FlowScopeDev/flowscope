@@ -220,6 +220,13 @@ body passed but whose cleanup failed reads `FAILED · CLEANUP`, and each cleanup
 the timeline as its own error entry — never folded into the test's own failure, which would send the
 author looking for a bug that is not in the test.
 
+While a test or suite is replaying, the status line in the run bar names the step currently
+executing — phase, action, and its position out of the total — rather than sitting on a bare
+"Running…" for the whole run. This is worded text, not a colour change, and it never renders an
+argument value: only the literal action name, phase, and line number from the `.flow` file, the same
+shape `flowscope test run` prints as one line per step at an interactive terminal (suppressed when
+stdout is piped, as in CI).
+
 When an IDE-started run completes, FlowScope posts one native system notification after its reports
 are ready. A test notification names the test and its result. A regression notification names the
 suite and summarizes passed, failed, and skipped tests. Detailed failures stay in FlowScope and the
