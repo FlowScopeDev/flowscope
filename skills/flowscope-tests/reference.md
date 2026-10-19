@@ -63,13 +63,23 @@ Narrowing: `index=N` (zero-based nth match) and state filters `enabled=`, `check
 ## Host API calls
 
 ```text
+require env.API_BASE_URL
+require secret.API_JWT
+before secret name=jwt source=API_JWT
+before set-date name=start value=now offset=-7d start-of=day zone=UTC format=yyyy-MM-dd
+before set-value name=requestId generate=uuid
 before api-request method=GET url="${env.API_BASE_URL}/health" \
   expect-status=200 expect-json.status=UP timeout=30000 retry-interval=1000
 ```
 
-Supports headers, `body` / `body-file`, `expect-status`, `expect-json.<path>`, `capture.<name>` (read
-back as `${var.name}` in the same test) and `if-var` cleanup guards. Secrets come from `${env.NAME}`;
-reports never keep header values, bodies or captured values.
+Supports encoded `query.<name>`, headers, `body` / `body-file`, status/header/duration assertions,
+exact/existence/length/numeric/prefix/suffix JSON assertions, JSON and response-header captures, and
+GET/HEAD polling. Read normal captures as `${var.name}`; secret captures remain tainted.
+`set-value` generates UUID/integer/string/email values; `set-date` handles offsets, boundaries,
+zones and ISO/epoch/custom formats; `transform` allows trim, case, URL/base64, substring, prefix and
+suffix only. Guards support `if/unless` presence and equality for variables and environment inputs.
+Reports never keep runtime values, headers, bodies, or query values. Load local secrets explicitly
+with `--secrets-file <path>`; the file must be owner-only on POSIX.
 
 ## WebView actions
 
@@ -86,9 +96,14 @@ flowscope-suite 1
 name "Nightly regression"
 continue-on-failure true
 
+before api-request method=POST url="${env.API_BASE_URL}/fixtures" capture.customerId=data.id
 test tests/login.flow
 test tests/checkout.flow
+after api-request method=DELETE url="${env.API_BASE_URL}/fixtures/${var.customerId}" if-var=customerId
 ```
+
+Suite hooks are host-only. Tests read suite setup values as `${suite.var.customerId}`; test-local
+captures are never shared with other tests or suite cleanup.
 
 `test` paths are relative to the project's flows directory, end in `.flow`, and are never absolute or
 contain `..`. A project is a directory with `flowscope.json`, `flows/tests/`, `flows/suites/` and
@@ -103,9 +118,9 @@ flowscope snapshot --package <id> --mode zero-code --output <dir>
 flowscope web inspect --package <id> --format json
 flowscope project info|tests|suites|validate [<dir>]
 flowscope test validate <file.flow> [--project <dir>]
-flowscope test run <file|name> [--project <dir>] [--serial <id>] [--output <dir>]
+flowscope test run <file|name> [--project <dir>] [--serial <id>] [--output <dir>] [--secrets-file <path>]
 flowscope suite validate <file.suite>
-flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>]
+flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>] [--secrets-file <path>]
 ```
 
 Exit codes: `0` success, `1` a test failed, `2` invalid input. Every run writes `report.json`,

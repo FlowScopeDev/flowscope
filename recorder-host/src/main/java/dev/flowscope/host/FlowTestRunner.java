@@ -26,33 +26,40 @@ public final class FlowTestRunner {
     private static final long SETTLE_WINDOW_NANOS = 1_500_000_000L;
     /** The dump taken at the end of settle() may answer the next lookup for this long. */
     private static final long SETTLED_DUMP_MAX_AGE_NANOS = 3_000_000_000L;
-    private static final Pattern VARIABLE = Pattern.compile("\\$\\{(env|var)\\.([A-Za-z_][A-Za-z0-9_.-]*)}");
     private static final Pattern GRANTED = Pattern.compile("^\\s*([A-Za-z][A-Za-z0-9_.]+): granted=true(?:,.*)?$");
     private final AdbClient adb;
     private final Device device;
     private final FlowTest test;
     private final Path root;
-    private final FlowHttpClient http;
     private final FlowWebViewClient web;
     private final ApkInspector apkInspector;
-    private final Map<String, String> environment;
-    private final Map<String, String> variables = new LinkedHashMap<>();
+    private final RuntimeValues values;
+    private final HostRuntime hostRuntime;
     private final List<StepResult> results = new ArrayList<>();
     private WebViewState previousWebState;
     private Set<String> sweepBefore;
 
     public FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot) throws IOException {
-        this(adb, device, test, outputRoot, RunDirectories.stamp() + "-" + RunDirectories.sanitize(test.name()));
+        this(adb, device, test, outputRoot, (Path) null);
+    }
+
+    public FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
+        Path secretsFile) throws IOException {
+        this(adb, device, test, outputRoot,
+            RunDirectories.stamp() + "-" + RunDirectories.sanitize(test.name()),
+            FlowHttpClient.platform(), System.getenv(), SecretFile.load(secretsFile, System.getenv()),
+            Map.of(), Map.of());
     }
 
     public FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
         String directoryName) throws IOException {
-        this(adb, device, test, outputRoot, directoryName, FlowHttpClient.platform(), System.getenv());
+        this(adb, device, test, outputRoot, directoryName, FlowHttpClient.platform(), System.getenv(),
+            Map.of(), Map.of(), Map.of());
     }
 
     FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
         String directoryName, FlowHttpClient http, Map<String, String> environment) throws IOException {
-        this(adb, device, test, outputRoot, directoryName, http, environment,
+        this(adb, device, test, outputRoot, directoryName, http, environment, Map.of(), Map.of(), Map.of(),
             new CdpWebViewClient(adb, device, test.packageName(),
                 test.mode() == CaptureMode.INSTRUMENTED), ApkInspector.platform());
     }
@@ -60,17 +67,39 @@ public final class FlowTestRunner {
     FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
         String directoryName, FlowHttpClient http, Map<String, String> environment,
         FlowWebViewClient web) throws IOException {
-        this(adb, device, test, outputRoot, directoryName, http, environment, web,
+        this(adb, device, test, outputRoot, directoryName, http, environment, Map.of(), Map.of(), Map.of(), web,
             ApkInspector.platform());
     }
 
     FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
         String directoryName, FlowHttpClient http, Map<String, String> environment,
         FlowWebViewClient web, ApkInspector apkInspector) throws IOException {
-        this.adb = adb; this.device = device; this.test = test; this.http = http;
+        this(adb, device, test, outputRoot, directoryName, http, environment, Map.of(), Map.of(), Map.of(), web,
+            apkInspector);
+    }
+
+    FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
+        String directoryName, FlowHttpClient http, Map<String, String> environment,
+        Map<String, String> secretSources, Map<String, RuntimeValues.Value> suiteVariables,
+        Map<String, String> suiteBuiltins) throws IOException {
+        this(adb, device, test, outputRoot, directoryName, http, environment, secretSources,
+            suiteVariables, suiteBuiltins,
+            new CdpWebViewClient(adb, device, test.packageName(), test.mode() == CaptureMode.INSTRUMENTED),
+            ApkInspector.platform());
+    }
+
+    private FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
+        String directoryName, FlowHttpClient http, Map<String, String> environment,
+        Map<String, String> secretSources, Map<String, RuntimeValues.Value> suiteVariables,
+        Map<String, String> suiteBuiltins, FlowWebViewClient web, ApkInspector apkInspector)
+        throws IOException {
+        this.adb = adb; this.device = device; this.test = test;
         this.web = web;
         this.apkInspector = apkInspector;
-        this.environment = Map.copyOf(environment);
+        Instant startedAt = Instant.now();
+        this.values = new RuntimeValues(environment, secretSources, suiteVariables, test.name(),
+            device.serial(), startedAt, UUID.randomUUID(), suiteBuiltins);
+        this.hostRuntime = new HostRuntime(values, http, test.sourceDirectory());
         this.root = outputRoot.resolve(directoryName).toAbsolutePath();
         Files.createDirectories(root.resolve("evidence"));
     }
@@ -205,8 +234,9 @@ public final class FlowTestRunner {
             FlowTest.Step step = test.steps().get(i);
             if (step.phase() != phase) continue;
             if (stopped) { addSkipped(i, step, "earlier " + phase.value() + " instruction failed"); continue; }
-            String guard = step.arguments().get("if-var");
-            if (guard != null && !variables.containsKey(guard)) { addSkipped(i, step, "variable not set: " + guard); continue; }
+            if (!values.conditionsPass(step.arguments())) {
+                addSkipped(i, step, "condition not met"); continue;
+            }
             long started = System.nanoTime();
             Instant stepStarted = Instant.now();
             // Any other step can change the UI before it looks, so it must not see a remembered dump.
@@ -243,7 +273,7 @@ public final class FlowTestRunner {
     }
 
     private Map<String, String> execute(FlowTest.Step step, int index) throws Exception {
-        Map<String, String> args = expanded(step.arguments());
+        Map<String, String> args = hostRuntime.expanded(step.arguments());
         long timeout = args.containsKey("timeout") ? FlowTestParser.parsePositiveLong(args.get("timeout"), step.line(), "timeout") : test.timeoutMillis();
         return switch (step.action()) {
             case "launch" -> { launch(); settle(); yield Map.of(); }
@@ -261,7 +291,8 @@ public final class FlowTestRunner {
             case "back" -> { shell("input", "keyevent", "KEYCODE_BACK"); settle(); yield Map.of(); }
             case "assert-not-visible" -> { requireAbsent(args, timeout); yield Map.of(); }
             case "screenshot" -> { String name = args.getOrDefault("name", "step-" + String.format("%02d", index + 1)); captureScreenshot(name); yield Map.of("evidence", "evidence/" + safeFile(name) + ".png"); }
-            case "api-request" -> apiRequest(args, timeout);
+            case "api-request", "set-date", "set-value", "transform", "secret" ->
+                hostRuntime.execute(step.action(), step.arguments(), timeout);
             case "clear-app-data" -> { command("shell", "pm", "clear", test.packageName()); yield packageDetails(); }
             case "force-stop" -> { command("shell", "am", "force-stop", test.packageName()); yield packageDetails(); }
             case "grant-permission" -> { permission("grant", args.get("permission")); yield permissionDetails(args); }
@@ -383,7 +414,7 @@ public final class FlowTestRunner {
     }
 
     private Map<String, String> installApk(Map<String, String> args) throws Exception {
-        Path apk = resolveArtifactFile(environmentPath(args.get("file")), ".apk");
+        Path apk = resolveArtifactFile(args.get("file"), ".apk");
         List<String> command = new ArrayList<>(List.of("-s", device.serial(), "install"));
         if (Boolean.parseBoolean(args.getOrDefault("replace", "false"))) command.add("-r");
         if (Boolean.parseBoolean(args.getOrDefault("downgrade", "false"))) command.add("-d");
@@ -718,82 +749,6 @@ public final class FlowTestRunner {
         return a.equalsIgnoreCase(e) || a.toLowerCase(Locale.ROOT).endsWith("." + e.toLowerCase(Locale.ROOT));
     }
 
-    private Map<String, String> apiRequest(Map<String, String> args, long timeout) throws Exception {
-        String method = args.getOrDefault("method", "GET").toUpperCase();
-        URI uri = URI.create(args.get("url"));
-        if (!Set.of("http", "https").contains(uri.getScheme())) throw new IllegalArgumentException("api-request URL must use http or https");
-        Map<String, String> headers = new LinkedHashMap<>();
-        args.forEach((k, v) -> { if (k.startsWith("header.")) headers.put(k.substring(7), v); });
-        String body = args.get("body");
-        if (args.containsKey("body-file")) body = interpolate(Files.readString(resolveBodyFile(environmentPath(args.get("body-file"))), StandardCharsets.UTF_8));
-        long interval = args.containsKey("retry-interval") ? Long.parseLong(args.get("retry-interval")) : 0;
-        long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
-        Exception last = null;
-        do {
-            try {
-                long remaining = Math.max(1, Duration.ofNanos(deadline - System.nanoTime()).toMillis());
-                var response = http.send(method, uri, headers, body, remaining);
-                assertResponse(response, args);
-                Map<String, String> captured = capture(response.body(), args);
-                variables.putAll(captured);
-                Map<String, String> details = new LinkedHashMap<>();
-                details.put("method", method); details.put("url", safeUrl(uri)); details.put("statusCode", "" + response.status());
-                if (!headers.isEmpty()) details.put("headerNames", String.join(",", headers.keySet()));
-                if (!captured.isEmpty()) details.put("captured", String.join(",", captured.keySet()));
-                return Map.copyOf(details);
-            } catch (Exception failure) {
-                last = failure;
-                if (interval <= 0 || System.nanoTime() >= deadline) break;
-                Thread.sleep(Math.min(interval, Math.max(1, Duration.ofNanos(deadline - System.nanoTime()).toMillis())));
-            }
-        } while (System.nanoTime() < deadline);
-        throw last == null ? new IllegalStateException("API request failed") : last;
-    }
-
-    private void assertResponse(FlowHttpClient.Response response, Map<String, String> args) {
-        if (args.containsKey("expect-status")) {
-            Set<Integer> expected = new HashSet<>();
-            for (String value : args.get("expect-status").split(",")) expected.add(Integer.parseInt(value.strip()));
-            if (!expected.contains(response.status())) throw new IllegalStateException("Expected HTTP " + args.get("expect-status") + " but received " + response.status());
-        }
-        var assertions = args.entrySet().stream().filter(e -> e.getKey().startsWith("expect-json.")).toList();
-        if (!assertions.isEmpty()) {
-            Object json = Json.parse(response.body());
-            for (var assertion : assertions) {
-                String path = assertion.getKey().substring(12);
-                if (!scalar(jsonPath(json, path)).equals(assertion.getValue())) throw new IllegalStateException("JSON field " + path + " did not match expected value");
-            }
-        }
-    }
-
-    private Map<String, String> capture(String body, Map<String, String> args) {
-        var captures = args.entrySet().stream().filter(e -> e.getKey().startsWith("capture.")).toList();
-        if (captures.isEmpty()) return Map.of();
-        Object json = Json.parse(body); Map<String, String> values = new LinkedHashMap<>();
-        for (var entry : captures) values.put(entry.getKey().substring(8), scalar(jsonPath(json, entry.getValue())));
-        return values;
-    }
-
-    private static Object jsonPath(Object root, String path) {
-        Object current = root;
-        for (String segment : path.replaceFirst("^\\$\\.", "").split("\\.")) {
-            Matcher part = Pattern.compile("([^\\[]+)(?:\\[(\\d+)])?").matcher(segment);
-            if (!part.matches() || !(current instanceof Map<?, ?> map) || !map.containsKey(part.group(1))) throw new IllegalStateException("JSON path not found: " + path);
-            current = map.get(part.group(1));
-            if (part.group(2) != null) {
-                if (!(current instanceof List<?> list)) throw new IllegalStateException("JSON path is not an array: " + path);
-                int index = Integer.parseInt(part.group(2)); if (index >= list.size()) throw new IllegalStateException("JSON array index out of range: " + path); current = list.get(index);
-            }
-        }
-        return current;
-    }
-
-    private static String scalar(Object value) {
-        if (value == null) return "null";
-        if (value instanceof String || value instanceof Number || value instanceof Boolean) return value.toString();
-        throw new IllegalStateException("JSON path does not resolve to a scalar value");
-    }
-
     private Map<String, String> resetPermissions() throws Exception {
         var dump = adb.run(List.of("-s", device.serial(), "shell", "dumpsys", "package", test.packageName()));
         if (dump.exitCode() != 0) throw new IOException("Could not inspect target app permissions");
@@ -813,6 +768,10 @@ public final class FlowTestRunner {
     }
 
     private void preflight() throws IOException {
+        for (FlowTest.Requirement requirement : test.requirements()) values.require(requirement);
+        for (FlowTest.Step step : test.steps()) if (step.action().equals("secret")) {
+            values.bindSecret(step.arguments().get("name"), step.arguments().get("source"));
+        }
         for (FlowTest.Step step : test.steps()) {
             if (Set.of("set-install-referrer", "clear-install-referrer").contains(step.action())
                 && test.mode() != CaptureMode.INSTRUMENTED) {
@@ -825,16 +784,16 @@ public final class FlowTestRunner {
                 throw new IllegalArgumentException(
                     "web-assert-interface source=agent requires mode instrumented");
             }
-            for (String value : step.arguments().values()) requireEnvironment(value);
+            for (String value : step.arguments().values()) values.preflightReferences(value);
             String bodyFile = step.arguments().get("body-file");
             if (bodyFile != null) {
-                Path file = resolveBodyFile(environmentPath(bodyFile));
+                Path file = resolveBodyFile(values.interpolate(bodyFile));
                 if (!Files.isRegularFile(file)) throw new IllegalArgumentException("API body file not found: " + bodyFile);
-                requireEnvironment(Files.readString(file, StandardCharsets.UTF_8));
+                values.preflightReferences(Files.readString(file, StandardCharsets.UTF_8));
             }
             String apkFile = step.arguments().get("file");
             if (step.action().equals("install-apk") && apkFile != null) {
-                Path file = resolveArtifactFile(environmentPath(apkFile), ".apk");
+                Path file = resolveArtifactFile(values.interpolate(apkFile), ".apk");
                 if (!Files.isRegularFile(file)) {
                     throw new IllegalArgumentException("APK file not found: " + apkFile);
                 }
@@ -851,11 +810,6 @@ public final class FlowTestRunner {
                 }
             }
         }
-    }
-
-    private void requireEnvironment(String value) {
-        Matcher matcher = VARIABLE.matcher(value);
-        while (matcher.find()) if (matcher.group(1).equals("env") && !environment.containsKey(matcher.group(2))) throw new IllegalArgumentException("Missing environment variable: " + matcher.group(2));
     }
 
     private Path resolveBodyFile(String raw) {
@@ -889,29 +843,6 @@ public final class FlowTestRunner {
             }
         }
         return resolved;
-    }
-
-    private String environmentPath(String value) {
-        Matcher matcher = VARIABLE.matcher(value); StringBuilder out = new StringBuilder();
-        while (matcher.find()) {
-            if (!matcher.group(1).equals("env")) throw new IllegalArgumentException("body-file path cannot use runtime variables");
-            matcher.appendReplacement(out, Matcher.quoteReplacement(environment.get(matcher.group(2))));
-        }
-        matcher.appendTail(out); return out.toString();
-    }
-
-    private Map<String, String> expanded(Map<String, String> input) {
-        Map<String, String> output = new LinkedHashMap<>(); input.forEach((k, v) -> output.put(k, interpolate(v))); return output;
-    }
-
-    private String interpolate(String value) {
-        Matcher matcher = VARIABLE.matcher(value); StringBuilder out = new StringBuilder();
-        while (matcher.find()) {
-            String replacement = matcher.group(1).equals("env") ? environment.get(matcher.group(2)) : variables.get(matcher.group(2));
-            if (replacement == null) throw new IllegalStateException("Variable is not set: " + matcher.group(2));
-            matcher.appendReplacement(out, Matcher.quoteReplacement(replacement));
-        }
-        matcher.appendTail(out); return out.toString();
     }
 
     private void launch() throws Exception {
@@ -1331,8 +1262,8 @@ public final class FlowTestRunner {
     }
 
     private static long elapsed(long n){return Duration.ofNanos(System.nanoTime()-n).toMillis();} private static String message(Exception e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();} private static String safeFile(String n){return n.replaceAll("[^a-zA-Z0-9._-]","_");}
-    private String safeUrl(URI u){String path=u.getPath()==null?"":u.getPath();for(String value:variables.values())if(value!=null&&!value.isBlank())path=path.replace(value,"{captured}");return u.getScheme()+"://"+u.getAuthority()+path;}
-    private String redact(String value){String redacted=value;for(String secret:environment.values())if(secret!=null&&!secret.isBlank())redacted=redacted.replace(secret,"{env}");for(String captured:variables.values())if(captured!=null&&!captured.isBlank())redacted=redacted.replace(captured,"{captured}");return redacted;}
+    private String safeUrl(URI uri){return values.redact(HostRuntime.safeUrl(uri));}
+    private String redact(String value){return values.redact(value);}
     private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){return details.entrySet().stream().map(e->e.getKey().equals("evidence")?"<a href=\""+html(e.getValue())+"\">evidence</a>":html(e.getKey()+"="+e.getValue())).collect(java.util.stream.Collectors.joining(" · "));} private static String html(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
     private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details,int dumps,long dumpMillis){}
 }

@@ -53,6 +53,17 @@ class RankPackagesTest {
     }
 }
 
+class SecretsFilePreferenceTest {
+    @Test
+    fun `accepts only absolute normalized secret file paths`() {
+        val path = Path.of(System.getProperty("java.io.tmpdir"), "folder", "..", "secrets.env")
+            .toAbsolutePath()
+        assertEquals(path.normalize(), parseSecretsFilePath(formatSecretsFilePath(path)))
+        assertNull(parseSecretsFilePath("relative/secrets.env"))
+        assertNull(parseSecretsFilePath("  "))
+    }
+}
+
 class EventExportTest {
 
     private fun event(

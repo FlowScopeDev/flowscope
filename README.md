@@ -220,18 +220,43 @@ and `instrumented` runs add an **Agent events** section: the app's own semantic 
 calls (route templates and status only), and background work, each attributed to the step during which
 it arrived. Event bodies, headers, and arguments are never captured.
 
-Host-side API setup and cleanup can use environment variables without checking secrets into Git:
+Host-side API setup and cleanup can compute runtime values and use environment or explicit secret
+inputs without checking sensitive data into Git:
 
 ```text
+require env.API_BASE_URL
+require secret.API_JWT
+before secret name=jwt source=API_JWT
+before set-date name=startDate value=now offset=-7d start-of=day zone=UTC format=yyyy-MM-dd
+before set-value name=runKey generate=uuid
 before api-request method=GET url="${env.API_BASE_URL}/health" \
   expect-status=200 expect-json.status=UP timeout=30000 retry-interval=1000
 before api-request method=POST url="${env.API_BASE_URL}/fixtures" \
-  header.Authorization="Bearer ${env.API_TOKEN}" body='{"kind":"smoke"}' \
+  header.Authorization="Bearer ${secret.jwt}" query.createdAfter="${var.startDate}" body='{"kind":"smoke"}' \
   expect-status=201 capture.fixtureId=data.id
 step launch
 after api-request method=DELETE url="${env.API_BASE_URL}/fixtures/${var.fixtureId}" \
   expect-status=200,204,404 if-var=fixtureId
 ```
+
+`set-date` supports ISO/epoch presets, Java date patterns, IANA timezones, offsets, and
+day/week/month boundaries. `set-value` generates UUIDs, bounded integers, strings, and safe example
+email addresses; `transform` provides a fixed allowlist of string operations. Built-ins include
+`${run.id}`, `${run.startedAt}`, `${test.name}`, `${test.attempt}`, and `${device.serial}`.
+
+For local secrets, select a file in **Settings → Secrets** or pass it explicitly:
+
+```bash
+chmod 600 ~/.flowscope/test.env
+flowscope test run login.flow --secrets-file ~/.flowscope/test.env
+flowscope suite run smoke.suite --secrets-file ~/.flowscope/test.env
+```
+
+The strict dotenv file accepts `NAME=value` entries only. Process environment values take
+precedence. Values and derived values remain in memory and are removed from console errors, JSON,
+HTML, JUnit, notifications, and evidence. API requests also support encoded `query.<name>`
+parameters, response-header capture, secret captures, richer JSON/header assertions, and duration
+limits. `retry-interval` polls only `GET` and `HEAD`.
 
 Gestures and input beyond `tap` and `scroll`. `direction=` is where the finger moves, as for `scroll`:
 
@@ -391,9 +416,17 @@ flowscope-suite 1
 name "Nightly regression"
 continue-on-failure true
 
+require secret.API_JWT
+before set-value name=suiteRunId generate=uuid
+before api-request method=POST url="${env.API_BASE_URL}/fixtures" capture.customerId=data.id
 test tests/login.flow
 test tests/terms.flow
+after api-request method=DELETE url="${env.API_BASE_URL}/fixtures/${var.customerId}" if-var=customerId
 ```
+
+Suite hooks are host-only (`api-request`, `set-date`, `set-value`, `transform`, and `secret`). Values
+created during setup are read-only inside tests as `${suite.var.name}`; test variables remain
+isolated. Suite cleanup always runs.
 
 ```bash
 flowscope suite validate flows/suites/nightly.suite
@@ -454,9 +487,9 @@ flowscope web inspect --package <id> [--serial <serial>] [--page <target>] \
 flowscope project init [<dir>] [--name <name>] [--package <id>] [--mode <mode>] [--timeout <ms>]
 flowscope project info|tests|suites|validate [<dir>]
 flowscope test validate <file.flow> [--project <dir>]
-flowscope test run <file.flow> [--project <dir>] --serial <serial> --output <directory>
+flowscope test run <file.flow> [--project <dir>] --serial <serial> --output <directory> [--secrets-file <path>]
 flowscope suite validate <file.suite> [--project <dir>]
-flowscope suite run [<file.suite>] [--project <dir>] --serial <serial> --output <directory>
+flowscope suite run [<file.suite>] [--project <dir>] --serial <serial> --output <directory> [--secrets-file <path>]
 ```
 
 `flowscope emulator start Pixel_7 --headless --wait` launches an installed AVD without a window and

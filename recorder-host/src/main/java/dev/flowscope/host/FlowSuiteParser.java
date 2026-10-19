@@ -6,6 +6,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.LinkedHashMap;
 
 /**
  * Parses the `.suite` format — the same line-oriented idiom as `.flow`, down to the tokenizer, so
@@ -24,6 +27,8 @@ import java.util.List;
  * it, and the IDE already catches that one type for both formats.
  */
 public final class FlowSuiteParser {
+    private static final Set<String> HOST_ACTIONS = Set.of(
+        "api-request", "set-date", "set-value", "transform", "secret");
     private FlowSuiteParser() {}
 
     public static FlowSuite parse(Path path) throws IOException {
@@ -40,11 +45,14 @@ public final class FlowSuiteParser {
         String name = defaultName;
         boolean continueOnFailure = false;
         List<FlowSuite.Entry> entries = new ArrayList<>();
+        List<FlowTest.Requirement> requirements = new ArrayList<>();
+        List<FlowTest.Step> hooks = new ArrayList<>();
         boolean versionSeen = false;
+        boolean afterSeen = false;
 
-        for (int index = 0; index < lines.size(); index++) {
-            String line = lines.get(index).strip();
-            int lineNumber = index + 1;
+        for (LogicalLine logical : logicalLines(lines)) {
+            String line = logical.text().strip();
+            int lineNumber = logical.line();
             if (line.isEmpty() || line.startsWith("#")) continue;
             List<String> tokens = FlowTestParser.tokenize(line, lineNumber);
             String keyword = tokens.getFirst();
@@ -60,13 +68,78 @@ public final class FlowSuiteParser {
                 case "name" -> name = remainder(tokens, lineNumber);
                 case "continue-on-failure" ->
                     continueOnFailure = parseBoolean(tokens, lineNumber);
-                case "test" -> entries.add(parseEntry(tokens, lineNumber));
+                case "require" -> requirements.add(FlowTestParser.parseRequirement(tokens, lineNumber));
+                case "before", "after" -> {
+                    boolean after = keyword.equals("after");
+                    if (!after && afterSeen) throw error(lineNumber, "before statements must precede after statements");
+                    afterSeen |= after;
+                    hooks.add(parseHook(tokens, lineNumber,
+                        after ? FlowTest.Phase.AFTER : FlowTest.Phase.BEFORE));
+                }
+                case "test" -> {
+                    if (afterSeen) throw error(lineNumber, "test statements must precede after statements");
+                    entries.add(parseEntry(tokens, lineNumber));
+                }
                 default -> throw error(lineNumber, "unknown statement: " + keyword);
             }
         }
         if (!versionSeen) throw error(0, "Empty suite: " + origin);
         if (entries.isEmpty()) throw error(0, "Suite has no tests: " + origin);
-        return new FlowSuite(name, continueOnFailure, List.copyOf(entries));
+        return new FlowSuite(name, continueOnFailure, List.copyOf(requirements),
+            List.copyOf(hooks), List.copyOf(entries));
+    }
+
+    private static FlowTest.Step parseHook(List<String> tokens, int line, FlowTest.Phase phase) {
+        if (tokens.size() < 2) throw error(line, phase.value() + " requires an action");
+        String action = tokens.get(1);
+        if (!HOST_ACTIONS.contains(action)) {
+            throw error(line, "suite hooks allow only api-request, set-date, set-value, transform, or secret");
+        }
+        Map<String, String> arguments = new LinkedHashMap<>();
+        for (int index = 2; index < tokens.size(); index++) {
+            String token = tokens.get(index);
+            int equals = token.indexOf('=');
+            if (equals <= 0) throw error(line, "expected key=value, found: " + token);
+            String key = token.substring(0, equals);
+            if (arguments.put(key, token.substring(equals + 1)) != null) {
+                throw error(line, "duplicate argument: " + key);
+            }
+        }
+        // Reuse the flow parser's complete action validation without exposing another public parser.
+        String source = "flowscope 1\npackage dev.flowscope.validation\n" + phase.value() + " "
+            + tokens.subList(1, tokens.size()).stream().map(FlowSuiteParser::quote).collect(
+                java.util.stream.Collectors.joining(" "))
+            + (phase == FlowTest.Phase.BEFORE ? "\nstep launch" : "\n");
+        if (phase == FlowTest.Phase.AFTER) source = "flowscope 1\npackage dev.flowscope.validation\nstep launch\nafter "
+            + tokens.subList(1, tokens.size()).stream().map(FlowSuiteParser::quote).collect(
+                java.util.stream.Collectors.joining(" ")) + "\n";
+        FlowTest parsed = FlowTestParser.parseSource(source, "suite-hook");
+        return parsed.steps().stream().filter(step -> step.phase() == phase).findFirst()
+            .map(step -> new FlowTest.Step(line, phase, action, step.arguments())).orElseThrow();
+    }
+
+    private static String quote(String token) {
+        if (!token.matches(".*[\\s'\"\\\\].*")) return token;
+        return "\"" + token.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private record LogicalLine(int line, String text) {}
+
+    private static List<LogicalLine> logicalLines(List<String> physical) {
+        List<LogicalLine> result = new ArrayList<>();
+        StringBuilder joined = new StringBuilder();
+        int first = 1;
+        for (int index = 0; index < physical.size(); index++) {
+            String raw = physical.get(index);
+            if (joined.isEmpty()) first = index + 1;
+            String trimmed = raw.stripTrailing();
+            boolean continues = trimmed.endsWith("\\") && !trimmed.endsWith("\\\\");
+            joined.append(continues ? trimmed.substring(0, trimmed.length() - 1) : raw);
+            if (continues) joined.append(' ');
+            else { result.add(new LogicalLine(first, joined.toString())); joined.setLength(0); }
+        }
+        if (!joined.isEmpty()) throw error(first, "line continuation has no following line");
+        return result;
     }
 
     private static FlowSuite.Entry parseEntry(List<String> tokens, int line) {

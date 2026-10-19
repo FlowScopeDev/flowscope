@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +37,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.nio.file.Path
+import java.nio.file.Files
 
 @Composable
 internal fun SettingsSurface(
@@ -43,6 +46,9 @@ internal fun SettingsSurface(
     onShowDisplayChanged: (Boolean) -> Unit,
     mode: ThemeMode,
     onModeChanged: (ThemeMode) -> Unit,
+    secretsFile: Path?,
+    onChooseSecretsFile: () -> Unit,
+    onClearSecretsFile: () -> Unit,
     commands: List<Command> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
@@ -57,7 +63,7 @@ internal fun SettingsSurface(
             Text("Settings", color = TextHi, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Appearance, device display and keyboard shortcuts for this computer.",
+                "Appearance, secrets, device display and keyboard shortcuts for this computer.",
                 color = TextMid,
                 fontSize = 13.sp,
             )
@@ -102,6 +108,59 @@ internal fun SettingsSurface(
                     .border(1.dp, Ink300, RoundedCornerShape(8.dp)),
             ) {
                 DisplayToggleRow(showDisplay, onShowDisplayChanged)
+            }
+
+            Spacer(Modifier.height(34.dp))
+            Text(
+                "SECRETS",
+                color = TextMid,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                letterSpacing = 1.2.sp,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Ink150)
+                    .border(1.dp, Ink300, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Local secrets file", color = TextHi, fontSize = 13.sp)
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        secretsFile?.fileName?.toString() ?: "Not configured",
+                        color = TextMid,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        when {
+                            secretsFile == null -> "Choose an owner-only dotenv file for local runs."
+                            Files.isRegularFile(secretsFile) && Files.isReadable(secretsFile) -> "Ready for local runs"
+                            else -> "File unavailable — choose a replacement"
+                        },
+                        color = if (secretsFile != null &&
+                            !(Files.isRegularFile(secretsFile) && Files.isReadable(secretsFile))
+                        ) SignalRed else TextMid,
+                        fontSize = 11.sp,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "Values stay in memory and are never shown or written to reports.",
+                        color = TextMid,
+                        fontSize = 11.sp,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                OutlinedButton(onClick = onChooseSecretsFile) {
+                    Text(if (secretsFile == null) "Choose" else "Replace", fontSize = 12.sp)
+                }
+                if (secretsFile != null) {
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(onClick = onClearSecretsFile) { Text("Clear", fontSize = 12.sp) }
+                }
             }
 
             // design.md §6.1 — the same command table drives the keymap and the palette, so this

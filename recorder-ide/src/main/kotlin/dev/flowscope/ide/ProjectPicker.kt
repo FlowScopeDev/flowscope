@@ -17,6 +17,25 @@ import javax.swing.JFileChooser
 internal fun chooseDirectory(parent: Frame?, title: String): Path? =
     if (IsMac) chooseWithAwt(parent, title) else chooseWithSwing(parent, title)
 
+/** Selects one existing file without reading it into IDE state. */
+internal fun chooseFile(parent: Frame?, title: String): Path? = runCatching {
+    if (IsMac) {
+        val dialog = FileDialog(parent, title, FileDialog.LOAD)
+        dialog.isVisible = true
+        val directory = dialog.directory ?: return null
+        val file = dialog.file ?: return null
+        Path.of(directory, file).toAbsolutePath().normalize()
+    } else {
+        val chooser = JFileChooser().apply {
+            dialogTitle = title
+            fileSelectionMode = JFileChooser.FILES_ONLY
+            isMultiSelectionEnabled = false
+        }
+        if (chooser.showOpenDialog(parent) != JFileChooser.APPROVE_OPTION) return null
+        chooser.selectedFile?.toPath()?.toAbsolutePath()?.normalize()
+    }
+}.getOrNull()
+
 /**
  * macOS: `FileDialog` is the native NSOpenPanel, and this client property is the only way to make
  * it select a directory rather than a file.

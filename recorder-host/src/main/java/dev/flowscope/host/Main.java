@@ -392,7 +392,7 @@ public final class Main {
         }
 
         CliOptions options = CliOptions.parse(args.subList(1, args.size()),
-            Set.of("--serial", "--output", "--project"), NO_FLAGS);
+            Set.of("--serial", "--output", "--project", "--secrets-file"), NO_FLAGS);
         options.requireNoExtraPositionals(1, "test " + action);
         String reference = options.positional(0);
         if (reference == null) {
@@ -412,7 +412,8 @@ public final class Main {
 
         Device selected = selectDevice(new AdbClient(), serialFor(options, project));
         FlowTestRunner runner = new FlowTestRunner(
-            new AdbClient(), selected, flowTest, outputFor(options, project, Path.of("test-runs")));
+            new AdbClient(), selected, flowTest, outputFor(options, project, Path.of("test-runs")),
+            options.path("--secrets-file", null));
         boolean passed = runner.run();
         // Name the phase that broke on stderr: a cleanup failure and a failed assertion are very
         // different problems, and nobody should have to open report.json to tell them apart.
@@ -446,7 +447,7 @@ public final class Main {
         }
 
         CliOptions options = CliOptions.parse(args.subList(1, args.size()),
-            Set.of("--serial", "--output", "--project"), NO_FLAGS);
+            Set.of("--serial", "--output", "--project", "--secrets-file"), NO_FLAGS);
         options.requireNoExtraPositionals(1, "suite " + action);
         Optional<FlowProject> project = resolveProject(options);
         Path path = resolveSuite(options.positional(0), project, action);
@@ -471,7 +472,8 @@ public final class Main {
 
         Device selected = selectDevice(new AdbClient(), serialFor(options, project));
         FlowSuiteRunner runner = new FlowSuiteRunner(new AdbClient(), selected, parsed, path,
-            project.orElse(null), outputFor(options, project, Path.of("test-runs")));
+            project.orElse(null), outputFor(options, project, Path.of("test-runs")),
+            options.path("--secrets-file", null));
         boolean passed = runner.run();
         System.out.println("Report: " + runner.root().resolve("suite-report.json"));
         return passed ? 0 : 1;
@@ -544,7 +546,11 @@ public final class Main {
             mode zero-code
             timeout 10000
 
+            require env.API_BASE_URL
+            require secret.API_JWT
             before clear-app-data
+            before set-date name=startDate value=now offset=-7d start-of=day zone=UTC format=yyyy-MM-dd
+            before set-value name=fixtureId generate=uuid
             before api-request method=GET url="${env.API_BASE_URL}/health" \\
               expect-status=200 expect-json.status=UP timeout=30000 retry-interval=1000
             step launch
@@ -606,8 +612,14 @@ public final class Main {
             web-clear-storage requires origin= and types=local,session,indexeddb,cache.
             Interface assertions accept name=, method= or methods=, exists=, and source=any|runtime|agent.
             Cookie/storage values are compared in memory and never written to output or reports.
-            api-request supports host-side HTTP, headers, body/body-file, expect-status,
-            expect-json.<path>, capture.<name>, ${env.NAME}, ${var.name}, and if-var cleanup guards.
+            api-request supports host-side HTTP, headers, body/body-file, query parameters,
+            JSON/header assertions and captures, ${env.NAME}, ${secret.name}, ${var.name},
+            runtime value/date actions, requirements, and conditional guards.
+            set-date supports now/ISO input, offsets, day/week/month boundaries, UTC or an IANA
+            timezone, ISO/epoch presets, and validated Java date patterns. set-value supports
+            uuid, integer, string, and email generators. transform is restricted to trim, case,
+            URL/base64 encoding, substring, prefix, and suffix. Runtime values are never reported.
+            test and suite runs accept --secrets-file <owner-only-path>; environment values win.
             Every run writes report.json, report.html, and junit.xml.
 
             FlowScope suite format v1
@@ -616,11 +628,16 @@ public final class Main {
             name "Nightly regression"
             continue-on-failure true
 
+            before set-value name=suiteRunId generate=uuid
             test tests/login.flow
             test tests/terms.flow
+            after api-request method=DELETE url="${env.API_BASE_URL}/fixtures/${var.fixtureId}" \
+              if-var=fixtureId
 
             `test` paths are relative to the project's flows directory and must end in .flow.
             continue-on-failure defaults to false: the suite stops at the first failing test.
+            Suite before/after hooks allow api-request, set-date, set-value, transform, and secret.
+            Tests read suite setup values as ${suite.var.name}; suite cleanup always runs.
             A suite run writes JSON, HTML, and JUnit aggregates plus per-test reports.
 
             FlowScope project layout v1
@@ -682,10 +699,10 @@ public final class Main {
               project info|tests|suites|validate [<directory>]
               test validate <file.flow> [--project <directory>]
               test run <file.flow> [--project <directory>] [--serial <adb-serial>]
-                       [--output <directory>]
+                       [--output <directory>] [--secrets-file <path>]
               suite validate <file.suite> [--project <directory>]
               suite run [<file.suite>] [--project <directory>] [--serial <adb-serial>]
-                        [--output <directory>]
+                        [--output <directory>] [--secrets-file <path>]
               schema
 
             Inside a project, `test run login` resolves flows/tests/login.flow and writes to

@@ -9,6 +9,24 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class FlowTestParserTest {
+    @Test
+    void parsesRequirementsRuntimeActionsAndConditions() {
+        FlowTest test = FlowTestParser.parseSource("""
+            flowscope 1
+            package com.example.debug
+            require env.API_BASE_URL
+            require secret.API_JWT
+            before set-date name=start value=now offset=-7d zone=UTC format=yyyy-MM-dd
+            before set-value name=id generate=uuid
+            before secret name=jwt source=API_JWT
+            before transform name=encoded from="${var.id}" operation=url-encode
+            step launch if-env.REGION=india unless-var=missing
+            """, "runtime.flow");
+
+        assertEquals(2, test.requirements().size());
+        assertEquals("set-date", test.steps().getFirst().action());
+        assertEquals("india", test.steps().getLast().arguments().get("if-env.REGION"));
+    }
     @TempDir Path directory;
 
     @Test

@@ -7,6 +7,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
+import java.util.List;
 
 /** Small injectable boundary around Java's host-side HTTP client. */
 interface FlowHttpClient {
@@ -15,7 +16,10 @@ interface FlowHttpClient {
     Response send(String method, URI uri, Map<String, String> headers, String body,
                   long timeoutMillis) throws Exception;
 
-    record Response(int status, String body) {}
+    record Response(int status, String body, Map<String, List<String>> headers,
+                    long durationMillis) {
+        Response(int status, String body) { this(status, body, Map.of(), 0); }
+    }
 
     static FlowHttpClient platform() {
         HttpClient client = HttpClient.newBuilder()
@@ -34,6 +38,7 @@ interface FlowHttpClient {
                 ? HttpRequest.BodyPublishers.noBody()
                 : HttpRequest.BodyPublishers.ofString(body);
             request.method(method, publisher);
+            long started = System.nanoTime();
             HttpResponse<InputStream> response = client.send(request.build(),
                 HttpResponse.BodyHandlers.ofInputStream());
             byte[] bytes;
@@ -44,7 +49,8 @@ interface FlowHttpClient {
                 throw new IllegalStateException("API response exceeded 2 MiB");
             }
             return new Response(response.statusCode(), new String(bytes,
-                java.nio.charset.StandardCharsets.UTF_8));
+                java.nio.charset.StandardCharsets.UTF_8), response.headers().map(),
+                Duration.ofNanos(System.nanoTime() - started).toMillis());
         };
     }
 }

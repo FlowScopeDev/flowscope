@@ -30,7 +30,8 @@ not exist.
 4. **Write the flow** at `flows/tests/<name>.flow` using the rules below.
 5. **Validate.** `flowscope test validate flows/tests/<name>.flow`. Exit `0` is valid, `2` is a syntax
    error with a line number. Fix and repeat. Validate the whole project with `flowscope project validate`.
-6. **Run it when a device is available:** `flowscope test run <name> --serial <serial>`. Exit `0`
+6. **Run it when a device is available:** `flowscope test run <name> --serial <serial>`. Add
+   `--secrets-file <owner-only-path>` only when the flow declares local secret inputs. Exit `0`
    passed, `1` failed. On failure read `reports/<run>/report.json`; it records the failing step, a
    screenshot and the last UI hierarchy. Fix the selector or the wait, never add a sleep.
 7. **Add it to a suite** (`flows/suites/*.suite`, `test tests/<name>.flow`) when it belongs in the
@@ -54,7 +55,8 @@ not exist.
   at run time.
 - `mode` is explicit: `zero-code` works on any debuggable APK; `instrumented` needs the debug agent
   and also records network and background-work events. Do not switch modes to make a test pass.
-- Secrets never go in a flow. Use `${env.NAME}` for tokens and passwords. Do not put real customer
+- Secrets never go in a flow. Use `${env.NAME}` or an explicitly loaded `${secret.NAME}` for tokens
+  and passwords; use `capture-secret.<name>` for API tokens. Do not put real customer
   data, phone numbers or financial identifiers in `type value=`.
 - Device actions are scoped to the declared package. Never ask for global permission resets.
 

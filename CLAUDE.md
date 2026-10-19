@@ -58,8 +58,10 @@ flowscope project init [<dir>] [--name <name>] [--package <id>]
 flowscope project info|tests|suites|validate [<dir>]
 flowscope test validate <file.flow> [--project <dir>]
 flowscope test run <file.flow> [--project <dir>] [--serial <id>] [--output <dir>]
+                   [--secrets-file <path>]
 flowscope suite validate <file.suite> [--project <dir>]
 flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>] [--output <dir>]
+                    [--secrets-file <path>]
 ```
 
 Keep output concise, deterministic, and scriptable. A successful command exits `0`; invalid input
@@ -125,6 +127,13 @@ captured scalar JSON fields use `${var.name}` within the current test only. Repo
 request metadata but never environment values, headers, bodies, or captured values. Device lifecycle
 actions are always restricted to the test's declared package; never use a global permission reset.
 
+Runtime values use one taint-aware in-memory store. `${secret.name}`, generated values, dates,
+transforms, API captures, and suite variables must never persist their values. `set-date`,
+`set-value`, `transform`, and `secret` are fixed declarative actions—not an expression or scripting
+escape hatch. Local dotenv secrets load only through an explicit CLI option or the user-local IDE
+preference, never automatically from a project. Environment values override matching file entries;
+POSIX secret files must be owner-only.
+
 Deep-link intents must be explicitly scoped to the declared package. Reports may retain scheme,
 host, and path but never query values. APK install/uninstall actions are also package-scoped: files
 are relative to the `.flow` file, resolved before mutation, and inspected with SDK `apkanalyzer` so
@@ -148,7 +157,11 @@ but never the value, and is consumed only when app code opts into
 ### Suites and projects
 
 A `.suite` file is an ordered list of `.flow` tests (`flowscope-suite 1`, `name`,
-`continue-on-failure`, `test <path>`), sharing the `.flow` tokenizer and reporting errors as
+`continue-on-failure`, `test <path>`), optionally surrounded by host-only `before`/`after` hooks.
+Suite hooks allow only API, date, value, transform, and secret actions; device state remains owned
+by each package-declaring flow. Suite setup variables are read-only in tests through
+`${suite.var.name}`, test variables do not escape, and every suite cleanup hook runs. Suites share
+the `.flow` tokenizer and report errors as
 `FlowTestParser.ParseError`. `test` paths are relative to the project's flows directory, must end in
 `.flow`, and must not be absolute or contain `..` — a suite is shared, checked-in input, and a
 reference that only resolves on the author's machine is a broken suite.

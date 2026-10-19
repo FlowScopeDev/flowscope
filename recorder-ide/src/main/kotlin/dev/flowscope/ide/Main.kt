@@ -208,6 +208,7 @@ private fun FlowScopeApp(
     val shell = remember { ShellState() }
     val timeline = remember { TimelineState() }
     val session = remember { SessionState() }
+    var secretsFile by remember { mutableStateOf(Preferences.loadSecretsFile()) }
     val deviceState = remember {
         DeviceState().apply {
             embeddedStatus = embeddedScrcpy.availabilitySummary()
@@ -936,7 +937,7 @@ private fun FlowScopeApp(
                         val suite = FlowSuiteParser.parse(target)
                         val runner = FlowSuiteRunner(
                             adb, device!!, suite, target, projectState.project,
-                            projectState.reportsDirectory,
+                            projectState.reportsDirectory, secretsFile,
                         )
                         val passed = runner.run()
                         val report = RunReport.read(runner.root()).orElse(null)
@@ -956,7 +957,7 @@ private fun FlowScopeApp(
                     } else {
                         val parsed = FlowTestParser.parse(target)
                         val runner = FlowTestRunner(
-                            adb, device!!, parsed, projectState.reportsDirectory,
+                            adb, device!!, parsed, projectState.reportsDirectory, secretsFile,
                         )
                         val passed = runner.run()
                         val steps = parsed.steps().size
@@ -1891,6 +1892,17 @@ private fun FlowScopeApp(
                             onModeChanged = { mode ->
                                 onThemeModeChanged(mode)
                                 scope.launch(Dispatchers.IO) { Preferences.saveThemeMode(mode) }
+                            },
+                            secretsFile = secretsFile,
+                            onChooseSecretsFile = {
+                                chooseFile(window, "Choose FlowScope secrets file")?.let { selected ->
+                                    secretsFile = selected
+                                    scope.launch(Dispatchers.IO) { Preferences.saveSecretsFile(selected) }
+                                }
+                            },
+                            onClearSecretsFile = {
+                                secretsFile = null
+                                scope.launch(Dispatchers.IO) { Preferences.saveSecretsFile(null) }
                             },
                             modifier = Modifier.weight(1f),
                         )

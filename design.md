@@ -272,6 +272,11 @@ radio-style rows:
 Changes apply immediately. The selected lowercase value is stored in `~/.flowscope/theme.txt` and
 invalid or missing values resolve to System.
 
+The Secrets section selects or clears one local dotenv file for IDE-started tests and suites. It
+shows only the filename and status, never file contents. The absolute path is stored under
+`~/.flowscope/`; choosing a secret file does not modify the open project. Runtime and captured
+values remain hidden throughout the Flow editor, timeline, detail drawer, and reports.
+
 ## 11. Motion and feedback
 
 - Hover: 80ms

@@ -10,6 +10,32 @@ import org.junit.jupiter.api.Test;
 
 class FlowSuiteParserTest {
     @Test
+    void parsesHostOnlyLifecycleAndRequirements() {
+        FlowSuite suite = FlowSuiteParser.parseSource("""
+            flowscope-suite 1
+            name "API suite"
+            require secret.API_JWT
+            before set-value name=id generate=uuid
+            before api-request method=GET url="https://example.com/health" \\
+              expect-status=200
+            test tests/a.flow
+            after api-request method=DELETE url="https://example.com/${var.id}" if-var=id
+            """, "suite.suite");
+
+        assertEquals(1, suite.requirements().size());
+        assertEquals(3, suite.hooks().size());
+        assertEquals(1, suite.entries().size());
+    }
+
+    @Test
+    void rejectsDeviceActionsInSuiteHooks() {
+        assertThrows(FlowTestParser.ParseError.class, () -> FlowSuiteParser.parseSource("""
+            flowscope-suite 1
+            before clear-app-data
+            test tests/a.flow
+            """, "suite.suite"));
+    }
+    @Test
     void parsesAFullSuite() {
         FlowSuite suite = parse("""
             flowscope-suite 1

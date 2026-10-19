@@ -116,11 +116,12 @@ private fun needsSelector(line: String): Boolean =
 private fun isLifecycleLine(line: String): Boolean =
     listOf("before ", "step ", "after ").any(line::startsWith)
 
-private val HeaderDirectives = setOf("flowscope", "name", "package", "mode", "timeout")
+private val HeaderDirectives = setOf("flowscope", "name", "package", "mode", "timeout", "require")
 private val StepKeywords = setOf(
     "before", "step", "after", "launch", "wait-visible", "tap", "tap-if-visible", "type",
     "scroll", "back", "long-press", "swipe", "scroll-to", "press-key", "clear-text", "hide-keyboard",
     "assert-visible", "assert-not-visible", "screenshot", "api-request",
+    "set-date", "set-value", "transform", "secret",
     "clear-app-data", "force-stop", "grant-permission", "revoke-permission",
     "reset-app-permissions", "open-deep-link", "assert-deep-link-handler",
     "assert-app-link-verified", "install-apk", "uninstall-app", "assert-installed",
@@ -130,8 +131,9 @@ private val StepKeywords = setOf(
     "web-assert-storage", "web-clear-storage", "web-assert-interface",
     "web-assert-secure-context", "web-snapshot",
 )
-private val SuiteHeaderDirectives = setOf("flowscope-suite", "name", "continue-on-failure")
-private val SuiteKeywords = setOf("test")
+private val SuiteHeaderDirectives = setOf("flowscope-suite", "name", "continue-on-failure", "require")
+private val SuiteKeywords = setOf("test", "before", "after", "api-request", "set-date",
+    "set-value", "transform", "secret")
 
 /** The two line formats differ only in their word lists, so they share one highlighter. */
 internal data class SyntaxWords(val header: Set<String>, val keywords: Set<String>)
@@ -309,6 +311,10 @@ internal fun describeStep(stepLine: String): String {
         "assert-visible" -> "Assert ${target ?: "an element"} is visible"
         "assert-not-visible" -> "Assert ${target ?: "an element"} is not visible"
         "api-request" -> "Call host API"
+        "set-date" -> "Compute a runtime date"
+        "set-value" -> "Create a runtime value"
+        "transform" -> "Transform a runtime value"
+        "secret" -> "Bind a secret value"
         "clear-app-data" -> "Clear target app data"
         "force-stop" -> "Force-stop the target app"
         "grant-permission" -> "Grant an app permission"

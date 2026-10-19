@@ -14,6 +14,26 @@ internal object Preferences {
     private val themeFile: Path get() = FlowScopeHome.resolve("theme.txt")
     private val recentProjectsFile: Path get() = FlowScopeHome.resolve("recent-projects.txt")
     private val showDeviceFile: Path get() = FlowScopeHome.resolve("show-device.txt")
+    private val secretsFilePreference: Path get() = FlowScopeHome.resolve("secrets-file.txt")
+
+    fun loadSecretsFile(): Path? = runCatching {
+        if (!Files.isRegularFile(secretsFilePreference)) null
+        else parseSecretsFilePath(Files.readString(secretsFilePreference, StandardCharsets.UTF_8))
+    }.getOrNull()
+
+    fun saveSecretsFile(path: Path?) {
+        runCatching {
+            if (path == null) Files.deleteIfExists(secretsFilePreference)
+            else {
+                Files.createDirectories(secretsFilePreference.parent)
+                Files.writeString(
+                    secretsFilePreference,
+                    formatSecretsFilePath(path),
+                    StandardCharsets.UTF_8,
+                )
+            }
+        }
+    }
 
     fun loadShowDevice(): Boolean = runCatching {
         if (!Files.exists(showDeviceFile)) true
@@ -130,6 +150,14 @@ internal fun parseShowDevice(value: String?): Boolean = value?.trim()?.lowercase
 internal fun formatShowDevice(show: Boolean): String = "$show\n"
 
 internal fun formatThemeMode(mode: ThemeMode): String = "${mode.persistedValue}\n"
+
+internal fun parseSecretsFilePath(value: String?): Path? = runCatching {
+    value?.trim()?.takeIf(String::isNotEmpty)?.let(Path::of)?.takeIf(Path::isAbsolute)
+        ?.toAbsolutePath()?.normalize()
+}.getOrNull()
+
+internal fun formatSecretsFilePath(path: Path): String =
+    path.toAbsolutePath().normalize().toString() + "\n"
 
 /**
  * `absoluteRoot<TAB>lastOpenRelativePath` per line; the second field is optional. Only trailing

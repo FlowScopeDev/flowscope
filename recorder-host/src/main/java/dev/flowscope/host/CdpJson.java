@@ -131,7 +131,12 @@ final class CdpJson {
                 while (has() && Character.isDigit(peek())) index++;
             }
             String raw = text.substring(start, index);
-            try { return decimal ? Double.parseDouble(raw) : Long.parseLong(raw); }
+            try {
+                // Keep integer tokens as Long. A conditional expression here would promote both
+                // branches to double and silently turn API captures such as `2` into `2.0`.
+                if (decimal) return Double.parseDouble(raw);
+                return Long.parseLong(raw);
+            }
             catch (NumberFormatException invalid) { throw error("invalid number"); }
         }
 

@@ -10,12 +10,20 @@ public record FlowTest(
     CaptureMode mode,
     long timeoutMillis,
     Path sourceDirectory,
+    List<Requirement> requirements,
     List<Step> steps
 ) {
     public FlowTest(String name, String packageName, CaptureMode mode, long timeoutMillis,
         List<Step> steps) {
-        this(name, packageName, mode, timeoutMillis, Path.of(".").toAbsolutePath(), steps);
+        this(name, packageName, mode, timeoutMillis, Path.of(".").toAbsolutePath(), List.of(), steps);
     }
+
+    public FlowTest(String name, String packageName, CaptureMode mode, long timeoutMillis,
+        Path sourceDirectory, List<Step> steps) {
+        this(name, packageName, mode, timeoutMillis, sourceDirectory, List.of(), steps);
+    }
+
+    public record Requirement(int line, String source, String name) {}
 
     public enum Phase {
         BEFORE("before"), TEST("test"), AFTER("after");

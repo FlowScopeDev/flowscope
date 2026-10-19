@@ -16,6 +16,7 @@ public final class FlowTestParser {
         "launch", "wait-visible", "tap", "tap-if-visible", "type", "scroll", "back",
         "long-press", "swipe", "scroll-to", "press-key", "clear-text", "hide-keyboard",
         "assert-visible", "assert-not-visible", "screenshot", "api-request",
+        "set-date", "set-value", "transform", "secret",
         "clear-app-data", "force-stop", "grant-permission", "revoke-permission",
         "reset-app-permissions", "open-deep-link", "assert-deep-link-handler",
         "assert-app-link-verified", "install-apk", "uninstall-app", "assert-installed",
@@ -64,6 +65,7 @@ public final class FlowTestParser {
         CaptureMode mode = CaptureMode.ZERO_CODE;
         long timeout = 10_000;
         List<FlowTest.Step> steps = new ArrayList<>();
+        List<FlowTest.Requirement> requirements = new ArrayList<>();
         boolean versionSeen = false;
         int lastPhase = 0;
 
@@ -87,6 +89,7 @@ public final class FlowTestParser {
                 case "mode" -> mode = CaptureMode.parse(singleValue(tokens, lineNumber, "mode"));
                 case "timeout" -> timeout = parsePositiveLong(
                     singleValue(tokens, lineNumber, "timeout"), lineNumber, "timeout");
+                case "require" -> requirements.add(parseRequirement(tokens, lineNumber));
                 case "before", "step", "after" -> {
                     FlowTest.Phase phase = keyword.equals("before") ? FlowTest.Phase.BEFORE
                         : keyword.equals("after") ? FlowTest.Phase.AFTER : FlowTest.Phase.TEST;
@@ -107,7 +110,8 @@ public final class FlowTestParser {
         if (steps.stream().noneMatch(step -> step.phase() == FlowTest.Phase.TEST)) {
             throw new ParseError(0, "Test has no main steps: " + origin);
         }
-        return new FlowTest(name, packageName, mode, timeout, sourceDirectory, List.copyOf(steps));
+        return new FlowTest(name, packageName, mode, timeout, sourceDirectory,
+            List.copyOf(requirements), List.copyOf(steps));
     }
 
     /** An {@link IllegalArgumentException} that also reports which line failed (0 = whole file). */
@@ -148,7 +152,24 @@ public final class FlowTestParser {
         return new FlowTest.Step(line, phase, action, Map.copyOf(arguments));
     }
 
+    static FlowTest.Requirement parseRequirement(List<String> tokens, int line) {
+        if (tokens.size() != 2) throw error(line, "require expects env.NAME or secret.NAME");
+        String raw = tokens.get(1);
+        int dot = raw.indexOf('.');
+        if (dot <= 0 || dot == raw.length() - 1) {
+            throw error(line, "require expects env.NAME or secret.NAME");
+        }
+        String source = raw.substring(0, dot);
+        String name = raw.substring(dot + 1);
+        if (!Set.of("env", "secret").contains(source)
+            || !name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            throw error(line, "require expects env.NAME or secret.NAME");
+        }
+        return new FlowTest.Requirement(line, source, name);
+    }
+
     private static void validateAction(String action, Map<String, String> arguments, int line) {
+        validateGuards(arguments, line);
         boolean hasSelector = arguments.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);
         if ((SELECTOR_ACTIONS.contains(action)) && !hasSelector) {
             throw error(line,
@@ -187,7 +208,34 @@ public final class FlowTestParser {
                 parsePositiveLong(arguments.get("retry-interval"), line, "retry-interval");
             }
             if (arguments.containsKey("expect-status")) parseStatuses(arguments.get("expect-status"), line);
+            if (arguments.containsKey("expect-duration-max")) {
+                parsePositiveLong(arguments.get("expect-duration-max"), line, "expect-duration-max");
+            }
+            for (var entry : arguments.entrySet()) {
+                String key = entry.getKey(), value = entry.getValue();
+                if (key.startsWith("query.") && key.length() == 6) {
+                    throw error(line, "query parameters require query.<name>=");
+                }
+                if ((key.startsWith("capture.") || key.startsWith("capture-secret.")
+                    || key.startsWith("capture-header.") || key.startsWith("capture-secret-header."))
+                    && !key.substring(key.indexOf('.') + 1).matches("[A-Za-z_][A-Za-z0-9_.-]*")) {
+                    throw error(line, "capture requires a runtime variable name");
+                }
+                if (key.startsWith("expect-json-exists.") && !value.contains("${")) {
+                    parseBoolean(value, line, key);
+                }
+                if (key.startsWith("expect-json-length.") && !value.contains("${")) {
+                    parseNonNegativeInt(value, line, key);
+                }
+                if ((key.startsWith("expect-json-gt.") || key.startsWith("expect-json-gte.")
+                    || key.startsWith("expect-json-lt.") || key.startsWith("expect-json-lte."))
+                    && !value.contains("${")) {
+                    try { new java.math.BigDecimal(value); }
+                    catch (NumberFormatException invalid) { throw error(line, key + " requires a number"); }
+                }
+            }
         }
+        validateRuntimeAction(action, arguments, line);
         if (Set.of("open-deep-link", "assert-deep-link-handler").contains(action)
             && !arguments.containsKey("uri")) {
             throw error(line, action + " requires uri=");
@@ -275,6 +323,105 @@ public final class FlowTestParser {
         if (action.equals("web-assert-secure-context")) {
             if (!arguments.containsKey("value")) throw error(line, "web-assert-secure-context requires value=");
             parseBoolean(arguments.get("value"), line, "value");
+        }
+    }
+
+    private static void validateRuntimeAction(String action, Map<String, String> arguments, int line) {
+        if (Set.of("set-date", "set-value", "transform", "secret").contains(action)
+            && !arguments.containsKey("name")) {
+            throw error(line, action + " requires name=");
+        }
+        if (arguments.containsKey("name")
+            && !arguments.get("name").matches("[A-Za-z_][A-Za-z0-9_.-]*")) {
+            throw error(line, action + " name must be a runtime variable identifier");
+        }
+        if (action.equals("set-date")) {
+            if (!arguments.containsKey("value")) throw error(line, "set-date requires value=");
+            if (!arguments.containsKey("format")) throw error(line, "set-date requires format=");
+            for (String key : List.of("start-of", "end-of")) {
+                if (arguments.containsKey(key)
+                    && !Set.of("day", "week", "month").contains(arguments.get(key))) {
+                    throw error(line, key + " must be day, week, or month");
+                }
+            }
+            if (arguments.containsKey("start-of") && arguments.containsKey("end-of")) {
+                throw error(line, "set-date accepts start-of= or end-of=, not both");
+            }
+            if (arguments.containsKey("offset") && !arguments.get("offset").contains("${")
+                && !arguments.get("offset").matches("[+-]?\\d+[dhms]")
+                && !arguments.get("offset").matches("-?P.*")) {
+                throw error(line, "set-date offset must be shorthand or ISO-8601");
+            }
+        }
+        if (action.equals("set-value")) {
+            boolean value = arguments.containsKey("value"), generated = arguments.containsKey("generate");
+            if (value == generated) throw error(line, "set-value requires exactly one of value= or generate=");
+            if (generated && !Set.of("uuid", "integer", "email", "string")
+                .contains(arguments.get("generate"))) {
+                throw error(line, "set-value generate must be uuid, integer, email, or string");
+            }
+            for (String key : List.of("min", "max")) if (arguments.containsKey(key)
+                && !arguments.get(key).contains("${")) parseInt(arguments.get(key), line, key);
+            if (arguments.containsKey("length") && !arguments.get("length").contains("${")) {
+                parseNonNegativeInt(arguments.get("length"), line, "length");
+            }
+        }
+        if (action.equals("transform")) {
+            if (!arguments.containsKey("from") || !arguments.containsKey("operation")) {
+                throw error(line, "transform requires from= and operation=");
+            }
+            if (!Set.of("trim", "lowercase", "uppercase", "url-encode", "base64-encode",
+                "substring", "prefix", "suffix").contains(arguments.get("operation"))) {
+                throw error(line, "unsupported transform operation");
+            }
+            if (Set.of("prefix", "suffix").contains(arguments.get("operation"))
+                && !arguments.containsKey("value")) {
+                throw error(line, "prefix and suffix transforms require value=");
+            }
+            for (String key : List.of("start", "end")) {
+                if (arguments.containsKey(key) && !arguments.get(key).contains("${")) {
+                    parseNonNegativeInt(arguments.get(key), line, key);
+                }
+            }
+        }
+        if (action.equals("secret") && !arguments.containsKey("source")) {
+            throw error(line, "secret requires source=");
+        }
+        if (action.equals("secret") && arguments.containsKey("source")
+            && !arguments.get("source").matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            throw error(line, "secret source must be an environment/secret-file identifier");
+        }
+    }
+
+    private static int parseNonNegativeInt(String value, int line, String name) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 0) throw error(line, name + " must be zero or greater");
+            return parsed;
+        } catch (NumberFormatException invalid) {
+            throw error(line, name + " must be an integer");
+        }
+    }
+
+    private static int parseInt(String value, int line, String name) {
+        try { return Integer.parseInt(value); }
+        catch (NumberFormatException invalid) { throw error(line, name + " must be an integer"); }
+    }
+
+    private static void validateGuards(Map<String, String> arguments, int line) {
+        for (String key : arguments.keySet()) {
+            if (Set.of("if-var", "unless-var", "if-env", "unless-env", "if-secret",
+                "unless-secret").contains(key)) {
+                if (!arguments.get(key).matches("[A-Za-z_][A-Za-z0-9_.-]*")) {
+                    throw error(line, key + " requires a variable name");
+                }
+            } else if (key.startsWith("if-var.") || key.startsWith("unless-var.")
+                || key.startsWith("if-env.") || key.startsWith("unless-env.")) {
+                String name = key.substring(key.indexOf('.') + 1);
+                if (!name.matches("[A-Za-z_][A-Za-z0-9_.-]*")) {
+                    throw error(line, "invalid conditional variable name");
+                }
+            }
         }
     }
 

@@ -45,6 +45,10 @@ class FlowValidationTest {
         assertEquals(5, result.stepCount)
         assertEquals(listOf("before", "before", "step", "after", "after"), lines.map { it.phase })
         assertEquals("Call host API", describeStep(lines[1].body))
+        assertEquals("Compute a runtime date", describeStep("before set-date name=today value=now format=yyyy-MM-dd"))
+        assertEquals("Create a runtime value", describeStep("before set-value name=id generate=uuid"))
+        assertEquals("Transform a runtime value", describeStep("before transform name=x from=y operation=trim"))
+        assertEquals("Bind a secret value", describeStep("before secret name=jwt source=API_JWT"))
     }
 
     @Test
