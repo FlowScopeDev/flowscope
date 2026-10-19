@@ -44,11 +44,19 @@ public final class FlowSuiteRunner {
 
     public record TestOutcome(int number, int line, String reference, String name, String status,
                               long durationMillis, String report, String error,
-                              List<String> teardownErrors) {
-        /** A test with clean teardown, or one that never got far enough to have any. */
+                              List<String> teardownErrors, List<String> screenshots) {
+        /** A test with clean teardown and no screenshots, or one that never got far enough for either. */
         public TestOutcome(int number, int line, String reference, String name, String status,
             long durationMillis, String report, String error) {
-            this(number, line, reference, name, status, durationMillis, report, error, List.of());
+            this(number, line, reference, name, status, durationMillis, report, error, List.of(),
+                List.of());
+        }
+
+        /** A test with screenshot evidence but clean teardown. */
+        public TestOutcome(int number, int line, String reference, String name, String status,
+            long durationMillis, String report, String error, List<String> teardownErrors) {
+            this(number, line, reference, name, status, durationMillis, report, error,
+                teardownErrors, List.of());
         }
     }
 
@@ -228,9 +236,10 @@ public final class FlowSuiteRunner {
             }
             long elapsed = Duration.between(testStarted, Instant.now()).toMillis();
             String status = passed ? "passed" : "failed";
+            List<String> screenshots = screenshotPaths(root, current.directoryName());
             outcomes.add(new TestOutcome(number, current.entry().line(),
                 current.entry().reference(), current.test().name(), status, elapsed,
-                current.directoryName() + "/report.json", error, teardownErrors));
+                current.directoryName() + "/report.json", error, teardownErrors, screenshots));
 
             System.out.printf("DONE %02d/%02d  %s · %s · %.1fs%n",
                 number, total, status, current.test().name(), elapsed / 1000.0);
@@ -293,6 +302,24 @@ public final class FlowSuiteRunner {
             }
         }
         return passed;
+    }
+
+    /**
+     * `evidence/*.png` files a test's own run just wrote, as paths relative to the suite's output
+     * directory so `suite-report.html` can link to them the same way it links each `report.html`.
+     * Sorted by filename, which already orders `step-01`, `step-02`, … ahead of a trailing
+     * `failure-NN`. Best-effort: a directory that was never created (a skipped test) is empty.
+     */
+    private static List<String> screenshotPaths(Path root, String directoryName) {
+        Path evidence = root.resolve(directoryName).resolve("evidence");
+        if (!Files.isDirectory(evidence)) return List.of();
+        try (var files = Files.list(evidence)) {
+            return files.filter(path -> path.getFileName().toString().endsWith(".png"))
+                .map(path -> path.getFileName().toString()).sorted()
+                .map(name -> directoryName + "/evidence/" + name).toList();
+        } catch (IOException ignored) {
+            return List.of();
+        }
     }
 
     static Totals totals(List<TestOutcome> outcomes) {
@@ -363,6 +390,7 @@ public final class FlowSuiteRunner {
                 .append(", \"report\": ").append(Json.quote(test.report()))
                 .append(", \"error\": ").append(Json.quote(test.error()))
                 .append(", \"teardownErrors\": ").append(jsonStrings(test.teardownErrors()))
+                .append(", \"screenshots\": ").append(jsonStrings(test.screenshots()))
                 .append("}");
         }
         out.append(report.tests().isEmpty() ? "]\n" : "\n  ]\n");
@@ -384,6 +412,17 @@ public final class FlowSuiteRunner {
             }
             rows.append("</td><td>").append(html(test.error() == null ? "" : test.error()))
                 .append("</td></tr>");
+            if (!test.screenshots().isEmpty()) {
+                rows.append("<tr><td></td><td colspan=\"5\" class=\"screenshots\">");
+                for (String screenshot : test.screenshots()) {
+                    rows.append("<a href=\"").append(html(screenshot)).append("\"><img src=\"")
+                        .append(html(screenshot)).append("\" alt=\"")
+                        .append(html(screenshotLabel(screenshot))).append("\" loading=\"lazy\">"
+                            + "<span>").append(html(screenshotLabel(screenshot)))
+                        .append("</span></a>");
+                }
+                rows.append("</td></tr>");
+            }
         }
         StringBuilder hookRows = new StringBuilder();
         for (HookOutcome hook : report.hooks()) hookRows.append("<tr><td>")
@@ -397,7 +436,12 @@ public final class FlowSuiteRunner {
             + " · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}"
             + ".passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}"
             + "table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;"
-            + "border-bottom:1px solid #dae0e8;text-align:left}</style><h1>"
+            + "border-bottom:1px solid #dae0e8;text-align:left}"
+            + "td.screenshots{padding-top:0}"
+            + "td.screenshots a{display:inline-block;margin:0 10px 10px 0;text-align:center;"
+            + "font-size:11px;color:#687382}"
+            + "td.screenshots img{display:block;height:120px;border:1px solid #dae0e8;"
+            + "border-radius:4px;margin-bottom:4px}</style><h1>"
             + html(report.name()) + "</h1><p>" + totals.passed() + " passed · "
             + totals.failed() + " failed · " + totals.skipped() + " skipped</p><table><tr>"
             + "<th>#</th><th>Test</th><th>Status</th><th>Duration</th><th>Report</th>"
@@ -458,6 +502,12 @@ public final class FlowSuiteRunner {
             out.append(Json.quote(entry.getKey())).append(':').append(Json.quote(entry.getValue()));
         }
         return out.append('}').toString();
+    }
+
+    /** The step name a screenshot was captured under, read back out of its evidence file name. */
+    private static String screenshotLabel(String path) {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        return name.endsWith(".png") ? name.substring(0, name.length() - 4) : name;
     }
 
     private static String html(String value) {

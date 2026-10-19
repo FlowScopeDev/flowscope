@@ -467,7 +467,9 @@ flowscope suite run --serial <adb-serial>           # uses "suite" from flowscop
 ```
 
 A suite run writes `suite-report.json`, `suite-report.html`, and `junit.xml`, plus numbered
-JSON/HTML/JUnit reports per test. With
+JSON/HTML/JUnit reports per test. Each test's `step screenshot`/`web-screenshot` evidence is also
+embedded as a thumbnail gallery under that test's row in `suite-report.html`, linked to the full-size
+file, so a reviewer can scan what happened without opening every per-test report. With
 `continue-on-failure false` (the default) it stops at the first failure and records the rest as
 skipped.
 

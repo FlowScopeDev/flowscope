@@ -39,12 +39,13 @@ class FlowSuiteReportTest {
               "tests": [
                 {"number": 1, "line": 6, "reference": "tests/login.flow", "name": "Login smoke",\
              "status": "passed", "durationMillis": 3210,\
-             "report": "01-Login_smoke/report.json", "error": null, "teardownErrors": []},
+             "report": "01-Login_smoke/report.json", "error": null, "teardownErrors": [],\
+             "screenshots": []},
                 {"number": 2, "line": 7, "reference": "tests/terms.flow",\
              "name": "Terms and continue", "status": "failed", "durationMillis": 18044,\
              "report": "02-Terms_and_continue/report.json",\
              "error": "Element did not become visible: [text=Welcome]",\
-             "teardownErrors": ["force-stop: device not found"]}
+             "teardownErrors": ["force-stop: device not found"], "screenshots": []}
               ]
             }
             """, json);
@@ -127,6 +128,40 @@ class FlowSuiteReportTest {
         // must not restate it, or every cell says the same thing twice.
         assertEquals(false, junit.contains("cleanup: api-request"));
         assertEquals(true, FlowSuiteRunner.reportHtml(report).contains("cleanup also failed (1)"));
+    }
+
+    @Test
+    void screenshotsSerializeAsAJsonArrayOfRelativePaths() {
+        String json = FlowSuiteRunner.reportJson(new FlowSuiteRunner.SuiteReport(
+            "Smoke", "flows/suites/smoke.suite", "/app", "ABC", false, STARTED, ENDED,
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
+                "01-A/report.json", null, List.of(),
+                List.of("01-A/evidence/step-01.png", "01-A/evidence/step-02.png")))));
+        assertEquals(true, json.contains(
+            "\"screenshots\": [\"01-A/evidence/step-01.png\", \"01-A/evidence/step-02.png\"]"));
+    }
+
+    @Test
+    void suiteReportHtmlEmbedsScreenshotThumbnailsLinkedToTheEvidenceFile() {
+        FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
+            "Smoke", "flows/suites/smoke.suite", "/app", "ABC", false, STARTED, ENDED,
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
+                "01-A/report.json", null, List.of(), List.of("01-A/evidence/step-01.png"))));
+
+        String html = FlowSuiteRunner.reportHtml(report);
+        assertEquals(true, html.contains("<img src=\"01-A/evidence/step-01.png\""));
+        assertEquals(true, html.contains("<a href=\"01-A/evidence/step-01.png\">"));
+        assertEquals(true, html.contains(">step-01<"));
+    }
+
+    @Test
+    void suiteReportHtmlOmitsTheGalleryRowWhenThereAreNoScreenshots() {
+        FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
+            "Smoke", "flows/suites/smoke.suite", "/app", "ABC", false, STARTED, ENDED,
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
+                "01-A/report.json", null)));
+
+        assertEquals(false, FlowSuiteRunner.reportHtml(report).contains("class=\"screenshots\""));
     }
 
     private static FlowSuiteRunner.TestOutcome outcome(String status) {

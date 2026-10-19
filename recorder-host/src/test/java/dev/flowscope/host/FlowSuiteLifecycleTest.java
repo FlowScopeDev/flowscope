@@ -75,6 +75,38 @@ class FlowSuiteLifecycleTest {
         assertTrue(report.contains("\"status\": \"skipped\""));
     }
 
+    @Test
+    void suiteReportCollectsEachTestsScreenshotsAsRelativeEvidencePaths() throws Exception {
+        Path flows = temp.resolve("gallery/flows");
+        Files.createDirectories(flows.resolve("tests"));
+        Files.createDirectories(flows.resolve("suites"));
+        Files.writeString(flows.resolve("tests/a.flow"), """
+            flowscope 1
+            package com.example.debug
+            step screenshot name=welcome
+            step screenshot name=checkout
+            """);
+        Path suiteFile = flows.resolve("suites/a.suite");
+        Files.writeString(suiteFile, """
+            flowscope-suite 1
+            test tests/a.flow
+            """);
+        FlowSuiteRunner runner = new FlowSuiteRunner(new FakeAdb(),
+            new Device("TEST", "device", Map.of()), FlowSuiteParser.parse(suiteFile), suiteFile,
+            null, temp.resolve("reports3"), new RecordingHttp(), Map.of(), Map.of());
+
+        assertTrue(runner.run());
+        String directory = Files.list(runner.root()).filter(Files::isDirectory).findFirst()
+            .orElseThrow().getFileName().toString();
+        String json = Files.readString(runner.root().resolve("suite-report.json"));
+        assertTrue(json.contains("\"screenshots\": [\"" + directory
+            + "/evidence/checkout.png\", \"" + directory + "/evidence/welcome.png\"]"));
+        String html = Files.readString(runner.root().resolve("suite-report.html"));
+        assertTrue(html.contains("<img src=\"" + directory + "/evidence/welcome.png\""));
+        assertTrue(Files.isRegularFile(
+            runner.root().resolve(directory).resolve("evidence/welcome.png")));
+    }
+
     private static final class RecordingHttp implements FlowHttpClient {
         private final List<Response> responses; private int index;
         final List<String> urls = new ArrayList<>();
