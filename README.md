@@ -87,18 +87,19 @@ Compose Desktop produces Windows packages from a Windows host and macOS packages
 
 ## Install the desktop app
 
-On macOS, from v1.0.0 onwards:
+On macOS:
 
 ```bash
 brew tap FlowScopeDev/homebrew-tap
+brew trust --cask flowscopedev/tap/flowscope
 brew install --cask flowscope
+xattr -cr "/Applications/Flow Scope.app"
 ```
 
-FlowScope isn't signed with an Apple Developer ID (it's a one-person project; a certificate costs
-money every year), so a DMG downloaded directly from a release trips Gatekeeper's "damaged" dialog.
-Homebrew clears the quarantine attribute from what it downloads, so the cask avoids that entirely.
-Installing the DMG by hand works too, with one extra step
-(`xattr -cr "/Applications/Flow Scope.app"`, or right-click the app and choose Open).
+FlowScope isn't signed with an Apple Developer ID — it's a one-person project and the certificate
+costs money every year — so macOS quarantines it and refuses to open it until you clear that
+attribute. Homebrew does not do this for you: Cask applies quarantine deliberately. The last line,
+or right-clicking the app and choosing Open, is needed whichever way you install.
 
 No Windows package is published yet. **[INSTALL.md](INSTALL.md)** has the full picture:
 both platforms, verifying a checksum, and what FlowScope expects you to have installed already.

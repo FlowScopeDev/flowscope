@@ -39,6 +39,8 @@ What 1.x promises not to break is written down in [COMPATIBILITY.md](COMPATIBILI
   download. `COMPATIBILITY.md` — the frozen `.flow`/`.suite`/`flowscope.json` formats, exit codes
   and report fields, and what 1.x promises.
 - `release/homebrew/` — the Homebrew cask template and the steps to publish it to the tap.
+  Installing through the cask still needs `brew trust` and a `xattr -cr`: Homebrew applies the
+  quarantine attribute deliberately and no longer offers a way to skip it.
 - IDE: with the device display hidden, an AVD's primary start is headless. Both starts remain.
 
 ### Changed

@@ -6,14 +6,19 @@ FlowScope is not signed with an Apple Developer ID. It is a one-person project a
 costs money every year, so macOS will tell you the app is damaged if you open the DMG directly.
 Nothing is wrong with the download — macOS says that about any unsigned app it quarantines.
 
-**The easy way (no warning):**
+**With Homebrew:**
 
 ```bash
 brew tap FlowScopeDev/homebrew-tap
+brew trust --cask flowscopedev/tap/flowscope
 brew install --cask flowscope
+xattr -cr "/Applications/Flow Scope.app"
 ```
 
-Homebrew clears the quarantine attribute on what it downloads, so the dialog never appears.
+`brew trust` is required because Homebrew refuses casks from third-party taps until you trust them.
+The last line is required too: Homebrew applies the quarantine attribute deliberately and no longer
+offers a way to skip it, so an app it installs is quarantined just like one you downloaded. What the
+cask buys you is a verified checksum and managed upgrades, not a quieter first launch.
 
 **Installing the DMG by hand:** drag `Flow Scope.app` to Applications, then either right-click it and
 choose **Open**, or clear the attribute yourself:

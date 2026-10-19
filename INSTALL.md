@@ -8,9 +8,9 @@ replay never needs an IDE.
 ## Read this before opening the macOS app
 
 FlowScope is **not signed with an Apple Developer ID**. It is a one-person project, and that
-certificate costs money every year. macOS therefore quarantines the downloaded app and reports it as
-*damaged* when you open it — not because anything is wrong with the download, but because that is
-what macOS says about any unsigned app it has quarantined.
+certificate costs money every year. macOS therefore quarantines the app and refuses to open it — not
+because anything is wrong with the download, but because that is what macOS does with any
+quarantined app it cannot verify. This applies to **both** install routes below.
 
 There are two ways around it, and the first avoids the dialog entirely.
 
@@ -18,14 +18,23 @@ There are two ways around it, and the first avoids the dialog entirely.
 
 ```bash
 brew tap FlowScopeDev/homebrew-tap
+brew trust --cask flowscopedev/tap/flowscope
 brew install --cask flowscope
+xattr -cr "/Applications/Flow Scope.app"
 ```
 
-Homebrew removes the quarantine attribute from what it downloads, so Gatekeeper never objects. This
-is the install path to prefer, and the one to point other people at.
+Four commands, and the middle two deserve an explanation.
 
-> Available from v1.0.0 onwards. Until that release is published the tap has no cask to install —
-> use the DMG below, or build from source.
+`brew trust` is required because Homebrew refuses to load casks from third-party taps until you say
+you trust them. Without it you get *"Refusing to load cask … from untrusted tap"*.
+
+`xattr -cr` is still needed. **Homebrew does not spare you the Gatekeeper step** — Cask applies the
+quarantine attribute deliberately, as a security measure, and there is no longer a flag to opt out.
+An app installed by Homebrew is quarantined exactly like one you downloaded yourself.
+
+What the cask does give you is a checksum Homebrew verifies before installing anything, and managed
+upgrades and uninstalls (`brew uninstall --cask flowscope`). Those are the reasons to prefer it —
+not a quieter first launch.
 
 ### The DMG by hand
 
@@ -40,7 +49,7 @@ Download `FlowScope-<version>.dmg` from the
   xattr -cr "/Applications/Flow Scope.app"
   ```
 
-Either is enough. Both do the same thing Homebrew does for you.
+Either is enough, and either is needed whichever way you installed.
 
 ## Windows
 
