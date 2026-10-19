@@ -1857,6 +1857,7 @@ private fun FlowScopeApp(
                 emulatorAvailable = deviceState.emulatorAvailable,
                 onStartAvd = ::startAvd,
                 onStopAvd = ::stopAvd,
+                showDisplay = deviceState.showDisplay,
                 packageName = deviceState.packageName,
                 onPackageNameChanged = { deviceState.packageName = it },
                 installedPackages = deviceState.installedPackages,

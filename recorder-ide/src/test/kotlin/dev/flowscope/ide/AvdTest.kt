@@ -2,6 +2,8 @@ package dev.flowscope.ide
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class AvdTest {
     private val names = listOf("Pixel_7", "Tablet")
@@ -23,5 +25,15 @@ class AvdTest {
     fun `booting wins while ADB already lists the emulator`() {
         val merged = mergeAvds(names, mapOf("emulator-5554" to "Pixel_7"), setOf("Pixel_7"), emptySet())
         assertEquals(AvdStatus.Booting, merged[0].status)
+    }
+
+    /**
+     * With the display hidden there is nothing to show an emulator window in, so headless leads.
+     * Both actions stay in the row either way — this only sets the order.
+     */
+    @Test
+    fun `headless leads only when the device display is hidden`() {
+        assertTrue(primaryAvdStartIsHeadless(showDisplay = false))
+        assertFalse(primaryAvdStartIsHeadless(showDisplay = true))
     }
 }

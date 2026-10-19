@@ -119,6 +119,8 @@ internal fun SessionBar(
     emulatorAvailable: Boolean,
     onStartAvd: (name: String, headless: Boolean) -> Unit,
     onStopAvd: (serial: String) -> Unit,
+    /** Only decides which Start action leads in the AVD rows; see [primaryAvdStartIsHeadless]. */
+    showDisplay: Boolean,
     packageName: String,
     onPackageNameChanged: (String) -> Unit,
     installedPackages: List<String>,
@@ -268,7 +270,7 @@ internal fun SessionBar(
                         letterSpacing = 1.2.sp,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     )
-                    avds.forEach { avd -> AvdRow(avd, onStartAvd, onStopAvd) }
+                    avds.forEach { avd -> AvdRow(avd, showDisplay, onStartAvd, onStopAvd) }
                 }
             }
         }
@@ -910,6 +912,7 @@ internal fun SurfaceTabs(
 @Composable
 private fun AvdRow(
     avd: AvdEntry,
+    showDisplay: Boolean,
     onStart: (name: String, headless: Boolean) -> Unit,
     onStop: (serial: String) -> Unit,
 ) {
@@ -933,8 +936,14 @@ private fun AvdRow(
         Spacer(Modifier.width(8.dp))
         when (val status = avd.status) {
             AvdStatus.Stopped -> {
-                AvdAction("▶", "Start emulator ${avd.name}", true) { onStart(avd.name, false) }
-                AvdAction("▷", "Start emulator ${avd.name} headless", true) { onStart(avd.name, true) }
+                // With the display hidden, headless leads; both remain, each with its own tip.
+                if (primaryAvdStartIsHeadless(showDisplay)) {
+                    AvdAction("▷", "Start emulator ${avd.name} headless", true) { onStart(avd.name, true) }
+                    AvdAction("▶", "Start emulator ${avd.name} with a window", true) { onStart(avd.name, false) }
+                } else {
+                    AvdAction("▶", "Start emulator ${avd.name}", true) { onStart(avd.name, false) }
+                    AvdAction("▷", "Start emulator ${avd.name} headless", true) { onStart(avd.name, true) }
+                }
             }
             AvdStatus.Booting -> AvdAction("▶", "Start emulator ${avd.name}", false) {}
             is AvdStatus.Running -> AvdAction(

@@ -33,3 +33,12 @@ internal fun mergeAvds(
         AvdEntry(name, status, owned = name in owned)
     }
 }
+
+/**
+ * Whether the row's primary Start action should launch the emulator without a window.
+ *
+ * With the device display turned off there is nothing in FlowScope to show an emulator window in,
+ * so a windowed launch is the wrong default: it costs CPU for a window the user has just said they
+ * do not want. Both actions stay available either way — this only decides which comes first.
+ */
+internal fun primaryAvdStartIsHeadless(showDisplay: Boolean): Boolean = !showDisplay
