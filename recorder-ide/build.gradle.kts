@@ -39,7 +39,9 @@ compose.desktop {
             // `java.net.http` backs api-request steps and the DevTools WebSocket.
             modules("java.net.http")
             packageName = "Flow Scope"
-            packageVersion = "1.0.0"
+            // gradle.properties is the single source; see FlowScopeVersion and the release
+            // workflow, which reads the same property rather than parsing this file.
+            packageVersion = project.version.toString()
             description = "Record, inspect, and replay Android UI flows"
             vendor = "FlowScope"
 

@@ -36,6 +36,7 @@ public final class Main {
             return 0;
         }
         return switch (args.getFirst()) {
+            case "version", "--version", "-v" -> version();
             case "doctor" -> doctor(new AdbClient());
             case "devices" -> devices(new AdbClient());
             case "emulators" -> emulators(new AdbClient(), new EmulatorClient(), args.subList(1, args.size()));
@@ -56,7 +57,14 @@ public final class Main {
         };
     }
 
+    private static int version() {
+        System.out.println("flowscope " + FlowScopeVersion.current());
+        return 0;
+    }
+
     private static int doctor(AdbClient adb) throws Exception {
+        // First line, so the one command people paste into a bug report names the build.
+        System.out.println("FlowScope: " + FlowScopeVersion.current());
         System.out.println("ADB: " + adb.executable());
         AdbClient.CommandResult version = adb.run(List.of("version"));
         if (version.exitCode() != 0) {
@@ -680,6 +688,7 @@ public final class Main {
         System.out.println("""
             FlowScope
 
+              version
               doctor
               devices
               emulators
