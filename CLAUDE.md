@@ -134,6 +134,11 @@ transforms, API captures, and suite variables must never persist their values. `
 escape hatch. Local dotenv secrets load only through an explicit CLI option or the user-local IDE
 preference, never automatically from a project. Environment values override matching file entries;
 POSIX secret files must be owner-only.
+Diagnostic redaction must track selected source values rather than every environment or secrets-file
+entry. References, requirements, secret bindings, and environment equality guards select source
+values; retain runtime value history after reassignment. Keep short selected secrets protected and
+match overlapping values longest first without rescanning replacements. Share redaction history
+across suite hooks and child tests through cleanup, while test variables remain local.
 
 Deep-link intents must be explicitly scoped to the declared package. Reports may retain scheme,
 host, and path but never query values. APK install/uninstall actions are also package-scoped: files

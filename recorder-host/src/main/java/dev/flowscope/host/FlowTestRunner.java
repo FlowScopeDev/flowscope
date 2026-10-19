@@ -70,21 +70,21 @@ public final class FlowTestRunner {
         String directoryName, FlowHttpClient http, Map<String, String> environment) throws IOException {
         this(adb, device, test, outputRoot, directoryName, http, environment, Map.of(), Map.of(), Map.of(),
             new CdpWebViewClient(adb, device, test.packageName(),
-                test.mode() == CaptureMode.INSTRUMENTED), ApkInspector.platform());
+                test.mode() == CaptureMode.INSTRUMENTED), ApkInspector.platform(), null);
     }
 
     FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
         String directoryName, FlowHttpClient http, Map<String, String> environment,
         FlowWebViewClient web) throws IOException {
         this(adb, device, test, outputRoot, directoryName, http, environment, Map.of(), Map.of(), Map.of(), web,
-            ApkInspector.platform());
+            ApkInspector.platform(), null);
     }
 
     FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
         String directoryName, FlowHttpClient http, Map<String, String> environment,
         FlowWebViewClient web, ApkInspector apkInspector) throws IOException {
         this(adb, device, test, outputRoot, directoryName, http, environment, Map.of(), Map.of(), Map.of(), web,
-            apkInspector);
+            apkInspector, null);
     }
 
     FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
@@ -94,20 +94,31 @@ public final class FlowTestRunner {
         this(adb, device, test, outputRoot, directoryName, http, environment, secretSources,
             suiteVariables, suiteBuiltins,
             new CdpWebViewClient(adb, device, test.packageName(), test.mode() == CaptureMode.INSTRUMENTED),
-            ApkInspector.platform());
+            ApkInspector.platform(), null);
+    }
+
+    FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
+        String directoryName, FlowHttpClient http, Map<String, String> environment,
+        Map<String, String> secretSources, RuntimeValues suiteValues,
+        Map<String, String> suiteBuiltins) throws IOException {
+        this(adb, device, test, outputRoot, directoryName, http, environment, secretSources,
+            suiteValues.variables(), suiteBuiltins,
+            new CdpWebViewClient(adb, device, test.packageName(), test.mode() == CaptureMode.INSTRUMENTED),
+            ApkInspector.platform(), suiteValues.redactor());
     }
 
     private FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot,
         String directoryName, FlowHttpClient http, Map<String, String> environment,
         Map<String, String> secretSources, Map<String, RuntimeValues.Value> suiteVariables,
-        Map<String, String> suiteBuiltins, FlowWebViewClient web, ApkInspector apkInspector)
+        Map<String, String> suiteBuiltins, FlowWebViewClient web, ApkInspector apkInspector,
+        RuntimeValues.Redactor redactor)
         throws IOException {
         this.adb = adb; this.device = device; this.test = test;
         this.web = web;
         this.apkInspector = apkInspector;
         Instant startedAt = Instant.now();
         this.values = new RuntimeValues(environment, secretSources, suiteVariables, test.name(),
-            device.serial(), startedAt, UUID.randomUUID(), suiteBuiltins);
+            device.serial(), startedAt, UUID.randomUUID(), suiteBuiltins, redactor);
         this.hostRuntime = new HostRuntime(values, http, test.sourceDirectory());
         this.root = outputRoot.resolve(directoryName).toAbsolutePath();
         Files.createDirectories(root.resolve("evidence"));
@@ -1283,7 +1294,7 @@ public final class FlowTestRunner {
 
     private static long elapsed(long n){return Duration.ofNanos(System.nanoTime()-n).toMillis();} private static String message(Exception e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();} private static String safeFile(String n){return n.replaceAll("[^a-zA-Z0-9._-]","_");}
     private String safeUrl(URI uri){return values.redact(HostRuntime.safeUrl(uri));}
-    private String redact(String value){return values.redact(value);}
+    String redact(String value){return values.redact(value);}
     private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){return details.entrySet().stream().map(e->e.getKey().equals("evidence")?"<a href=\""+html(e.getValue())+"\">evidence</a>":html(e.getKey()+"="+e.getValue())).collect(java.util.stream.Collectors.joining(" · "));} private static String html(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
     private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details,int dumps,long dumpMillis){}
 }

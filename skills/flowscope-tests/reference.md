@@ -80,6 +80,11 @@ zones and ISO/epoch/custom formats; `transform` allows trim, case, URL/base64, s
 suffix only. Guards support `if/unless` presence and equality for variables and environment inputs.
 Reports never keep runtime values, headers, bodies, or query values. Load local secrets explicitly
 with `--secrets-file <path>`; the file must be owner-only on POSIX.
+Diagnostic redaction covers environment/file values selected by references, requirements, secret
+bindings, or environment equality guards, including one-character secrets. Unrelated environment
+or file entries do not rewrite selectors such as `id=item_1`. Runtime values remain protected
+after reassignment; suite hooks and child tests share redaction history through cleanup while
+test variables remain local.
 
 ## WebView actions
 

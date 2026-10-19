@@ -278,7 +278,11 @@ flowscope suite run smoke.suite --secrets-file ~/.flowscope/test.env
 
 The strict dotenv file accepts `NAME=value` entries only. Process environment values take
 precedence. Values and derived values remain in memory and are removed from console errors, JSON,
-HTML, JUnit, notifications, and evidence. API requests also support encoded `query.<name>`
+HTML, JUnit, notifications, and evidence. Diagnostic redaction tracks environment and file values
+selected by references, requirements, secret bindings, or environment equality guards. Unrelated
+entries such as `SHLVL=1` leave `id=item_1` readable; a selected one-character secret is still hidden.
+Runtime values remain protected after reassignment, and suite hooks and tests share protection
+through cleanup without sharing test variables. API requests also support encoded `query.<name>`
 parameters, response-header capture, secret captures, richer JSON/header assertions, and duration
 limits. `retry-interval` polls only `GET` and `HEAD`.
 

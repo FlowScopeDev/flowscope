@@ -283,6 +283,12 @@ The Secrets section selects or clears one local dotenv file for IDE-started test
 shows only the filename and status, never file contents. The absolute path is stored under
 `~/.flowscope/`; choosing a secret file does not modify the open project. Runtime and captured
 values remain hidden throughout the Flow editor, timeline, detail drawer, and reports.
+Diagnostic redaction registers only environment and file values selected by references,
+requirements, secret bindings, or environment equality guards; unrelated shell values do not
+rewrite selectors or status codes. Runtime values are registered when stored and stay protected
+after reassignment. Suite hooks and child tests share an in-memory redaction history through
+cleanup, without exposing test variables to other tests. Matching is literal, longest first,
+in one pass so overlapping values and replacement markers cannot expose a secret suffix.
 
 The Device section's Show device display toggle also sets the default for starting an emulator: with
 the display hidden, the AVD row leads with the headless start, because there is no surface in

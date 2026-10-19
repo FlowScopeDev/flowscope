@@ -1,11 +1,13 @@
 package dev.flowscope.host;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /** In-memory values with secret taint and one interpolation implementation for tests and suites. */
 final class RuntimeValues {
@@ -20,13 +22,23 @@ final class RuntimeValues {
     private final Map<String, Value> variables = new LinkedHashMap<>();
     private final Map<String, Value> suiteVariables;
     private final Map<String, Value> builtins = new LinkedHashMap<>();
+    private final Redactor redactor;
 
     RuntimeValues(Map<String, String> environment, Map<String, String> secretSources,
         Map<String, Value> suiteVariables, String testName, String deviceSerial,
         Instant startedAt, UUID runId, Map<String, String> suiteBuiltins) {
+        this(environment, secretSources, suiteVariables, testName, deviceSerial, startedAt,
+            runId, suiteBuiltins, null);
+    }
+
+    RuntimeValues(Map<String, String> environment, Map<String, String> secretSources,
+        Map<String, Value> suiteVariables, String testName, String deviceSerial,
+        Instant startedAt, UUID runId, Map<String, String> suiteBuiltins, Redactor redactor) {
+        this.redactor = redactor == null ? new Redactor() : redactor;
         environment.forEach((key, value) -> this.environment.put(key, new Value(value, true)));
         secretSources.forEach((key, value) -> this.secretSources.put(key, new Value(value, true)));
         this.suiteVariables = suiteVariables == null ? Map.of() : Map.copyOf(suiteVariables);
+        this.suiteVariables.values().forEach(this.redactor::remember);
         builtins.put("run.id", new Value(runId.toString(), false));
         builtins.put("run.startedAt", new Value(startedAt.toString(), false));
         builtins.put("test.name", new Value(testName == null ? "" : testName, false));
@@ -37,17 +49,18 @@ final class RuntimeValues {
     }
 
     void require(FlowTest.Requirement requirement) {
-        boolean present = requirement.source().equals("env")
-            ? environment.containsKey(requirement.name())
-            : sourceSecret(requirement.name()) != null;
-        if (!present) throw new IllegalArgumentException(
+        Value value = requirement.source().equals("env")
+            ? environment.get(requirement.name()) : sourceSecret(requirement.name());
+        if (value == null) throw new IllegalArgumentException(
             "Missing " + requirement.source() + " value: " + requirement.name());
+        redactor.remember(value);
     }
 
     void bindSecret(String alias, String source) {
         Value value = sourceSecret(source);
         if (value == null) throw new IllegalArgumentException("Missing secret value: " + source);
         secrets.put(alias, value);
+        redactor.remember(value);
     }
 
     private Value sourceSecret(String name) {
@@ -56,7 +69,9 @@ final class RuntimeValues {
     }
 
     void put(String name, String value, boolean secret) {
-        variables.put(name, new Value(value, secret));
+        Value stored = new Value(value, secret);
+        variables.put(name, stored);
+        redactor.remember(stored);
     }
 
     boolean hasVariable(String name) { return variables.containsKey(name); }
@@ -86,6 +101,7 @@ final class RuntimeValues {
     }
 
     private boolean equals(Value actual, String expected) {
+        redactor.remember(actual);
         return actual != null && actual.text().equals(interpolate(expected));
     }
 
@@ -125,11 +141,12 @@ final class RuntimeValues {
                 && !suiteVariables.containsKey(name.substring(4))) {
                 throw new IllegalArgumentException("Missing suite variable: " + name.substring(4));
             }
+            resolve(namespace, name);
         }
     }
 
     private Value resolve(String namespace, String name) {
-        return switch (namespace) {
+        Value value = switch (namespace) {
             case "env" -> environment.get(name);
             case "var" -> variables.get(name);
             case "secret" -> secrets.containsKey(name) ? secrets.get(name) : sourceSecret(name);
@@ -137,23 +154,43 @@ final class RuntimeValues {
                 ? suiteVariables.get(name.substring(4)) : builtins.get("suite." + name);
             default -> builtins.get(namespace + "." + name);
         };
+        if (namespace.equals("env") || namespace.equals("secret") || namespace.equals("var")
+            || (namespace.equals("suite") && name.startsWith("var."))) redactor.remember(value);
+        return value;
     }
 
     String redact(String message) {
-        String result = message == null ? "" : message;
-        for (Value value : allValues()) {
-            if (value.text() != null && !value.text().isBlank()) {
-                result = result.replace(value.text(), value.secret() ? "{secret}" : "{runtime}");
-            }
-        }
-        return result;
+        return redactor.redact(message);
     }
 
-    private Iterable<Value> allValues() {
-        java.util.List<Value> values = new java.util.ArrayList<>();
-        values.addAll(environment.values()); values.addAll(secretSources.values());
-        values.addAll(secrets.values()); values.addAll(variables.values());
-        values.addAll(suiteVariables.values());
-        return values;
+    Redactor redactor() { return redactor; }
+
+    /** Shared only within a suite run; test variables themselves never escape their test. */
+    static final class Redactor {
+        // Keep history: overwriting an alias or variable must not expose an earlier value.
+        private final Map<String, Boolean> protectedValues = new LinkedHashMap<>();
+
+        void remember(Value value) {
+            if (value != null && value.text() != null && !value.text().isEmpty()) {
+                protectedValues.merge(value.text(), value.secret(), (left, right) -> left || right);
+            }
+        }
+
+        String redact(String message) {
+            if (message == null) return "";
+            if (protectedValues.isEmpty()) return message;
+            String alternatives = protectedValues.keySet().stream()
+                .sorted(Comparator.comparingInt(String::length).reversed())
+                .map(Pattern::quote).collect(Collectors.joining("|"));
+            Matcher matcher = Pattern.compile(alternatives).matcher(message);
+            StringBuilder result = new StringBuilder();
+            // One pass, longest first: never expose a suffix or reprocess replacement markers.
+            while (matcher.find()) {
+                matcher.appendReplacement(result,
+                    protectedValues.get(matcher.group()) ? "{secret}" : "{runtime}");
+            }
+            matcher.appendTail(result);
+            return result.toString();
+        }
     }
 }

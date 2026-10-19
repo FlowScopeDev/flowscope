@@ -210,7 +210,7 @@ public final class FlowSuiteRunner {
             List<String> teardownErrors = List.of();
             FlowTestRunner runner =
                 new FlowTestRunner(adb, device, current.test(), root, current.directoryName(), http,
-                    environment, secretSources, runtimeValues.variables(), suiteBuiltins);
+                    environment, secretSources, runtimeValues, suiteBuiltins);
             try {
                 passed = runner.run();
                 // A failed step assertion returns false rather than throwing, so the reason has to
@@ -223,8 +223,8 @@ public final class FlowSuiteRunner {
                 // The device or ADB died mid-test. That is this test's failure, and
                 // continue-on-failure still decides whether the suite goes on.
                 passed = false;
-                error = failure.getMessage() == null
-                    ? failure.getClass().getSimpleName() : failure.getMessage();
+                error = runner.redact(failure.getMessage() == null
+                    ? failure.getClass().getSimpleName() : failure.getMessage());
             }
             long elapsed = Duration.between(testStarted, Instant.now()).toMillis();
             String status = passed ? "passed" : "failed";
