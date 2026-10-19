@@ -264,7 +264,16 @@ after api-request method=DELETE url="${env.API_BASE_URL}/fixtures/${var.fixtureI
 ```
 
 `set-date` supports ISO/epoch presets, Java date patterns, IANA timezones, offsets, and
-day/week/month boundaries. `set-value` generates UUIDs, bounded integers, strings, and safe example
+day/week/month boundaries. `offset=` takes `±Nd/h/m/s` shorthand or an ISO-8601 Period/Duration —
+including a negative one, such as `-P6M` for six months back — and a `set-date`'s formatted output
+can feed `value=` on the next one to chain relative dates:
+
+```text
+before set-date name=windowEnd value=now offset=+19d start-of=day zone=Asia/Kolkata format=yyyy-MM-dd
+before set-date name=loanStart value=${var.windowEnd} offset=-P6M zone=Asia/Kolkata format=yyyy-MM-dd
+```
+
+`set-value` generates UUIDs, bounded integers, strings, and safe example
 email addresses; `transform` provides a fixed allowlist of string operations. Built-ins include
 `${run.id}`, `${run.startedAt}`, `${test.name}`, `${test.attempt}`, and `${device.serial}`.
 
@@ -327,6 +336,15 @@ step assert-app-link-verified host=example.com
 
 `assert-app-link-verified` uses Android's package-manager verification state and reports when the
 connected Android version cannot expose it.
+
+`open-deep-link` and `assert-deep-link-handler` both accept `action=` (default
+`android.intent.action.VIEW`) and `category=` (default `android.intent.category.BROWSABLE`).
+`category=` takes a comma-separated list to match an activity declaring several, and an empty
+`category=` sends none — use it for a debug-only link that is deliberately not browsable:
+
+```text
+step open-deep-link uri="myapp://debug/seed-data" category= action=android.intent.action.VIEW
+```
 
 ### Install and upgrade journeys
 

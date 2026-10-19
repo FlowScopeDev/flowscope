@@ -54,8 +54,11 @@ Narrowing: `index=N` (zero-based nth match) and state filters `enabled=`, `check
 
 - `clear-app-data`, `force-stop`, `grant-permission permission=...`, `revoke-permission permission=...`,
   `reset-app-permissions` (all scoped to the declared package).
-- `open-deep-link uri=... [activity=...] [cold-start=true]`, `assert-deep-link-handler uri=...`,
-  `assert-app-link-verified host=...`.
+- `open-deep-link uri=... [activity=...] [cold-start=true] [action=...] [category=...]`,
+  `assert-deep-link-handler uri=... [action=...] [category=...]`, `assert-app-link-verified host=...`.
+  `action=` defaults to `android.intent.action.VIEW`; `category=` defaults to
+  `android.intent.category.BROWSABLE` and takes a comma-separated list — `category=` with no value
+  sends none.
 - `install-apk file=...` (relative to the `.flow`), `uninstall-app`, `assert-installed` with
   `version-code=` or `version-name=`.
 - `set-install-referrer value=...`, `clear-install-referrer` (instrumented debug builds only).
@@ -71,6 +74,7 @@ require env.API_BASE_URL
 require secret.API_JWT
 before secret name=jwt source=API_JWT
 before set-date name=start value=now offset=-7d start-of=day zone=UTC format=yyyy-MM-dd
+before set-date name=loanStart value=${var.start} offset=-P6M zone=UTC format=yyyy-MM-dd
 before set-value name=requestId generate=uuid
 before api-request method=GET url="${env.API_BASE_URL}/health" \
   expect-status=200 expect-json.status=UP timeout=30000 retry-interval=1000
@@ -80,7 +84,9 @@ Supports encoded `query.<name>`, headers, `body` / `body-file`, status/header/du
 exact/existence/length/numeric/prefix/suffix JSON assertions, JSON and response-header captures, and
 GET/HEAD polling. Read normal captures as `${var.name}`; secret captures remain tainted.
 `set-value` generates UUID/integer/string/email values; `set-date` handles offsets, boundaries,
-zones and ISO/epoch/custom formats; `transform` allows trim, case, URL/base64, substring, prefix and
+zones and ISO/epoch/custom formats. `offset=` takes `±Nd/h/m/s` shorthand or an ISO-8601
+Period/Duration (e.g. `-P6M`, `PT30M`), and a `set-date`'s formatted output can feed `value=` on the
+next one to chain dates, as above. `transform` allows trim, case, URL/base64, substring, prefix and
 suffix only. Guards support `if/unless` presence and equality for variables and environment inputs.
 Reports never keep runtime values, headers, bodies, or query values. Load local secrets explicitly
 with `--secrets-file <path>`; the file must be owner-only on POSIX.

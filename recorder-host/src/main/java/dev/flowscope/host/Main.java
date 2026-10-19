@@ -627,8 +627,10 @@ public final class Main {
             A failed cleanup is reported separately from the test failure and still fails the run.
             Device actions: clear-app-data, force-stop, grant-permission permission=...,
             revoke-permission permission=..., and reset-app-permissions.
-            Deep-link actions: open-deep-link uri=... [activity=...], assert-deep-link-handler uri=...,
-            and assert-app-link-verified host=....
+            Deep-link actions: open-deep-link uri=... [activity=...] [action=android.intent.action.VIEW]
+            [category=android.intent.category.BROWSABLE], assert-deep-link-handler uri=... [action=...]
+            [category=...], and assert-app-link-verified host=.... category= takes a comma-separated
+            list and an empty category= sends none; both default to a plain VIEW/BROWSABLE intent.
             Install actions: install-apk file=..., uninstall-app, and assert-installed with
             version-code= or version-name=. APK files are relative to the .flow file.
             Instrumented debug builds may use set-install-referrer value=... and
@@ -648,7 +650,9 @@ public final class Main {
             JSON/header assertions and captures, ${env.NAME}, ${secret.name}, ${var.name},
             runtime value/date actions, requirements, and conditional guards.
             set-date supports now/ISO input, offsets, day/week/month boundaries, UTC or an IANA
-            timezone, ISO/epoch presets, and validated Java date patterns. set-value supports
+            timezone, ISO/epoch presets, and validated Java date patterns. offset= accepts
+            ±Nd/h/m/s shorthand or an ISO-8601 Period/Duration such as -P6M or PT30M, and a formatted
+            set-date output can feed value= on the next one to chain dates. set-value supports
             uuid, integer, string, and email generators. transform is restricted to trim, case,
             URL/base64 encoding, substring, prefix, and suffix. Runtime values are never reported.
             test and suite runs accept --secrets-file <owner-only-path>; environment values win.
