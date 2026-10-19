@@ -3,8 +3,9 @@ FlowScope __VERSION__ — record Android UI flows and replay them as declarative
 ## Read before opening
 
 FlowScope is not signed with an Apple Developer ID. It is a one-person project and that certificate
-costs money every year, so macOS will tell you the app is damaged if you open the DMG directly.
-Nothing is wrong with the download — macOS says that about any unsigned app it quarantines.
+costs money every year, so macOS quarantines it and will not open it until you clear that attribute.
+Nothing is wrong with the download — macOS does this to any unsigned app. **This applies to both
+install routes below**, Homebrew included.
 
 **With Homebrew:**
 
