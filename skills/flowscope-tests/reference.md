@@ -112,6 +112,7 @@ contain `..`. A project is a directory with `flowscope.json`, `flows/tests/`, `f
 ## Commands you will use
 
 ```text
+flowscope version
 flowscope doctor
 flowscope devices
 flowscope snapshot --package <id> --mode zero-code --output <dir>
@@ -124,7 +125,9 @@ flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>] [--secrets-
 ```
 
 Exit codes: `0` success, `1` a test failed, `2` invalid input. Every run writes `report.json`,
-`report.html` and `junit.xml`.
+`report.html` and `junit.xml`. `flowscope version` prints the build, and `flowscope doctor` leads
+with it — include both in a bug report. What these formats and exit codes promise not to break is
+recorded in `COMPATIBILITY.md`.
 
 A failed run names the phase that broke, so fix the right thing. `report.json` splits
 `primaryFailure` (a `before` or `step` action) from `teardownFailures` (an `after` action), and the

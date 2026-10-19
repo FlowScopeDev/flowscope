@@ -41,6 +41,7 @@ Do not silently fall back between modes. Record the selected mode in every sessi
 Treat these commands as an API used by humans, CI, and coding agents:
 
 ```text
+flowscope version
 flowscope doctor
 flowscope devices
 flowscope emulators
@@ -273,14 +274,38 @@ runs all tests in `examples/flows/suites/sample.suite`. Keep both workflows secr
 their read-only repository permission. Emulator reports may be uploaded, but they must remain subject
 to the same report redaction rules as local and CLI runs.
 
-macOS desktop releases are tagged `v<version>` matching `packageVersion` in
-`recorder-ide/build.gradle.kts`, which triggers `.github/workflows/release-macos-dmg.yml` to build
-`packageReleaseDmg`, checksum it, and attach both to a GitHub Release. The Homebrew cask that
-downloads from that release lives in the separate `FlowScopeDev/homebrew-tap` repo, not here.
+`flowscope.version` in `gradle.properties` is the single source of the version. The root project,
+the IDE's `packageVersion`, the generated `version.properties` behind `FlowScopeVersion`, and the
+release workflow all read it from there; never add a second copy. `flowscope version` and the IDE's
+Settings → About report it, and `flowscope doctor` leads with it.
+
+macOS desktop releases are tagged `v<flowscope.version>`, which triggers
+`.github/workflows/release-macos-dmg.yml` to build `packageReleaseDmg` and `:recorder-host:distZip`,
+checksum both, render `release/release-notes-template.md`, and attach everything to a GitHub
+Release. ProGuard is disabled for the release variant: the Compose plugin's `proguardReleaseJars`
+reads `ExecSpec.standardOutput` before setting it and so throws on Gradle 9 (an upstream bug, still
+unfixed in plugin 1.13.0-alpha02 and not avoidable by configuration), and when it did work it saved
+7.3 MiB — about 5% — of a bundle that carries its own JDK, while minifying code that reflects into
+Compose, AWT and `java.net.http`. Keep it off unless upstream fixes it; `-Pflowscope.proguard=true`
+re-tests it. `release/homebrew/` holds
+the cask *template* and the steps to publish it; the cask Homebrew actually serves lives in the
+separate `FlowScopeDev/homebrew-tap` repo, and its `sha256` can only be filled in once a release
+asset exists.
+
+The IDE's update check is manual only. It sends nothing but the running version, in the User-Agent
+GitHub requires, reads `tag_name` and `html_url` and discards the rest of the body, pins the release
+link to this project's own releases path, and caches nothing. Do not add a background or
+on-launch check: FlowScope has no telemetry, and a phone-home is not something a user should have
+to opt out of. GitHub's latest-release endpoint excludes pre-releases, so a 404 is the normal
+"no published release yet" answer, not an error — which is also why the release workflow publishes
+full releases rather than pre-releases, so the check has something to find.
 
 ## Documentation maintenance
 
-Keep `README.md` and `design.md` aligned with behavior in the same change. Keep `skills/flowscope-tests` aligned too whenever a
+Keep `README.md` and `design.md` aligned with behavior in the same change. `COMPATIBILITY.md`
+records what 1.x promises not to break — update it in the same change as any format, exit-code, or
+report-field change, and keep `INSTALL.md` true about which platforms actually have a published
+package. Keep `skills/flowscope-tests` aligned too whenever a
 change touches the `.flow` language, selectors, the stable CLI surface, exit codes, reports, or the
 authoring workflow it describes; re-validate its template after editing. Update this file when
 architecture, stable CLI commands, formats, security rules, or verification commands change. Do not

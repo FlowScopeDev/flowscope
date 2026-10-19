@@ -87,7 +87,7 @@ Compose Desktop produces Windows packages from a Windows host and macOS packages
 
 ## Install the desktop app
 
-On macOS, install via Homebrew:
+On macOS, from v1.0.0 onwards:
 
 ```bash
 brew tap FlowScopeDev/homebrew-tap
@@ -95,13 +95,18 @@ brew install --cask flowscope
 ```
 
 FlowScope isn't signed with an Apple Developer ID (it's a one-person project; a certificate costs
-money every year), so a DMG downloaded directly from a release still trips Gatekeeper's "damaged"
-dialog. Homebrew clears the quarantine attribute it applies to files it downloads, so installing
-through the cask avoids that dialog entirely. Downloading the DMG directly from a GitHub release
-instead still works, but needs the manual workaround described in the release notes
+money every year), so a DMG downloaded directly from a release trips Gatekeeper's "damaged" dialog.
+Homebrew clears the quarantine attribute from what it downloads, so the cask avoids that entirely.
+Installing the DMG by hand works too, with one extra step
 (`xattr -cr "/Applications/Flow Scope.app"`, or right-click the app and choose Open).
 
+No Windows package is published yet. **[INSTALL.md](INSTALL.md)** has the full picture:
+both platforms, verifying a checksum, and what FlowScope expects you to have installed already.
+
 ## Install the CLI
+
+`flowscope-cli-<version>.zip` is attached to every release — unzip it and put its `bin/` on your
+`PATH`. From source, with a JDK 21:
 
 ```bash
 ./gradlew :recorder-host:installDist
@@ -111,6 +116,7 @@ export PATH="$PWD/recorder-host/build/install/flowscope/bin:$PATH"
 The installed executable is named `flowscope`.
 
 ```bash
+flowscope version
 flowscope doctor
 flowscope devices
 flowscope emulators
@@ -538,6 +544,18 @@ when the suite fails.
 
 The current desktop interface is specified in [design.md](design.md). Repository instructions for
 Claude, Codex, and other coding agents live only in [CLAUDE.md](CLAUDE.md).
+
+## Reference
+
+| | |
+| --- | --- |
+| [INSTALL.md](INSTALL.md) | Installing the app and the CLI, and why macOS calls it damaged |
+| [COMPATIBILITY.md](COMPATIBILITY.md) | What is frozen in 1.x: formats, exit codes, report fields |
+| [design.md](design.md) | The desktop interface specification |
+| [CHANGELOG.md](CHANGELOG.md) | What changed, and when |
+
+`flowscope schema` prints the authoritative grammar for the build you have installed — it is the
+single source for the `.flow` and `.suite` languages and the `flowscope.json` subset.
 
 ## Contributing and security
 

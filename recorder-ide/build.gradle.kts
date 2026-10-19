@@ -28,6 +28,29 @@ compose.desktop {
             "-Xdock:name=Flow Scope"
         )
 
+        // ProGuard is off, so the released bytecode is exactly what the tests ran against.
+        //
+        // It is also broken upstream on Gradle 9: AbstractProguardTask.kt calls the shared
+        // ExternalToolRunner with logToConsole=Always, and ExternalToolRunner.kt:68 then reads
+        // `spec.standardOutput` before assigning it. Gradle 9's ExecSpec returns null from that
+        // getter, so Kotlin throws "getStandardOutput(...) must not be null". The path is
+        // unconditional for ProGuard, so no Gradle property avoids it, and it is still present in
+        // compose-gradle-plugin 1.12.2 and 1.13.0-alpha02. Verified: the same task succeeds under
+        // Gradle 8.14.3 and fails under 9.7.0.
+        //
+        // Even working, it is a poor trade here: it shrank the app jars from 38.7 to 31.3 MiB —
+        // 7.3 MiB, about 5% of a 141 MiB bundle that carries its own JDK — while minifying an app
+        // that reflects into the Compose runtime, AWT/SystemTray and java.net.http, which the unit
+        // tests cannot cover because they run against unminified classes.
+        //
+        // Set -Pflowscope.proguard=true to re-test it, e.g. after an upstream fix. That needs
+        // Gradle 8 until the plugin is repaired.
+        buildTypes.release.proguard {
+            isEnabled.set(
+                providers.gradleProperty("flowscope.proguard").map(String::toBoolean).orElse(false),
+            )
+        }
+
         nativeDistributions {
             targetFormats(
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg,

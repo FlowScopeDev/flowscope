@@ -1,15 +1,23 @@
 name: Release macOS DMG
 
-# Tag a release as v<packageVersion> (matching recorder-ide/build.gradle.kts) to build the macOS
-# DMG and publish it, with a SHA-256 checksum, as a GitHub Release. The Homebrew cask in
-# FlowScopeDev/homebrew-tap downloads from this release.
+# Tag a release as v<flowscope.version> (from gradle.properties, the single source of the version)
+# to build the macOS DMG and the cross-platform CLI zip and publish them, each with a SHA-256
+# checksum, as a GitHub Release. The Homebrew cask in FlowScopeDev/homebrew-tap downloads the DMG
+# from here; release/homebrew/ holds the cask template and the steps to publish it.
 #
-# Published as a pre-release until the rest of PLAN-v1.0.md's must-have list lands (Windows pass,
-# frozen contracts, CI, IDE text-entry testing). Flip it to a full release from the GitHub UI (or
-# `gh release edit v<version> --latest`) once that's true — no new tag needed.
+# Tagged releases are published as full releases. That matters beyond a badge: GitHub's
+# latest-release endpoint skips pre-releases, and both the IDE's update check and the Homebrew
+# cask's livecheck read it, so a pre-release would leave the app reporting "No published release
+# yet" indefinitely. Mark one as a pre-release by hand if ever needed:
+# `gh release edit v<version> --prerelease`.
 on:
   push:
     tags: ["v*"]
+
+# Creating the release is the one thing this workflow writes; nothing else needs a token, and no
+# secrets are used. The sibling CI workflows stay read-only.
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -24,32 +32,55 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Check tag matches packageVersion
+      - name: Check tag matches flowscope.version
         run: |
-          version="$(sed -n 's/.*packageVersion = "\(.*\)".*/\1/p' recorder-ide/build.gradle.kts)"
+          version="$(sed -n 's/^flowscope\.version=\(.*\)$/\1/p' gradle.properties)"
+          if [ -z "$version" ]; then
+            echo "flowscope.version is missing from gradle.properties" >&2
+            exit 1
+          fi
           if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match packageVersion=${version}" >&2
+            echo "Tag ${GITHUB_REF_NAME} does not match flowscope.version=${version}" >&2
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_ENV"
 
-      - name: Build the release DMG
-        run: ./gradlew :recorder-ide:packageReleaseDmg
+      - name: Build the release DMG and the CLI zip
+        run: ./gradlew :recorder-ide:packageReleaseDmg :recorder-host:distZip
 
-      - name: Rename and checksum the release asset
+      - name: Rename and checksum the release assets
         run: |
           dmg_dir="recorder-ide/build/compose/binaries/main-release/dmg"
-          src="${dmg_dir}/Flow Scope-${version}.dmg"
-          dst="${dmg_dir}/FlowScope-${version}.dmg"
-          mv "$src" "$dst"
-          shasum -a 256 "$dst" | awk '{print $1}' > "${dst}.sha256"
-          echo "dmg_path=${dst}" >> "$GITHUB_ENV"
-          echo "sha256_path=${dst}.sha256" >> "$GITHUB_ENV"
+          dmg="${dmg_dir}/FlowScope-${version}.dmg"
+          mv "${dmg_dir}/Flow Scope-${version}.dmg" "$dmg"
+          shasum -a 256 "$dmg" | awk '{print $1}' > "${dmg}.sha256"
+
+          cli="recorder-host/build/distributions/flowscope-cli-${version}.zip"
+          mv "recorder-host/build/distributions/flowscope-${version}.zip" "$cli"
+          shasum -a 256 "$cli" | awk '{print $1}' > "${cli}.sha256"
+
+          echo "dmg_path=${dmg}" >> "$GITHUB_ENV"
+          echo "dmg_sha256_path=${dmg}.sha256" >> "$GITHUB_ENV"
+          echo "cli_path=${cli}" >> "$GITHUB_ENV"
+          echo "cli_sha256_path=${cli}.sha256" >> "$GITHUB_ENV"
+
+      # The install guidance ships with every release instead of being retyped each time. The
+      # checksums are substituted here so a reader can verify a download without leaving the page.
+      - name: Render the release notes
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          sed -e "s/__VERSION__/${version}/g" \
+              -e "s/__DMG_SHA256__/$(cat "${dmg_sha256_path}")/" \
+              -e "s/__CLI_SHA256__/$(cat "${cli_sha256_path}")/" \
+              release/release-notes-template.md > "$notes"
+          echo "notes_path=${notes}" >> "$GITHUB_ENV"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          body_path: ${{ env.notes_path }}
           files: |
             ${{ env.dmg_path }}
-            ${{ env.sha256_path }}
+            ${{ env.dmg_sha256_path }}
+            ${{ env.cli_path }}
+            ${{ env.cli_sha256_path }}

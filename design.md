@@ -277,6 +277,19 @@ shows only the filename and status, never file contents. The absolute path is st
 `~/.flowscope/`; choosing a secret file does not modify the open project. Runtime and captured
 values remain hidden throughout the Flow editor, timeline, detail drawer, and reports.
 
+The Device section's Show device display toggle also sets the default for starting an emulator: with
+the display hidden, the AVD row leads with the headless start, because there is no surface in
+FlowScope for a window the user has just turned off. Both starts stay in the row, each with its own
+tooltip and accessibility label.
+
+The About section shows the running version and a Check for updates action. The check is manual:
+FlowScope contacts GitHub only when the button is pressed, sends nothing but its own version, stores
+no result, and has no toggle to disable because there is no background behaviour to disable. Every
+outcome is stated in words — up to date, update available, no published release yet, or why the
+check failed — so the amber or green tone is reinforcement and never the signal itself. A newer
+release adds an Open release notes button pointing at this project's own releases page; no other
+destination is accepted, because the link arrives over the network.
+
 ## 11. Motion and feedback
 
 - Hover: 80ms
