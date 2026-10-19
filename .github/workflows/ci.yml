@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-and-host:
+    name: Desktop and host
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Build and test the host and IDE
+        run: ./gradlew :recorder-host:build :recorder-ide:build --stacktrace
+
+      - name: Build the CLI distribution
+        run: ./gradlew :recorder-host:installDist --stacktrace
+
+      - name: Validate the CLI schema and examples
+        run: |
+          set -euo pipefail
+          cli="./recorder-host/build/install/flowscope/bin/flowscope"
+          "$cli" schema
+          "$cli" project validate examples
+          "$cli" suite validate flows/suites/sample.suite --project examples
+          "$cli" test validate examples/flows/tests/example-launch.flow
+
+      - name: Upload failed JVM test reports
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: jvm-test-reports
+          path: |
+            recorder-host/build/reports/tests/
+            recorder-host/build/test-results/
+            recorder-ide/build/reports/tests/
+            recorder-ide/build/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  android:
+    name: Android agent and sample app
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Build and lint the Android artifacts
+        working-directory: android-agent
+        run: ./gradlew build --stacktrace
+
+      - name: Publish the current agents to Maven Local
+        working-directory: android-agent
+        run: ./gradlew :agent:publishToMavenLocal :agent-noop:publishToMavenLocal --stacktrace
+
+      - name: Build sample app debug and release variants
+        working-directory: examples/sample-app
+        run: ./gradlew build -PuseMavenLocal=true --refresh-dependencies --stacktrace
+
+      - name: Upload failed Android reports
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: android-build-reports
+          path: |
+            android-agent/**/build/reports/
+            android-agent/**/build/test-results/
+            examples/sample-app/**/build/reports/
+            examples/sample-app/**/build/test-results/
+          if-no-files-found: warn
+          retention-days: 14

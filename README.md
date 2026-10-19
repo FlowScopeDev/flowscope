@@ -1,5 +1,8 @@
 # FlowScope
 
+[![CI](https://github.com/FlowScopeDev/flowscope/actions/workflows/ci.yml/badge.svg)](https://github.com/FlowScopeDev/flowscope/actions/workflows/ci.yml)
+[![Sample suite emulator](https://github.com/FlowScopeDev/flowscope/actions/workflows/sample-suite-emulator.yml/badge.svg)](https://github.com/FlowScopeDev/flowscope/actions/workflows/sample-suite-emulator.yml)
+
 FlowScope is a macOS and Windows desktop recorder plus CLI for observing Android UI flows and
 replaying durable tests. It supports physical devices and emulators over USB or wireless ADB.
 
@@ -459,10 +462,20 @@ Exit codes are stable: `0` success, `1` test failure, and `2` invalid command or
 
 ```bash
 ./gradlew :recorder-host:build :recorder-ide:build
-flowscope project validate examples
-flowscope test validate examples/flows/tests/example-launch.flow
-flowscope test run examples/flows/tests/example-launch.flow --serial <serial>
+./gradlew :recorder-host:installDist
+./recorder-host/build/install/flowscope/bin/flowscope project validate examples
+./recorder-host/build/install/flowscope/bin/flowscope test validate \
+  examples/flows/tests/example-launch.flow
+./recorder-host/build/install/flowscope/bin/flowscope test run \
+  examples/flows/tests/example-launch.flow --serial <serial>
 ```
+
+GitHub Actions runs the host and desktop tests, validates the CLI examples, builds and lints the
+Android agent artifacts, and builds the sample app on every push and pull request. A separate
+blocking job installs the current repository agent and sample app on a headless Android API 35
+emulator, then runs all 11 tests in `examples/flows/suites/sample.suite`. Its sanitized FlowScope
+JSON, HTML and JUnit reports are retained as a workflow artifact; sample-app Logcat is added only
+when the suite fails.
 
 The current desktop interface is specified in [design.md](design.md). Repository instructions for
 Claude, Codex, and other coding agents live only in [CLAUDE.md](CLAUDE.md).
