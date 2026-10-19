@@ -60,6 +60,10 @@ Narrowing: `index=N` (zero-based nth match) and state filters `enabled=`, `check
   `version-code=` or `version-name=`.
 - `set-install-referrer value=...`, `clear-install-referrer` (instrumented debug builds only).
 
+Deep-link URIs keep their full query string, including `&`, apostrophes, and `$`, during handler
+lookup and launch. Use normal URI encoding for spaces and supply literal values in the `.flow`;
+FlowScope handles device-shell quoting. Native `type` retains its documented character limit.
+
 ## Host API calls
 
 ```text

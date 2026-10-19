@@ -246,6 +246,9 @@ actions. Their summaries describe intent—Open a deep link, Install an APK, Ass
 source view retains the exact declarative arguments. WebView failures distinguish an inaccessible
 native hierarchy from an unavailable debug socket, and report details show only sanitized target
 URLs and artifact metadata.
+Deep-link source values are literal: handler lookup and launch preserve the complete URI, including
+query separators and apostrophes. The shared host ADB boundary handles device-shell quoting for
+both IDE and CLI actions; the editor adds no shell escaping to authored values.
 Instrumented referrer setup appears as explicit Inject/Clear step cards. Reports show only whether
 an override was present; the campaign value is never rendered in the IDE or report.
 

@@ -74,7 +74,7 @@ public final class EmbeddedScrcpyClient {
 
         Process serverProcess = adb.start(List.of(
             "-s", serial, "shell",
-            "CLASSPATH=" + REMOTE_SERVER,
+            "env", "CLASSPATH=" + REMOTE_SERVER,
             "app_process", "/", "com.genymobile.scrcpy.Server", version,
             "tunnel_forward=true", "audio=false", "control=" + control, "cleanup=false",
             "raw_stream=true", "max_size=" + MAX_SIZE, "max_fps=" + maxFps

@@ -145,6 +145,11 @@ host, and path but never query values. APK install/uninstall actions are also pa
 are relative to the `.flow` file, resolved before mutation, and inspected with SDK `apkanalyzer` so
 their application ID must equal the test package. Do not accept caller-supplied ADB install flags.
 
+Pass literal device arguments to `AdbClient`; its process boundary quotes each `adb shell` word
+for Android's shell, including streaming calls. Never pre-quote values or pass shell fragments.
+Use an explicit `env` command for device environment assignments (such as scrcpy's `CLASSPATH`).
+Keep host arguments untouched; `exec-out` already escapes its arguments inside adb.
+
 WebView tests are accessibility-first. Restricted `web-*` actions may use Chrome DevTools only for
 a debugging socket owned by the declared package PID. Tests must never provide raw JavaScript or
 arbitrary CDP methods. Cookie/storage values may be compared in memory but must never reach the IDE,

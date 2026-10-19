@@ -45,10 +45,7 @@ public class AdbClient {
      */
     public CommandResult run(List<String> arguments, long timeoutMillis)
         throws IOException, InterruptedException {
-        List<String> command = new ArrayList<>();
-        command.add(executable);
-        command.addAll(arguments);
-        Process process = new ProcessBuilder(command).start();
+        Process process = new ProcessBuilder(command(arguments)).start();
         ByteArrayOutputStream stdout = new ByteArrayOutputStream();
         ByteArrayOutputStream stderr = new ByteArrayOutputStream();
         Thread outPump = Thread.ofVirtual().start(() -> drain(process.getInputStream(), stdout));
@@ -114,10 +111,7 @@ public class AdbClient {
     }
 
     public Process start(List<String> arguments) throws IOException {
-        List<String> command = new ArrayList<>();
-        command.add(executable);
-        command.addAll(arguments);
-        return new ProcessBuilder(command).redirectErrorStream(true).start();
+        return new ProcessBuilder(command(arguments)).redirectErrorStream(true).start();
     }
 
     public byte[] execOut(String serial, String... deviceCommand)
@@ -128,6 +122,7 @@ public class AdbClient {
         command.add(serial);
         command.add("exec-out");
         command.addAll(List.of(deviceCommand));
+        // Unlike `shell`, adb exec-out already escapes its command arguments.
         Process process = new ProcessBuilder(command).start();
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         process.getInputStream().transferTo(bytes);
@@ -374,12 +369,58 @@ public class AdbClient {
 
     private List<String> shellCommand(String serial, String... deviceCommand) {
         List<String> command = new ArrayList<>();
-        command.add(executable);
         command.add("-s");
         command.add(serial);
         command.add("shell");
         command.addAll(List.of(deviceCommand));
+        return command(command);
+    }
+
+    /**
+     * adb joins shell arguments with spaces before handing them to the device shell.
+     * ProcessBuilder protects the host boundary only; quote each device argument exactly once here.
+     * Callers supply literal argv, never pre-quoted values or shell fragments. Host-side arguments
+     * (serials, push/install paths, forwards, etc.) must retain their original bytes.
+     */
+    private List<String> command(List<String> arguments) {
+        int index = 0;
+        while (index < arguments.size()) {
+            String option = arguments.get(index);
+            if (Set.of("-s", "-t", "-H", "-P", "-L", "--one-device").contains(option)) {
+                index += 2;
+            } else if (Set.of("-a", "-d", "-e", "--exit-on-write-error").contains(option)) {
+                index++;
+            } else {
+                break;
+            }
+        }
+        boolean remote = index < arguments.size() && arguments.get(index).equals("shell");
+        int firstDeviceArgument = index + 1;
+        if (remote) {
+            // These flags belong to adb's shell transport, before the device command starts.
+            while (firstDeviceArgument < arguments.size()) {
+                String option = arguments.get(firstDeviceArgument);
+                if (option.equals("--")) { firstDeviceArgument++; break; }
+                if (option.matches("-[ntTx]+") || (option.startsWith("-e") && option.length() > 2)) {
+                    firstDeviceArgument++;
+                } else if (option.equals("-e")) {
+                    firstDeviceArgument += 2;
+                } else {
+                    break;
+                }
+            }
+        }
+        List<String> command = new ArrayList<>();
+        command.add(executable);
+        for (int i = 0; i < arguments.size(); i++) {
+            command.add(remote && i >= firstDeviceArgument ? shellQuote(arguments.get(i)) : arguments.get(i));
+        }
         return command;
+    }
+
+    /** One literal POSIX shell word, including empty strings, apostrophes and line breaks. */
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
     }
 
     public record CommandResult(int exitCode, String stdout, String stderr) {}

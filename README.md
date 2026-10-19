@@ -313,12 +313,14 @@ reports.
 Deep links are launched directly into the declared package, avoiding Android's resolver and other
 installed handlers. When more than one activity in that package handles the URI, add `activity=` to
 choose explicitly; FlowScope fails instead of opening an ambiguous resolver. Query values are
-redacted from reports.
+redacted from reports. FlowScope preserves URI punctuation such as `&`, apostrophes, and `$` when
+querying handlers and launching the activity. Supply the URI as written, with normal URI encoding
+for spaces; no extra device-shell escaping is needed.
 
 ```text
 before force-stop
-step assert-deep-link-handler uri="myapp://customer/${env.TEST_CUSTOMER_ID}"
-step open-deep-link uri="myapp://customer/${env.TEST_CUSTOMER_ID}" cold-start=true
+step assert-deep-link-handler uri="myapp://customer/${env.TEST_CUSTOMER_ID}?scenario=S16&ui=v1"
+step open-deep-link uri="myapp://customer/${env.TEST_CUSTOMER_ID}?scenario=S16&ui=v1" cold-start=true
 step assert-visible text="Customer details"
 step assert-app-link-verified host=example.com
 ```
