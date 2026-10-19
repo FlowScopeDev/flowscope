@@ -68,6 +68,10 @@ jobs:
           java-version: "17"
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default still includes the retired SDK package named `tools`.
+          # Install only platform-tools here; the exact API/build-tools follow below.
+          packages: platform-tools
 
       - name: Install Android SDK 35
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
