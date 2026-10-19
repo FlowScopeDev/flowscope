@@ -183,6 +183,19 @@ class FlowProjectTest {
     }
 
     @Test
+    void tooDeepToListFindsWhatListTestsSilentlyExcludes() throws IOException {
+        FlowProject project = scaffold();
+        writeTest("shallow.flow");
+        Path deepDir = project.testsDir().resolve("a/b/c/d/e/f/g/h");
+        Files.createDirectories(deepDir);
+        Files.writeString(deepDir.resolve("i.flow"), "x", StandardCharsets.UTF_8);
+
+        assertEquals(List.of("flows/tests/shallow.flow"),
+            project.listTests().stream().map(project::relativize).toList());
+        assertEquals(List.of("flows/tests/a/b/c/d/e/f/g/h/i.flow"), project.tooDeepToList());
+    }
+
+    @Test
     void relativizeUsesForwardSlashes() throws IOException {
         FlowProject project = scaffold();
         assertEquals("flows/tests/login.flow", project.relativize(writeTest("login.flow")));

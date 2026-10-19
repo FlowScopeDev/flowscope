@@ -210,6 +210,12 @@ Lifecycle instructions are grouped as `BEFORE`, `TEST`, and `AFTER` in card view
 their offline HTML report from the rail and retain a separate reveal-folder action. JSON remains the
 machine-readable source for the IDE, while JUnit output supports CI.
 
+Tests and suites nested into subdirectories render as a collapsible tree rather than a flat list of
+full paths: a folder row carries a worded disclosure state (`Expand`/`Collapse`, never colour alone)
+and indents its contents one level, so the rail reads the same shape as the project's own
+`flows/tests/` layout. A project that keeps every test flat is unaffected — it is one undifferentiated
+level of the same tree.
+
 A rail row whose file has been deleted outside FlowScope is struck through, dimmed, labelled
 `MISSING`, and made inert. It is never dropped silently: a file vanishing with no explanation reads
 as the IDE losing work. The strike-through carries the meaning alongside the colour, and the status

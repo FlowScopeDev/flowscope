@@ -25,7 +25,15 @@ public record FlowProject(Path root, ProjectManifest manifest) {
 
     /** A pathological symlink loop must not hang discovery. No real tree is this deep. */
     private static final int MAX_DISCOVERY_DEPTH = 64;
-    private static final int MAX_WALK_DEPTH = 8;
+
+    /**
+     * How deep {@link #listTests()} and {@link #listSuites()} walk. Eight levels is plenty for
+     * organising tests and suites by feature area; a file nested deeper is silently invisible to
+     * every listing, every suite reference, and the IDE rail, which is why {@link #tooDeepToList()}
+     * exists — {@code project validate} is the one place that limit gets reported instead of just
+     * quietly dropping a file.
+     */
+    public static final int MAX_WALK_DEPTH = 8;
 
     public FlowProject {
         root = root.toAbsolutePath().normalize();
@@ -159,6 +167,33 @@ public record FlowProject(Path root, ProjectManifest manifest) {
                 .filter(path -> !isHidden(directory, path))
                 .sorted(Comparator.comparing(this::relativize))
                 .toList();
+        }
+    }
+
+    /**
+     * Tests and suites nested deeper than {@link #MAX_WALK_DEPTH}, which {@link #listTests()} and
+     * {@link #listSuites()} never reach. Project-relative, sorted; empty when nothing is this deep.
+     */
+    public List<String> tooDeepToList() {
+        List<String> found = new java.util.ArrayList<>();
+        found.addAll(tooDeepToList(testsDir(), TEST_EXTENSION));
+        found.addAll(tooDeepToList(suitesDir(), SUITE_EXTENSION));
+        return found;
+    }
+
+    private List<String> tooDeepToList(Path directory, String extension) {
+        if (!Files.isDirectory(directory)) return List.of();
+        try (Stream<Path> walk = Files.walk(directory, MAX_DISCOVERY_DEPTH)) {
+            return walk
+                .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                .filter(path -> path.getFileName().toString().endsWith(extension))
+                .filter(path -> !isHidden(directory, path))
+                .filter(path -> directory.relativize(path).getNameCount() > MAX_WALK_DEPTH)
+                .map(this::relativize)
+                .sorted()
+                .toList();
+        } catch (IOException e) {
+            return List.of();
         }
     }
 

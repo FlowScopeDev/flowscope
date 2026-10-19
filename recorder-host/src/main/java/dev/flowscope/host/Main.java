@@ -371,6 +371,13 @@ public final class Main {
             }
         }
 
+        List<String> tooDeep = project.tooDeepToList();
+        if (!tooDeep.isEmpty()) {
+            System.out.printf("%d file(s) nested beyond the %d-level depth limit are not listed "
+                + "and will not run:%n", tooDeep.size(), FlowProject.MAX_WALK_DEPTH);
+            tooDeep.forEach(path -> System.out.println("  " + path));
+        }
+
         if (failures.isEmpty()) {
             System.out.printf("Valid: %s (%d tests, %d suites)%n",
                 project.manifest().name(), tests, suites);

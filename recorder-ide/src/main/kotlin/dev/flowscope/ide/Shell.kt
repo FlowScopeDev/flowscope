@@ -69,6 +69,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -1740,16 +1741,12 @@ internal fun FlowFileRail(
             if (scratch.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
                 RailSection("SCRATCH", null)
-                scratch.forEach { entry ->
-                    RailRow(entry.label, entry.path == openFile, null) { onOpen(entry.path) }
-                }
+                RailTree(buildRailTree(scratch), openFile, trailing = { null }) { onOpen(it) }
             }
         } else {
             RailSection("TESTS", onNewTest)
             if (tests.isEmpty() && missing.isEmpty()) RailEmpty("No tests yet")
-            tests.forEach { entry ->
-                RailRow(entry.label, entry.path == openFile, null) { onOpen(entry.path) }
-            }
+            RailTree(buildRailTree(tests), openFile, trailing = { null }) { onOpen(it) }
             // Deleted outside the IDE. Kept visible so the file does not disappear unexplained, and
             // made inert so it stops accepting clicks that can only fail.
             missing.forEach { entry ->
@@ -1761,9 +1758,7 @@ internal fun FlowFileRail(
             Spacer(Modifier.height(14.dp))
             RailSection("SUITES", onNewSuite)
             if (suites.isEmpty()) RailEmpty("No suites yet")
-            suites.forEach { entry ->
-                RailRow(entry.label, entry.path == openFile, "▶") { onRunSuite(entry.path) }
-            }
+            RailTree(buildRailTree(suites), openFile, trailing = { "▶" }) { onRunSuite(it) }
         }
 
         if (runs.isNotEmpty()) {
@@ -1821,19 +1816,104 @@ private fun RailEmpty(text: String) {
     )
 }
 
+/** Indentation per tree depth level, in dp. */
+private const val RailIndentDp = 14
+
+/**
+ * Renders [nodes] as an indented, collapsible tree: a folder row with a disclosure triangle per
+ * directory, a leaf [RailRow] per file. Expand state is ephemeral UI state, not business state —
+ * [androidx.compose.runtime.remember] keeps every folder expanded by default, matching the flat
+ * list this replaces.
+ */
+@Composable
+private fun RailTree(
+    nodes: List<RailNode>,
+    openFile: Path?,
+    trailing: (ProjectEntry) -> String?,
+    onClick: (Path) -> Unit,
+) {
+    val collapsed = remember { mutableStateMapOf<String, Boolean>() }
+    RailTreeLevel(nodes, openFile, trailing, depth = 0, collapsed = collapsed, onClick = onClick)
+}
+
+@Composable
+private fun RailTreeLevel(
+    nodes: List<RailNode>,
+    openFile: Path?,
+    trailing: (ProjectEntry) -> String?,
+    depth: Int,
+    collapsed: MutableMap<String, Boolean>,
+    onClick: (Path) -> Unit,
+) {
+    for (node in nodes) {
+        if (node.isFolder) {
+            val isCollapsed = collapsed[node.fullPath] == true
+            RailFolderRow(node.name, depth, isCollapsed) {
+                collapsed[node.fullPath] = !isCollapsed
+            }
+            if (!isCollapsed) {
+                RailTreeLevel(node.children, openFile, trailing, depth + 1, collapsed, onClick)
+            }
+        } else {
+            val entry = node.entry!!
+            RailRow(node.name, entry.path == openFile, trailing(entry), depth = depth) {
+                onClick(entry.path)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RailFolderRow(name: String, depth: Int, collapsed: Boolean, onToggle: () -> Unit) {
+    val description = if (collapsed) "Expand $name" else "Collapse $name"
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onToggle)
+            .padding(
+                start = (12 + depth * RailIndentDp).dp,
+                end = 12.dp,
+                top = 5.dp,
+                bottom = 5.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HoverTip(description) {
+            Text(
+                if (collapsed) "▸" else "▾",
+                color = TextLow,
+                fontSize = 9.sp,
+                modifier = Modifier.width(14.dp).semantics { contentDescription = description },
+            )
+        }
+        Text(
+            name,
+            color = TextMid,
+            fontSize = 11.5.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 @Composable
 private fun RailRow(
     label: String,
     selected: Boolean,
     trailing: String?,
     enabled: Boolean = true,
+    depth: Int = 0,
     onClick: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth()
             .background(if (selected) Ink250 else Color.Transparent)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 5.dp),
+            .padding(
+                start = (12 + depth * RailIndentDp).dp,
+                end = 12.dp,
+                top = 5.dp,
+                bottom = 5.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

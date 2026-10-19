@@ -74,6 +74,47 @@ internal class ProjectState {
 /** A `.flow` or `.suite` file, with the label the rail shows for it. */
 internal data class ProjectEntry(val path: Path, val label: String)
 
+/**
+ * One node of the rail's folder tree: a file (leaf, [entry] set) or a folder grouping [children].
+ *
+ * [label] is already slash-joined project-relative ([FlowProject.relativize]), so this is a pure
+ * grouping of that string — no filesystem access, nothing additive to validate.
+ */
+internal data class RailNode(
+    val name: String,
+    val fullPath: String,
+    val entry: ProjectEntry?,
+    val children: List<RailNode> = emptyList(),
+) {
+    val isFolder: Boolean get() = entry == null
+}
+
+/**
+ * Groups a flat, already-sorted [entries] list into a folder tree for the rail. The incoming sort
+ * (by relative path, same as [FlowProject.listTests]) already orders a folder's own entries
+ * contiguously, so no re-sort is needed here.
+ */
+internal fun buildRailTree(entries: List<ProjectEntry>): List<RailNode> {
+    class Building(val name: String, val fullPath: String) {
+        var entry: ProjectEntry? = null
+        val children = LinkedHashMap<String, Building>()
+    }
+    val root = Building("", "")
+    for (entry in entries) {
+        var node = root
+        var path = ""
+        val segments = entry.label.split('/').filter { it.isNotEmpty() }
+        for ((index, segment) in segments.withIndex()) {
+            path = if (path.isEmpty()) segment else "$path/$segment"
+            node = node.children.getOrPut(segment) { Building(segment, path) }
+            if (index == segments.lastIndex) node.entry = entry
+        }
+    }
+    fun Building.toNode(): RailNode =
+        RailNode(name, fullPath, entry, children.values.map { it.toNode() })
+    return root.children.values.map { it.toNode() }
+}
+
 internal data class RecentProject(val root: Path, val lastOpenFile: String?)
 
 internal enum class EditorKind { Flow, Suite }

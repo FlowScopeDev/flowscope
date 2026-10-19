@@ -3059,12 +3059,19 @@ private fun relativeLabel(base: Path, file: Path): String =
     runCatching { base.relativize(file).toString().replace('\\', '/') }
         .getOrDefault(file.fileName.toString())
 
-private fun listFlowFiles(directory: Path): List<ProjectEntry> = runCatching {
+/**
+ * The no-project fallback listing. Walks to [FlowProject.MAX_WALK_DEPTH], the same cap a project's
+ * own [FlowProject.listTests] uses (V2 #12) — the two listings used to disagree: this one read
+ * only the top level, so a nested test under `~/.flowscope/tests/` was invisible here while the
+ * identical layout inside a project was found.
+ */
+internal fun listFlowFiles(directory: Path): List<ProjectEntry> = runCatching {
     if (!Files.isDirectory(directory)) return emptyList()
-    Files.list(directory).use { children ->
-        children.filter { Files.isRegularFile(it) }
+    Files.walk(directory, FlowProject.MAX_WALK_DEPTH).use { walked ->
+        walked.filter { Files.isRegularFile(it) }
             .filter { it.fileName.toString().endsWith(".flow") }
-            .map { ProjectEntry(it, it.fileName.toString()) }
+            .filter { directory.relativize(it).none { segment -> segment.toString().startsWith(".") } }
+            .map { ProjectEntry(it, relativeLabel(directory, it)) }
             .toList()
             .sortedBy { it.label }
     }

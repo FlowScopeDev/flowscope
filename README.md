@@ -428,6 +428,11 @@ my-app/
   reports/                # run output, gitignored by `project init`
 ```
 
+Tests and suites may be organised into subdirectories — `flows/tests/checkout/pay.flow` is as valid
+as a flat `flows/tests/pay.flow` — up to 8 levels deep; a file nested deeper is invisible to every
+listing and `flowscope project validate` reports it rather than silently dropping it. A suite
+references a nested test the same way, relative to `flows/`: `test tests/checkout/pay.flow`.
+
 Inside a project, a bare test name resolves and runs land in `reports/`:
 
 ```bash
@@ -472,8 +477,9 @@ project anywhere on disk — the checked-in test plus the runner remains the com
 `examples/` is a working reference project and `flowscope schema` prints the complete format.
 
 In the IDE, the project chip in the session bar opens, creates, and switches projects, and the Flow
-tab's file rail lists the project's tests, suites, and recent runs. With no project open the IDE
-behaves exactly as before, saving under `~/.flowscope/`.
+tab's file rail lists the project's tests, suites, and recent runs as a collapsible tree, mirroring
+the folders tests and suites are actually organised into on disk. With no project open the IDE
+behaves exactly as before, saving under `~/.flowscope/`, and that fallback listing is recursive too.
 
 The listing is a snapshot, so a `.flow` deleted outside the IDE leaves a row behind. Opening one
 says why — `Could not open flows/tests/login.flow · the file no longer exists` — and the row is then

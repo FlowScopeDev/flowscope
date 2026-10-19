@@ -114,6 +114,11 @@ captures are never shared with other tests or suite cleanup.
 contain `..`. A project is a directory with `flowscope.json`, `flows/tests/`, `flows/suites/` and
 `reports/` (gitignored). Create one with `flowscope project init <dir> --package <id>`.
 
+`flows/tests/` and `flows/suites/` may hold subdirectories — group tests by feature area, e.g.
+`flows/tests/checkout/pay.flow`, referenced from a suite as `test tests/checkout/pay.flow` — up to
+8 levels deep. Deeper than that is invisible to `flowscope project tests` and every other listing;
+`flowscope project validate` reports any file that deep rather than silently dropping it.
+
 ## Commands you will use
 
 ```text

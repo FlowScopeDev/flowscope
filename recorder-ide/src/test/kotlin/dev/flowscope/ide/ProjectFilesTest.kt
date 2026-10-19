@@ -191,6 +191,98 @@ class ProjectFilesTest {
     }
 }
 
+/**
+ * [buildRailTree] groups the rail's flat, slash-labelled [ProjectEntry] list into folders (V2
+ * #12) — pure grouping of a label already computed by [FlowProject.relativize], no filesystem
+ * access of its own.
+ */
+class RailTreeTest {
+    @Test
+    fun `a flat project with no folders stays flat`() {
+        val entries = listOf(
+            ProjectEntry(Path.of("/p/flows/tests/alpha.flow"), "alpha.flow"),
+            ProjectEntry(Path.of("/p/flows/tests/zebra.flow"), "zebra.flow"),
+        )
+        val tree = buildRailTree(entries)
+
+        assertEquals(2, tree.size)
+        assertTrue(tree.all { !it.isFolder })
+        assertEquals(listOf("alpha.flow", "zebra.flow"), tree.map { it.name })
+    }
+
+    @Test
+    fun `groups nested entries under their folder, several levels deep`() {
+        // Pre-sorted by relative path, as FlowProject.listTests always hands the rail its input.
+        val entries = listOf(
+            ProjectEntry(Path.of("/p/flows/tests/checkout/deeper/probe.flow"),
+                "checkout/deeper/probe.flow"),
+            ProjectEntry(Path.of("/p/flows/tests/checkout/pay.flow"), "checkout/pay.flow"),
+            ProjectEntry(Path.of("/p/flows/tests/login.flow"), "login.flow"),
+        )
+        val tree = buildRailTree(entries)
+
+        assertEquals(listOf("checkout", "login.flow"), tree.map { it.name })
+        val checkout = tree.first { it.name == "checkout" }
+        assertTrue(checkout.isFolder)
+        assertEquals("checkout", checkout.fullPath)
+        assertEquals(listOf("deeper", "pay.flow"), checkout.children.map { it.name })
+
+        val deeper = checkout.children.first { it.name == "deeper" }
+        assertEquals("checkout/deeper", deeper.fullPath)
+        assertEquals(listOf("probe.flow"), deeper.children.map { it.name })
+        assertEquals(Path.of("/p/flows/tests/checkout/deeper/probe.flow"),
+            deeper.children.single().entry?.path)
+    }
+
+    @Test
+    fun `an empty list produces an empty tree`() {
+        assertEquals(emptyList(), buildRailTree(emptyList()))
+    }
+}
+
+/**
+ * [listFlowFiles] backs the no-project rail fallback. It used to list only the top level
+ * (`Files.list`), disagreeing with a project's own recursive listing (V2 #12) — a nested test
+ * under `~/.flowscope/tests/` was invisible here while the identical layout inside a project was
+ * found by `FlowProject.listTests`.
+ */
+class ScratchListingTest {
+    @Test
+    fun `finds a nested test the same way a project would`() {
+        val root = kotlin.io.path.createTempDirectory("fs-scratch")
+        try {
+            java.nio.file.Files.writeString(root.resolve("shallow.flow"), "x")
+            val nested = java.nio.file.Files.createDirectories(root.resolve("checkout/deeper"))
+            java.nio.file.Files.writeString(nested.resolve("probe.flow"), "x")
+
+            val labels = listFlowFiles(root).map { it.label }.sorted()
+            assertEquals(listOf("checkout/deeper/probe.flow", "shallow.flow"), labels)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `skips a dot-prefixed directory and files with another extension`() {
+        val root = kotlin.io.path.createTempDirectory("fs-scratch")
+        try {
+            java.nio.file.Files.writeString(root.resolve("kept.flow"), "x")
+            java.nio.file.Files.writeString(root.resolve("notes.txt"), "x")
+            val drafts = java.nio.file.Files.createDirectories(root.resolve(".drafts"))
+            java.nio.file.Files.writeString(drafts.resolve("wip.flow"), "x")
+
+            assertEquals(listOf("kept.flow"), listFlowFiles(root).map { it.label })
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a missing directory lists nothing`() {
+        assertEquals(emptyList(), listFlowFiles(Path.of("/definitely/not/here-12345")))
+    }
+}
+
 class SuiteReferenceRewriteTest {
     private val suite = """
         flowscope-suite 1
