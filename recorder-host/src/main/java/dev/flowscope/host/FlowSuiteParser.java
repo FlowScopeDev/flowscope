@@ -32,8 +32,10 @@ public final class FlowSuiteParser {
     private FlowSuiteParser() {}
 
     public static FlowSuite parse(Path path) throws IOException {
-        return parseLines(Files.readAllLines(path, StandardCharsets.UTF_8),
+        FlowSuite suite = parseLines(Files.readAllLines(path, StandardCharsets.UTF_8),
             path.getFileName().toString(), path.toString());
+        FlowFiles.validate(path.toAbsolutePath().getParent(), suite.hooks());
+        return suite;
     }
 
     /** Parses source that is not on disk yet, so the IDE validates exactly what the CLI would. */

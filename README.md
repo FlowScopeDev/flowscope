@@ -309,6 +309,7 @@ Gestures and input beyond `tap` and `scroll`. `direction=` is where the finger m
 
 ```text
 step scroll-to text="Order total" max-swipes=8        # swipes until visible; stops at the end of the content
+step scroll-to id=com.example.debug:id/total from-id=com.example.debug:id/list clear-of-id=com.example.debug:id/footer distance=30 duration=1500
 step long-press id=com.example.debug:id/row duration=900
 step swipe direction=left id=com.example.debug:id/carousel distance=60
 step clear-text id=com.example.debug:id/email
@@ -316,6 +317,49 @@ step press-key key=enter                              # enter, search, delete, t
 step hide-keyboard                                    # Back only while the keyboard is showing
 step assert-visible id=com.example.debug:id/accept checked=true index=1
 ```
+
+Selectors accept `within-id=` to require a real ancestor, so a duplicate card on a launch sheet
+cannot satisfy a home-screen assertion. Optional UI can use nested blocks within one lifecycle phase:
+
+```text
+step if-visible id=com.example.debug:id/launch_sheet timeout=2000
+step screenshot name=launch-sheet
+step tap id=com.example.debug:id/dismiss within-id=com.example.debug:id/launch_sheet
+step end
+step assert-visible id=com.example.debug:id/home_card within-id=com.example.debug:id/homeNestedScrollView
+step screenshot-if-visible id=com.example.debug:id/release_panel name=release-panel
+```
+
+`if-visible` and `screenshot-if-visible` check once unless `timeout=` is supplied. Unmatched blocks
+report their contents as skipped; cleanup still runs. Taps (including field focus and long-press)
+fail with `Target is covered by <id>` when drawing-order or later-window metadata establishes that
+another branch covers the tap point. Ancestors and the target's own children are excluded; missing
+accessibility drawing metadata cannot establish coverage. `clear-of-id` remains available for that
+case. `scroll-to` defaults to a slower 1000 ms swipe, avoids covered targets, and detects the end from
+scrollable-container children confirmed by a fresh dump. With no identifiable scrollable container,
+it stops at `max-swipes` rather than using unrelated screen content.
+
+Before setup, runs check whether the device is locked or its screen is off. Foreground is checked
+before UI work; flows containing an initial launch/deep-link may start from another app and are checked
+afterward. Focused windows take precedence over resumed activities, so a password dialog is reported
+as `foreground is <package>`. Android versions that omit these state fields get best-effort checks.
+
+Use `flowscope test run login --keep-hierarchy` (also supported by `suite run`) to retain
+`evidence/step-NN.xml` for every executed step. JSON/HTML report details link each hierarchy;
+skipped steps have none, and capture failures appear as `hierarchyError` without changing the verdict.
+
+Shared request payloads live in `flowsDir/fixtures`:
+
+```text
+before api-request method=POST url=https://example.test/setup body-file=@fixtures/setup.json
+step launch
+```
+
+Ordinary `body-file` paths remain relative to the `.flow` or `.suite`. `@fixtures` also works in a
+standalone copied `flows/tests` + `flows/fixtures` tree without `flowscope.json`. Validation, run
+preflight and actual reads share the same no-escape policy: missing/unreadable files, `..`, absolute
+paths, and escaping symlinks fail early with a source line. The fixtures directory itself cannot
+symlink outside `flowsDir`. Filenames using runtime expressions are resolved during preflight.
 
 Any selector can add `index=N` (zero-based nth match) and the state filters `enabled=`, `checked=`,
 `focused=`, `clickable=`, and `selected=` (`true` or `false`); they narrow a selector and never select
@@ -553,9 +597,9 @@ flowscope web inspect --package <id> [--serial <serial>] [--page <target>] \
 flowscope project init [<dir>] [--name <name>] [--package <id>] [--mode <mode>] [--timeout <ms>]
 flowscope project info|tests|suites|validate [<dir>]
 flowscope test validate <file.flow> [--project <dir>]
-flowscope test run <file.flow> [--project <dir>] --serial <serial> --output <directory> [--secrets-file <path>]
+flowscope test run <file.flow> [--project <dir>] --serial <serial> --output <directory> [--secrets-file <path>] [--keep-hierarchy]
 flowscope suite validate <file.suite> [--project <dir>]
-flowscope suite run [<file.suite>] [--project <dir>] --serial <serial> --output <directory> [--secrets-file <path>]
+flowscope suite run [<file.suite>] [--project <dir>] --serial <serial> --output <directory> [--secrets-file <path>] [--keep-hierarchy]
 ```
 
 `flowscope emulator start Pixel_7 --headless --wait` launches an installed AVD without a window and

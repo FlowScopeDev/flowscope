@@ -33,7 +33,8 @@ not exist.
 6. **Run it when a device is available:** `flowscope test run <name> --serial <serial>`. Add
    `--secrets-file <owner-only-path>` only when the flow declares local secret inputs. Exit `0`
    passed, `1` failed. On failure read `reports/<run>/report.json`; it records the failing step, a
-   screenshot and the last UI hierarchy. Fix the selector or the wait, never add a sleep.
+   screenshot and the last UI hierarchy. Use `--keep-hierarchy` on test or suite runs to retain XML
+   for each executed step. Fix the selector or the wait, never add a sleep.
 7. **Add it to a suite** (`flows/suites/*.suite`, `test tests/<name>.flow`) when it belongs in the
    regression run, then `flowscope suite validate`.
 8. **Report honestly.** Say whether you only validated or also ran it on a device. Do not claim a
@@ -88,3 +89,9 @@ Read the whole file first. Change the smallest number of lines, keep the header 
 naming, re-validate, and re-run if you can. If a test fails because the app genuinely changed, update
 the selector from a fresh snapshot; if it fails because the app is broken, report the failure and do
 not edit the test to hide it.
+
+For duplicate IDs on sheets, scope the selector with `within-id`. Use `step if-visible` / `step end`
+blocks for loan/state-dependent UI; keep each block within one phase. Shared payloads can use
+`body-file=@fixtures/name.json` under `flowsDir/fixtures`. Validate on disk before expensive setup
+so missing files and path escapes fail early. A covered tap or device-readiness error should be
+fixed at its source; do not work around it with guessed coordinates or sleeps.

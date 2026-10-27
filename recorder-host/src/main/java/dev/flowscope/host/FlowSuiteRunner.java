@@ -37,6 +37,10 @@ public final class FlowSuiteRunner {
     private final FlowHttpClient http;
     private final Map<String, String> environment;
     private final Map<String, String> secretSources;
+    private boolean keepHierarchy;
+
+    public FlowSuiteRunner keepHierarchy(boolean keep) { this.keepHierarchy = keep; return this; }
+
     private Consumer<Progress> listener = progress -> {};
 
     /** Progress for a UI: one event when a test starts and one when it finishes. */
@@ -169,6 +173,8 @@ public final class FlowSuiteRunner {
     }
 
     public boolean run() throws Exception {
+        FlowFiles.validate(sourceDirectory, suite.hooks());
+        for (Resolved child : resolved) FlowFiles.validate(child.test().sourceDirectory(), child.test().steps());
         Instant started = Instant.now();
         Map<String, String> suiteBuiltins = Map.of("id", UUID.randomUUID().toString(),
             "name", suite.name(), "startedAt", started.toString());
@@ -233,7 +239,7 @@ public final class FlowSuiteRunner {
             FlowTestRunner runner =
                 new FlowTestRunner(adb, device, current.test(), root, current.directoryName(), http,
                     environment, secretSources, runtimeValues, suiteBuiltins)
-                    .withoutProgressFile().observe(progressFile::step);
+                    .withoutProgressFile().keepHierarchy(keepHierarchy).observe(progressFile::step);
             try {
                 passed = runner.run();
                 // A failed step assertion returns false rather than throwing, so the reason has to
@@ -290,7 +296,7 @@ public final class FlowSuiteRunner {
 
     private boolean runHooks(FlowTest.Phase phase, boolean stopOnFailure, RuntimeValues values,
         HostRuntime runtime, List<HookOutcome> outcomes) {
-        boolean passed = true, stopped = false;
+        boolean passed = true, stopped = false, readinessChecked = false;
         for (FlowTest.Step hook : suite.hooks()) {
             if (hook.phase() != phase) continue;
             if (stopped) {
@@ -305,6 +311,10 @@ public final class FlowSuiteRunner {
             }
             long started = System.nanoTime();
             try {
+                if (phase == FlowTest.Phase.BEFORE && !readinessChecked && !resolved.isEmpty()) {
+                    readinessChecked = true;
+                    DeviceReadiness.beforeSetup(adb, device, resolved.getFirst().test());
+                }
                 Map<String, String> expanded = runtime.expanded(hook.arguments());
                 long timeout = expanded.containsKey("timeout")
                     ? FlowTestParser.parsePositiveLong(expanded.get("timeout"), hook.line(), "timeout")

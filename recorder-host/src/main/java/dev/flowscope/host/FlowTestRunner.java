@@ -43,6 +43,15 @@ public final class FlowTestRunner {
     // A suite child reports through the suite's own progress file instead.
     private boolean writesProgressFile = true;
     private RunProgress progressFile;
+    private boolean keepHierarchy;
+    private boolean readinessChecked;
+    private boolean foregroundChecked;
+    private List<UiHierarchy.UiNode> lookupNodes = List.of();
+
+    public FlowTestRunner keepHierarchy(boolean keep) {
+        this.keepHierarchy = keep;
+        return this;
+    }
 
     /**
      * Progress for a UI: one event before a step runs and one when it finishes. Never carries an
@@ -274,11 +283,15 @@ public final class FlowTestRunner {
     private boolean runPhase(FlowTest.Phase phase, boolean stopOnFailure) {
         boolean passed = true, stopped = false;
         int total = test.steps().size();
+        Deque<Boolean> visibleBlocks = new ArrayDeque<>();
         for (int i = 0; i < test.steps().size(); i++) {
             FlowTest.Step step = test.steps().get(i);
             if (step.phase() != phase) continue;
             if (stopped) { addSkipped(i, step, "earlier " + phase.value() + " instruction failed"); continue; }
-            if (!values.conditionsPass(step.arguments())) {
+            boolean ending = step.action().equals("end");
+            if (ending && !visibleBlocks.isEmpty()) visibleBlocks.pop();
+            if (!ending && (visibleBlocks.contains(false) || !values.conditionsPass(step.arguments()))) {
+                if (step.action().equals("if-visible")) visibleBlocks.push(false);
                 addSkipped(i, step, "condition not met"); continue;
             }
             progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "running"));
@@ -289,7 +302,10 @@ public final class FlowTestRunner {
             int dumpsBefore = dumpCount;
             long dumpNanosBefore = dumpNanos;
             try {
-                Map<String, String> details = execute(step, i);
+                checkReadiness(step);
+                Map<String, String> details = new LinkedHashMap<>(execute(step, i));
+                if (step.action().equals("if-visible")) visibleBlocks.push(Boolean.parseBoolean(details.get("matched")));
+                retainHierarchy(i, details);
                 results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.action());
@@ -298,7 +314,10 @@ public final class FlowTestRunner {
                 passed = false;
                 captureEvidence("failure-" + String.format("%02d", i + 1));
                 String message = redact(message(failure));
-                results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, Map.of(),
+                Map<String, String> details = new LinkedHashMap<>();
+                retainHierarchy(i, details);
+                if (step.action().equals("if-visible")) visibleBlocks.push(false);
+                results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.action(), message);
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed"));
@@ -325,11 +344,11 @@ public final class FlowTestRunner {
         Map<String, String> args = hostRuntime.expanded(step.arguments());
         long timeout = args.containsKey("timeout") ? FlowTestParser.parsePositiveLong(args.get("timeout"), step.line(), "timeout") : test.timeoutMillis();
         return switch (step.action()) {
-            case "launch" -> { launch(); settle(); yield Map.of(); }
+            case "launch" -> { launch(); settle(); DeviceReadiness.check(adb, device.serial(), test.packageName(), true); yield Map.of(); }
             case "wait-visible", "assert-visible" -> { requireNode(args, timeout); yield Map.of(); }
-            case "tap" -> { var n = requireNode(args, timeout); shell("input", "tap", "" + n.tapX(args), "" + n.centerY()); settle(); yield Map.of(); }
-            case "tap-if-visible" -> { var n = findNode(args, timeout); if (n != null) { shell("input", "tap", "" + n.tapX(args), "" + n.centerY()); settle(); } yield Map.of("matched", "" + (n != null)); }
-            case "type" -> { if (hasSelector(args)) { var n = requireNode(args, timeout); shell("input", "tap", "" + n.centerX(), "" + n.centerY()); } typeText(args.get("value")); settle(); yield Map.of(); }
+            case "tap" -> { var n = requireNode(args, timeout); ensureUncovered(n, n.tapX(args)); shell("input", "tap", "" + n.tapX(args), "" + n.centerY()); settle(); yield Map.of(); }
+            case "tap-if-visible" -> { var n = findNode(args, timeout); if (n != null) { ensureUncovered(n, n.tapX(args)); shell("input", "tap", "" + n.tapX(args), "" + n.centerY()); settle(); } yield Map.of("matched", "" + (n != null)); }
+            case "type" -> { if (hasSelector(args)) { var n = requireNode(args, timeout); ensureUncovered(n, n.centerX()); shell("input", "tap", "" + n.centerX(), "" + n.centerY()); } typeText(args.get("value")); settle(); yield Map.of(); }
             case "scroll" -> { scroll(args.get("direction")); settle(); yield Map.of(); }
             case "long-press" -> longPress(args, timeout);
             case "swipe" -> swipeStep(args, timeout);
@@ -339,6 +358,15 @@ public final class FlowTestRunner {
             case "hide-keyboard" -> hideKeyboard();
             case "back" -> { shell("input", "keyevent", "KEYCODE_BACK"); settle(); yield Map.of(); }
             case "assert-not-visible" -> { requireAbsent(args, timeout); yield Map.of(); }
+            case "if-visible" -> Map.of("matched", "" + (findNode(args, args.containsKey("timeout") ? timeout : 0) != null));
+            case "end" -> Map.of();
+            case "screenshot-if-visible" -> {
+                boolean matched = findNode(args, args.containsKey("timeout") ? timeout : 0) != null;
+                if (!matched) yield Map.of("matched", "false");
+                String name = args.getOrDefault("name", "step-" + String.format("%02d", index + 1));
+                captureScreenshot(name);
+                yield Map.of("matched", "true", "evidence", "evidence/" + safeFile(name) + ".png");
+            }
             case "screenshot" -> { String name = args.getOrDefault("name", "step-" + String.format("%02d", index + 1)); captureScreenshot(name); yield Map.of("evidence", "evidence/" + safeFile(name) + ".png"); }
             case "api-request", "set-date", "set-value", "transform", "secret" ->
                 hostRuntime.execute(step.action(), step.arguments(), timeout);
@@ -817,6 +845,7 @@ public final class FlowTestRunner {
     }
 
     private void preflight() throws IOException {
+        FlowFiles.validate(test.sourceDirectory(), test.steps());
         for (FlowTest.Requirement requirement : test.requirements()) values.require(requirement);
         for (FlowTest.Step step : test.steps()) if (step.action().equals("secret")) {
             values.bindSecret(step.arguments().get("name"), step.arguments().get("source"));
@@ -874,24 +903,7 @@ public final class FlowTestRunner {
     }
 
     private Path resolveRelativeFile(String raw, String label) {
-        Path relative = Path.of(raw);
-        if (relative.isAbsolute() || raw.contains("\\")) throw new IllegalArgumentException(label + " must be a relative path");
-        for (Path segment : relative) if (segment.toString().equals("..")) throw new IllegalArgumentException(label + " must not contain '..'");
-        Path base = test.sourceDirectory().toAbsolutePath().normalize(), resolved = base.resolve(relative).normalize();
-        if (!resolved.startsWith(base)) throw new IllegalArgumentException(label + " escapes the test directory");
-        if (Files.exists(resolved)) {
-            try {
-                Path realBase = base.toRealPath();
-                Path realResolved = resolved.toRealPath();
-                if (!realResolved.startsWith(realBase)) {
-                    throw new IllegalArgumentException(label + " escapes the test directory through a symbolic link");
-                }
-                return realResolved;
-            } catch (IOException invalid) {
-                throw new IllegalArgumentException("Could not resolve " + label + ": " + raw, invalid);
-            }
-        }
-        return resolved;
+        return FlowFiles.resolve(test.sourceDirectory(), raw, label);
     }
 
     private void launch() throws Exception {
@@ -956,9 +968,10 @@ public final class FlowTestRunner {
             // Only the first look may reuse the dump settle() just took; later polls must see live UI.
             byte[] dump = first ? currentHierarchy() : dumpHierarchy();
             first = false;
-            var found = UiHierarchy.find(UiHierarchy.parse(dump), args);
+            lookupNodes = UiHierarchy.parse(dump);
+            var found = UiHierarchy.find(lookupNodes, args);
             if (found != null) return found;
-            Thread.sleep(POLL_MILLIS);
+            if (timeout > 0) Thread.sleep(POLL_MILLIS);
         } while (System.nanoTime() < deadline);
         return null;
     }
@@ -991,6 +1004,8 @@ public final class FlowTestRunner {
     }
 
     private byte[] readHierarchy() throws Exception {
+        var removed = adb.run(List.of("-s", device.serial(), "shell", "rm", "-f", "/data/local/tmp/flowscope-test-window.xml"));
+        if (removed.exitCode() != 0) throw new IOException("Could not clear previous UI hierarchy");
         var dump = adb.run(List.of("-s", device.serial(), "shell", "uiautomator", "dump", "/data/local/tmp/flowscope-test-window.xml"), AdbClient.DUMP_TIMEOUT_MILLIS);
         if (dump.exitCode() != 0) throw new IOException("UI hierarchy failed: " + (dump.stdout() + dump.stderr()).strip());
         return adb.execOut(device.serial(), "cat", "/data/local/tmp/flowscope-test-window.xml");
@@ -1057,6 +1072,7 @@ public final class FlowTestRunner {
         long duration = boundedArg(args, "duration", 800,
             FlowTestParser.LONG_PRESS_MIN_MILLIS, FlowTestParser.LONG_PRESS_MAX_MILLIS);
         int x = node.tapX(args), y = node.centerY();
+        ensureUncovered(node, x);
         shell("input", "swipe", "" + x, "" + y, "" + x, "" + y, "" + duration);
         settle();
         return Map.of("duration", "" + duration);
@@ -1099,31 +1115,95 @@ public final class FlowTestRunner {
 
     /**
      * Swipes until the element is visible. Stops at {@code max-swipes}, or earlier when a swipe leaves
-     * the settled hierarchy unchanged (the end of the content), so it can never scroll forever.
+     * the scroll container children unchanged across fresh dumps (the end of the content), so it can never scroll forever.
+     * With {@code from-id} every swipe starts at that element's centre, so a pinned panel over the
+     * screen's lower half cannot swallow it. With {@code clear-of-id} (comma-separated ids) the element only counts once it
+     * overlaps none of them (panels or floating buttons drawn over the content), so a later tap reaches it.
+     * {@code distance} and {@code duration} are as for `swipe`; shorter, slower swipes fling less.
      */
     private Map<String, String> scrollTo(Map<String, String> args) throws Exception {
         String direction = args.getOrDefault("direction", "up");
         int maxSwipes = (int) boundedArg(args, "max-swipes", 10, 1, FlowTestParser.SCROLL_TO_MAX_SWIPES_LIMIT);
-        byte[] previous = null;
+        String fromId = args.get("from-id");
+        String clearOfId = args.get("clear-of-id");
+        int percent = (int) boundedArg(args, "distance", 50,
+            FlowTestParser.SWIPE_MIN_PERCENT, FlowTestParser.SWIPE_MAX_PERCENT);
+        long millis = boundedArg(args, "duration", 1000, FlowTestParser.SWIPE_MIN_MILLIS, FlowTestParser.SWIPE_MAX_MILLIS);
+        String previous = null;
         for (int swipes = 0; ; swipes++) {
-            byte[] dump = currentHierarchy();
-            if (UiHierarchy.find(UiHierarchy.parse(dump), args) != null) return Map.of("swipes", "" + swipes);
+            byte[] dump = dumpHierarchy();
+            var nodes = UiHierarchy.parse(dump);
+            var target = UiHierarchy.find(nodes, args);
+            if (target != null && !covered(target, nodes, clearOfId)
+                && UiHierarchy.covering(nodes, target, target.tapX(args), target.centerY()) == null) {
+                rememberSettled(dump);
+                return Map.of("swipes", "" + swipes);
+            }
             if (swipes >= maxSwipes) {
                 throw new IllegalStateException("Element not found after " + swipes + " swipes: " + selectorDescription(args));
             }
-            if (previous != null && Arrays.equals(previous, dump)) {
-                throw new IllegalStateException("Reached the end of the content after " + swipes
-                    + " swipes without finding: " + selectorDescription(args));
+            var anchor = fromId == null ? null : UiHierarchy.find(nodes, Map.of("id", fromId));
+            if (fromId != null && anchor == null) {
+                throw new IllegalStateException("scroll-to start element not found: id=" + fromId);
             }
-            previous = dump;
-            swipe(direction, null, null, 50, 400);
+            var container = scrollContainer(nodes, anchor, args.get("within-id"));
+            String signature = container == null ? null : UiHierarchy.contentSignature(nodes, container);
+            if (signature != null && !signature.isEmpty() && signature.equals(previous)) {
+                // A cached/transient dump is not proof of the end: confirm with another fresh dump.
+                Thread.sleep(POLL_MILLIS);
+                var confirmedNodes = UiHierarchy.parse(dumpHierarchy());
+                var confirmedAnchor = fromId == null ? null : UiHierarchy.find(confirmedNodes, Map.of("id", fromId));
+                var confirmedContainer = scrollContainer(confirmedNodes, confirmedAnchor, args.get("within-id"));
+                var confirmedTarget = UiHierarchy.find(confirmedNodes, args);
+                if (confirmedTarget == null && confirmedContainer != null
+                    && signature.equals(UiHierarchy.contentSignature(confirmedNodes, confirmedContainer))) {
+                    throw new IllegalStateException("Reached the end of the content after " + swipes
+                        + " swipes without finding: " + selectorDescription(args));
+                }
+                if (confirmedTarget != null && !covered(confirmedTarget, confirmedNodes, clearOfId)
+                    && UiHierarchy.covering(confirmedNodes, confirmedTarget, confirmedTarget.tapX(args), confirmedTarget.centerY()) == null) {
+                    return Map.of("swipes", "" + swipes);
+                }
+            }
+            previous = signature;
+            swipe(direction, anchor == null ? null : anchor.centerX(), anchor == null ? null : anchor.centerY(), percent, millis);
             settle();
         }
+    }
+
+    private static UiHierarchy.UiNode scrollContainer(List<UiHierarchy.UiNode> nodes,
+        UiHierarchy.UiNode anchor, String withinId) {
+        if (anchor != null) {
+            for (var node = anchor; node != null; node = node.parent()) if (node.scrollable()) return node;
+        }
+        if (withinId != null) {
+            var scope = UiHierarchy.find(nodes, Map.of("id", withinId));
+            if (scope != null && scope.scrollable()) return scope;
+        }
+        return nodes.stream().filter(n -> n.scrollable() && n.hasArea())
+            .filter(n -> withinId == null || n.id().equals(withinId) || n.matches(Map.of("within-id", withinId)))
+            .filter(n -> anchor == null || n.contains(anchor.centerX(), anchor.centerY()))
+            .max(Comparator.comparingLong(UiHierarchy.UiNode::area)).orElse(null);
+    }
+
+    /** Whether any element named in the comma-separated {@code clearOfIds} overlaps {@code target}. */
+    private static boolean covered(UiHierarchy.UiNode target, List<UiHierarchy.UiNode> nodes, String clearOfIds) {
+        if (clearOfIds == null) return false;
+        for (String id : clearOfIds.split(",")) {
+            var cover = UiHierarchy.find(nodes, Map.of("id", id.trim()));
+            if (cover != null && overlaps(target, cover)) return true;
+        }
+        return false;
+    }
+
+    private static boolean overlaps(UiHierarchy.UiNode a, UiHierarchy.UiNode b) {
+        return a.left() < b.right() && b.left() < a.right() && a.top() < b.bottom() && b.top() < a.bottom();
     }
 
     /** Taps the field, moves to the end of its text, and deletes as many characters as it holds. */
     private Map<String, String> clearText(Map<String, String> args, long timeout) throws Exception {
         var node = requireNode(args, timeout);
+        ensureUncovered(node, node.centerX());
         shell("input", "tap", "" + node.centerX(), "" + node.centerY());
         // Ctrl+End jumps to the end of multi-line text on Android 11+; older builds ignore it, and
         // End still reaches the end of the current line.
@@ -1149,7 +1229,40 @@ public final class FlowTestRunner {
         return Map.of("keyboard", shown ? "hidden" : "not-shown");
     }
 
-    private void captureEvidence(String name) { try { captureScreenshot(name); } catch(Exception ignored){} try { Files.write(root.resolve("evidence").resolve(name+".xml"),dumpHierarchy()); } catch(Exception ignored){} }
+    private void ensureUncovered(UiHierarchy.UiNode node, int x) {
+        var cover = UiHierarchy.covering(lookupNodes, node, x, node.centerY());
+        if (cover != null) throw new IllegalStateException("Target is covered by "
+            + (cover.id().isBlank() ? cover.className() : cover.id()));
+    }
+
+    static boolean uiStep(FlowTest.Step step) {
+        return REUSES_SETTLED_DUMP.contains(step.action()) || step.action().startsWith("web-")
+            || Set.of("if-visible", "screenshot-if-visible", "scroll", "back", "press-key", "hide-keyboard").contains(step.action());
+    }
+
+    private void checkReadiness(FlowTest.Step step) throws Exception {
+        if (!readinessChecked) {
+            readinessChecked = true;
+            DeviceReadiness.beforeSetup(adb, device, test);
+        }
+        if (!foregroundChecked && uiStep(step)) {
+            DeviceReadiness.check(adb, device.serial(), test.packageName(), true);
+            foregroundChecked = true;
+        }
+    }
+
+    private void retainHierarchy(int index, Map<String, String> details) {
+        if (!keepHierarchy) return;
+        String path = "evidence/step-" + String.format("%02d", index + 1) + ".xml";
+        try {
+            Files.write(root.resolve(path), UiHierarchy.redact(currentHierarchy(), this::redact));
+            details.put("hierarchy", path);
+        } catch (Exception failure) {
+            details.put("hierarchyError", redact(message(failure)));
+        }
+    }
+
+    private void captureEvidence(String name) { try { captureScreenshot(name); } catch(Exception ignored){} try { Files.write(root.resolve("evidence").resolve(name+".xml"),UiHierarchy.redact(dumpHierarchy(), this::redact)); } catch(Exception ignored){} }
     private void captureScreenshot(String name) throws Exception { Files.write(root.resolve("evidence").resolve(safeFile(name)+".png"),adb.execOut(device.serial(),"screencap","-p")); }
     private void shell(String... args) throws Exception { String[] command=new String[args.length+1];command[0]="shell";System.arraycopy(args,0,command,1,args.length);command(command); }
     private void command(String... args) throws Exception { settledDump = null; List<String> command=new ArrayList<>(List.of("-s",device.serial()));command.addAll(List.of(args));var result=adb.run(command);if(result.exitCode()!=0)throw new IOException("ADB failed: "+(result.stdout()+result.stderr()).strip()); }
@@ -1313,6 +1426,6 @@ public final class FlowTestRunner {
     private static long elapsed(long n){return Duration.ofNanos(System.nanoTime()-n).toMillis();} private static String message(Exception e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();} private static String safeFile(String n){return n.replaceAll("[^a-zA-Z0-9._-]","_");}
     private String safeUrl(URI uri){return values.redact(HostRuntime.safeUrl(uri));}
     String redact(String value){return values.redact(value);}
-    private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){return details.entrySet().stream().map(e->e.getKey().equals("evidence")?"<a href=\""+html(e.getValue())+"\">evidence</a>":html(e.getKey()+"="+e.getValue())).collect(java.util.stream.Collectors.joining(" · "));} private static String html(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
+    private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")||e.getKey().equals("within-id")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){return details.entrySet().stream().map(e->(e.getKey().equals("evidence")||e.getKey().equals("hierarchy"))?"<a href=\""+html(e.getValue())+"\">"+html(e.getKey())+"</a>":html(e.getKey()+"="+e.getValue())).collect(java.util.stream.Collectors.joining(" · "));} private static String html(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
     private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details,int dumps,long dumpMillis){}
 }

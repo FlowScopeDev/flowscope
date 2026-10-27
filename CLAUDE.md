@@ -59,10 +59,10 @@ flowscope project init [<dir>] [--name <name>] [--package <id>]
 flowscope project info|tests|suites|validate [<dir>]
 flowscope test validate <file.flow> [--project <dir>]
 flowscope test run <file.flow> [--project <dir>] [--serial <id>] [--output <dir>]
-                   [--secrets-file <path>]
+                   [--secrets-file <path>] [--keep-hierarchy]
 flowscope suite validate <file.suite> [--project <dir>]
 flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>] [--output <dir>]
-                    [--secrets-file <path>]
+                    [--secrets-file <path>] [--keep-hierarchy]
 ```
 
 Keep output concise, deterministic, and scriptable. A successful command exits `0`; invalid input
@@ -327,3 +327,20 @@ change touches the `.flow` language, selectors, the stable CLI surface, exit cod
 authoring workflow it describes; re-validate its template after editing. Update this file when
 architecture, stable CLI commands, formats, security rules, or verification commands change. Do not
 add a second agent guide; update this one.
+
+### Replay reliability invariants
+
+Disk parsing validates literal body/APK files through `FlowFiles`, the same containment resolver
+used by preflight and actual reads. Expression filenames are deferred to runtime preflight.
+`body-file=@fixtures/...` resolves below flowsDir/fixtures, also in standalone flows/tests and
+flows/suites trees. Neither payload links nor the fixtures directory may escape their allowed root.
+`parseSource` remains filesystem-free syntax validation.
+
+`within-id` requires an ancestor and applies before index. `if-visible`/`end` blocks nest within one
+phase; skipped contents do not expand arguments. Optional visibility checks default to one dump.
+Tap coverage uses unrelated branches' drawing order or later windows; absent metadata is best effort.
+Runs check lock/power before setup and focused package before UI work, allowing explicit launches.
+`scroll-to` defaults to 1000 ms, confirms end-of-content using fresh container-child signatures,
+and falls back to max-swipes if no container is identifiable. Clear the prior remote dump before
+capture. `--keep-hierarchy` retains XML for executed steps via details.hierarchy; capture failures
+use details.hierarchyError and never replace the run verdict.

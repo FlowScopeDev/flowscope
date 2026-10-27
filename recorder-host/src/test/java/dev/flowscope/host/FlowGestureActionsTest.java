@@ -127,11 +127,72 @@ class FlowGestureActionsTest {
 
     @Test
     void scrollToStopsAtTheEndOfTheContent() throws Exception {
-        ScriptedAdb adb = new ScriptedAdb(screen(node("Item 1", 0, 0, 1000, 100, "")));
+        ScriptedAdb adb = new ScriptedAdb(screen("<node scrollable=\"true\" bounds=\"[0,0][1000,2000]\">"
+            + node("Item 1", 0, 0, 1000, 100, "") + "</node>"));
         FlowTestRunner runner = runner(adb, "step scroll-to text=\"Missing\" max-swipes=10");
         assertFalse(runner.run());
         assertEquals(1, adb.swipes, "an unchanged hierarchy after one swipe means the end");
         assertTrue(runner.failureMessage().contains("Reached the end of the content"), runner.failureMessage());
+    }
+
+    @Test
+    void scrollToStartsEachSwipeOnTheFromIdElement() throws Exception {
+        String list = "<node resource-id=\"app:id/list\" text=\"\" content-desc=\"\" class=\"android.widget.ScrollView\" "
+            + "bounds=\"[0,200][1000,1000]\" />";
+        ScriptedAdb adb = new ScriptedAdb(
+            screen(list, node("A", 0, 0, 1000, 100, "")), screen(list, node("Total", 0, 300, 1000, 400, "")));
+        assertTrue(run(adb, "step scroll-to text=\"Total\" from-id=app:id/list"));
+        assertTrue(adb.commands.contains("shell input swipe 500 600 500 1 1000"), adb.commands.toString());
+    }
+
+    @Test
+    void scrollToFailsWhenTheFromIdElementIsMissing() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(screen(node("A", 0, 0, 1000, 100, "")), screen(node("B", 0, 0, 1000, 100, "")));
+        FlowTestRunner runner = runner(adb, "step scroll-to text=\"Total\" from-id=app:id/list");
+        assertFalse(runner.run());
+        assertEquals(0, adb.swipes);
+        assertTrue(runner.failureMessage().contains("start element not found"), runner.failureMessage());
+    }
+
+    @Test
+    void scrollToKeepsSwipingWhileTheElementIsUnderTheClearOfElement() throws Exception {
+        String panel = "<node resource-id=\"app:id/panel\" text=\"\" content-desc=\"\" class=\"android.view.View\" "
+            + "bounds=\"[0,1500][1000,2000]\" />";
+        ScriptedAdb adb = new ScriptedAdb(
+            screen(node("Total", 0, 1600, 1000, 1700, ""), panel),
+            screen(node("Total", 0, 900, 1000, 1000, ""), panel));
+        assertTrue(run(adb, "step scroll-to text=\"Total\" clear-of-id=app:id/panel distance=30 duration=1500"));
+        assertEquals(1, adb.swipes);
+        assertTrue(adb.commands.contains("shell input swipe 500 1300 500 700 1500"), adb.commands.toString());
+    }
+
+    @Test
+    void scrollToChecksEveryClearOfElement() throws Exception {
+        String panel = "<node resource-id=\"app:id/panel\" text=\"\" content-desc=\"\" class=\"android.view.View\" "
+            + "bounds=\"[0,1500][1000,2000]\" />";
+        String fab = "<node resource-id=\"app:id/fab\" text=\"\" content-desc=\"\" class=\"android.view.View\" "
+            + "bounds=\"[600,800][1000,1000]\" />";
+        ScriptedAdb adb = new ScriptedAdb(
+            screen(node("Total", 0, 900, 1000, 950, ""), panel, fab),
+            screen(node("Total", 0, 300, 1000, 350, ""), panel, fab));
+        assertTrue(run(adb, "step scroll-to text=\"Total\" clear-of-id=app:id/panel,app:id/fab"));
+        assertEquals(1, adb.swipes);
+    }
+
+    @Test
+    void scrollToIgnoresAnElementWithNoArea() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(
+            screen(node("Total", 0, 0, 0, 0, "")), screen(node("Total", 0, 300, 1000, 350, "")));
+        assertTrue(run(adb, "step scroll-to text=\"Total\""));
+        assertEquals(1, adb.swipes, "a [0,0][0,0] node is off-screen, not visible");
+    }
+
+    @Test
+    void fromIdIsOnlyAcceptedOnScrollTo() {
+        assertRejected("step tap text=\"x\" from-id=app:id/list", "from-id is only valid on scroll-to");
+        assertRejected("step scroll-to text=\"x\" from-id=\"\"", "from-id must name a resource id");
+        assertRejected("step swipe direction=up clear-of-id=app:id/panel", "clear-of-id is only valid on scroll-to");
+        assertRejected("step scroll-to text=\"x\" distance=5", "distance must be between");
     }
 
     @Test

@@ -25,7 +25,14 @@ Blank lines and `#` comments are ignored. Double quotes keep spaces. A trailing 
 node. `text-contains` targets an inline substring (for example a link inside a sentence).
 
 Narrowing: `index=N` (zero-based nth match) and state filters `enabled=`, `checked=`, `focused=`,
-`clickable=`, `selected=` with `true` or `false`. Filters never select on their own.
+`clickable=`, `selected=` with `true` or `false`. Filters never select on their own. `within-id=<resource id>` requires an ancestor with that ID,
+before applying `index`. Use it when a sheet repeats IDs from the underlying screen.
+
+Tap, tap-if-visible, field focus, clear-text and long-press reject tap points covered by later
+drawing-order branches or windows, naming the covering ID. This is best effort when accessibility
+metadata is missing. `scroll-to` also avoids covered targets. End detection compares scrollable
+container children across fresh dumps, ignoring unrelated clocks; without a container, max-swipes
+is the only stopping limit. `from-id` helps identify the intended container.
 
 ## UI actions
 
@@ -41,12 +48,14 @@ Narrowing: `index=N` (zero-based nth match) and state filters `enabled=`, `check
 | `press-key` | `key=enter|search|delete|tab|home|app-switch|volume-up|volume-down` |
 | `back` | none |
 | `scroll` | `direction=up|down|left|right` |
-| `scroll-to` | selector, `direction` (default up), `max-swipes` 1..50 (default 10) |
+| `scroll-to` | selector, `direction` (default up), `max-swipes` 1..50 (default 10), `from-id` (resource id each swipe starts on; default the screen centre), `clear-of-id` (comma-separated ids; keep swiping while the element overlaps any of them, e.g. a pinned panel or floating button), `distance` 10..90 (default 50), `duration` 100..5000 (default 1000) |
 | `long-press` | selector, `duration` 500..10000 (default 800) |
 | `swipe` | `direction`, optional selector, `distance` 10..90 percent (default 50), `duration` 100..5000 (default 300) |
 | `assert-visible` | selector, `timeout` |
 | `assert-not-visible` | selector, `timeout` |
 | `screenshot` | `name` |
+| `screenshot-if-visible` | selector, `name`, optional `timeout` (one check by default) |
+| `if-visible` / `end` | `step if-visible <selector> [timeout=ms]` opens a nested block; `step end` closes it in the same phase. One check by default; unmatched contents are skipped. |
 
 `direction` always means where the finger moves. There is no `double-tap` and no fixed `wait`.
 
@@ -79,6 +88,11 @@ before set-value name=requestId generate=uuid
 before api-request method=GET url="${env.API_BASE_URL}/health" \
   expect-status=200 expect-json.status=UP timeout=30000 retry-interval=1000
 ```
+
+`body-file` is relative to the flow or suite; `@fixtures/x.json` reads `flowsDir/fixtures/x.json`.
+The same layout works standalone under `flows/tests` or `flows/suites`. Validate and runtime share
+no-escape checks (including symlinks and existence); runtime-expression filenames wait for preflight.
+The fixtures root itself must stay inside flowsDir. Validate all files before lengthy API setup.
 
 Supports encoded `query.<name>`, headers, `body` / `body-file`, status/header/duration assertions,
 exact/existence/length/numeric/prefix/suffix JSON assertions, JSON and response-header captures, and
@@ -139,9 +153,9 @@ flowscope snapshot --package <id> --mode zero-code --output <dir>
 flowscope web inspect --package <id> --format json
 flowscope project info|tests|suites|validate [<dir>]
 flowscope test validate <file.flow> [--project <dir>]
-flowscope test run <file|name> [--project <dir>] [--serial <id>] [--output <dir>] [--secrets-file <path>]
+flowscope test run <file|name> [--project <dir>] [--serial <id>] [--output <dir>] [--secrets-file <path>] [--keep-hierarchy]
 flowscope suite validate <file.suite>
-flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>] [--secrets-file <path>]
+flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>] [--secrets-file <path>] [--keep-hierarchy]
 ```
 
 Exit codes: `0` success, `1` a test failed, `2` invalid input. Every run writes `report.json`,
@@ -159,3 +173,8 @@ A failed run names the phase that broke, so fix the right thing. `report.json` s
 CLI prints `FAILED: setup failed · …`, `FAILED: cleanup failed · …`, or the test failure on its own.
 A cleanup failure also exits `1`: the device or the fixtures are dirty even though the test body
 passed, so repair the `after` action rather than the assertions.
+
+Runs check lock/screen state before setup and the focused package before UI work (after an initial
+launch/deep-link when present). Unknown Android state fields are best effort. `--keep-hierarchy`
+saves `evidence/step-NN.xml` for executed steps, linked by `details.hierarchy`; skipped steps have
+none. Failed captures set `details.hierarchyError` without changing the test verdict.

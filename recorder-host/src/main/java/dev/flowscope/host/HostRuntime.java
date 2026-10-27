@@ -423,14 +423,7 @@ final class HostRuntime {
     }
 
     Path resolveRelativeFile(String raw) {
-        Path relative = Path.of(raw);
-        if (relative.isAbsolute() || raw.contains("\\")) throw new IllegalArgumentException("body-file must be a relative path");
-        for (Path segment : relative) if (segment.toString().equals("..")) {
-            throw new IllegalArgumentException("body-file must not contain '..'");
-        }
-        Path resolved = sourceDirectory.resolve(relative).normalize();
-        if (!resolved.startsWith(sourceDirectory)) throw new IllegalArgumentException("body-file escapes the test directory");
-        return resolved;
+        return FlowFiles.resolve(sourceDirectory, raw, "body-file");
     }
 
     static String safeUrl(URI uri) {

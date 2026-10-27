@@ -97,10 +97,7 @@ class FlowExtendedActionsTest {
             step install-apk file="artifacts/missing.apk"
             """);
         FakeAdb adb = new FakeAdb();
-        FlowTestRunner runner = new FlowTestRunner(adb, DEVICE, FlowTestParser.parse(flow), temp,
-            "missing", emptyHttp(), Map.of(), new FakeWeb());
-
-        assertThrows(IllegalArgumentException.class, runner::run);
+        assertThrows(FlowTestParser.ParseError.class, () -> FlowTestParser.parse(flow));
         assertTrue(adb.commands.isEmpty());
     }
 
@@ -138,10 +135,8 @@ class FlowExtendedActionsTest {
             step install-apk file="linked.apk"
             """);
         FakeAdb adb = new FakeAdb();
-        FlowTestRunner runner = new FlowTestRunner(adb, DEVICE, FlowTestParser.parse(flow), temp,
-            "symlink", emptyHttp(), Map.of(), new FakeWeb(), apk -> "com.example.debug");
-
-        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, runner::run);
+        IllegalArgumentException failure = assertThrows(FlowTestParser.ParseError.class,
+            () -> FlowTestParser.parse(flow));
         assertTrue(failure.getMessage().contains("symbolic link"));
         assertTrue(adb.commands.isEmpty());
     }

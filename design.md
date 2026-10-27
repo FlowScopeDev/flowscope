@@ -368,3 +368,21 @@ abstraction; the no-op release twin returns `null` from the same API.
 Publishing uses the Vanniktech Maven Publish plugin against the Central Portal. Signing only turns on
 when `signingInMemoryKey` is supplied, so `publishToMavenLocal` needs no secrets. The Kotlin package
 (`dev.flowscope.agent`) is deliberately independent of the Maven group.
+
+### Replay diagnostics and optional UI
+
+Selectors retain hierarchy ancestry, drawing order and window order. `within-id` scopes matches
+before index/state selection. Tap coverage compares unrelated branches at their common ancestor,
+ignoring the target's own labels and ancestors. Incomplete drawing metadata is best effort.
+Optional `if-visible` / `end` blocks are phase-local, nestable and report skipped contents without
+expanding their arguments. `screenshot-if-visible` uses the same visibility check.
+
+A shared file resolver serves on-disk validation, preflight and reads, including suite hooks and
+`@fixtures` under flowsDir. Literal unsafe paths fail before API setup. Runtime expression paths
+remain preflight inputs. Device readiness checks distinguish locked/off devices and foreign focused
+windows; an intentional launch precedes foreground validation. Slow scroll-to gestures compare only
+scroll-container descendants, with a second fresh dump confirming a suspected end. Dumps clear the
+runner's prior remote XML first so a failed capture cannot return stale content.
+
+With `--keep-hierarchy`, each executed step retains XML and links it in report details. Capture
+failures are diagnostic metadata, not assertion failures; skipped instructions do not capture UI.

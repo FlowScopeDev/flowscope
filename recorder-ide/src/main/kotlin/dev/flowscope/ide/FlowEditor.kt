@@ -109,7 +109,7 @@ internal fun validateSource(source: String, kind: EditorKind): FlowValidation =
 private fun needsSelector(line: String): Boolean =
     listOf(
         "tap", "tap-if-visible", "wait-visible", "assert-visible", "assert-not-visible", "type",
-        "long-press", "scroll-to", "clear-text",
+        "long-press", "scroll-to", "clear-text", "if-visible", "screenshot-if-visible",
     )
         .any { action -> listOf("before", "step", "after").any { line.startsWith("$it $action") } }
 
@@ -120,7 +120,8 @@ private val HeaderDirectives = setOf("flowscope", "name", "package", "mode", "ti
 private val StepKeywords = setOf(
     "before", "step", "after", "launch", "wait-visible", "tap", "tap-if-visible", "type",
     "scroll", "back", "long-press", "swipe", "scroll-to", "press-key", "clear-text", "hide-keyboard",
-    "assert-visible", "assert-not-visible", "screenshot", "api-request",
+    "assert-visible", "assert-not-visible", "screenshot", "screenshot-if-visible",
+    "if-visible", "end", "api-request",
     "set-date", "set-value", "transform", "secret",
     "clear-app-data", "force-stop", "grant-permission", "revoke-permission",
     "reset-app-permissions", "open-deep-link", "assert-deep-link-handler",

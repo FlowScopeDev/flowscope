@@ -118,3 +118,18 @@ Pin a version. Read `report.json` rather than scraping console output or the HTM
 unknown report field as data you do not use yet, not as an error. And run
 `flowscope project validate` in CI, which catches a format problem at the point where it is cheap to
 fix rather than mid-run on a device.
+
+### Replay reliability additions
+
+`within-id` scopes selectors by ancestry; `if-visible` / `end` blocks and `screenshot-if-visible`
+are additive v1 actions. Blocks nest within one lifecycle phase. `body-file=@fixtures/...` resolves
+under flowsDir/fixtures, including standalone test/suite trees. Disk validation now checks literal
+file references with the same existence and symlink containment rules used at runtime; expression
+filenames still require runtime preflight. Invalid input keeps exit code 2.
+
+Tap actions now fail on proven drawing-order/window coverage. Device readiness failures are run
+failures (exit 1), with normal cleanup/reporting. Missing Android metadata remains best effort.
+`scroll-to`'s default duration is now 1000 ms; explicit durations retain their meaning. Early end
+checks use scroll-container children and fresh confirmation; no container means max-swipes only.
+`--keep-hierarchy` is additive on test/suite run: optional `details.hierarchy` and
+`details.hierarchyError` preserve report schema version 2. Skipped steps have no XML.

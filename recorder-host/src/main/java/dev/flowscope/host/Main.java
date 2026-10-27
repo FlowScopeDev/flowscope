@@ -407,7 +407,7 @@ public final class Main {
         }
 
         CliOptions options = CliOptions.parse(args.subList(1, args.size()),
-            Set.of("--serial", "--output", "--project", "--secrets-file"), NO_FLAGS);
+            Set.of("--serial", "--output", "--project", "--secrets-file"), Set.of("--keep-hierarchy"));
         options.requireNoExtraPositionals(1, "test " + action);
         String reference = options.positional(0);
         if (reference == null) {
@@ -428,7 +428,7 @@ public final class Main {
         Device selected = selectDevice(new AdbClient(), serialFor(options, project));
         FlowTestRunner runner = new FlowTestRunner(
             new AdbClient(), selected, flowTest, outputFor(options, project, Path.of("test-runs")),
-            options.path("--secrets-file", null));
+            options.path("--secrets-file", null)).keepHierarchy(options.flag("--keep-hierarchy"));
         if (progressEnabled()) runner.observe(Main::printStepProgress);
         boolean passed = runner.run();
         // Name the phase that broke on stderr: a cleanup failure and a failed assertion are very
@@ -479,7 +479,7 @@ public final class Main {
         }
 
         CliOptions options = CliOptions.parse(args.subList(1, args.size()),
-            Set.of("--serial", "--output", "--project", "--secrets-file"), NO_FLAGS);
+            Set.of("--serial", "--output", "--project", "--secrets-file"), Set.of("--keep-hierarchy"));
         options.requireNoExtraPositionals(1, "suite " + action);
         Optional<FlowProject> project = resolveProject(options);
         Path path = resolveSuite(options.positional(0), project, action);
@@ -505,7 +505,7 @@ public final class Main {
         Device selected = selectDevice(new AdbClient(), serialFor(options, project));
         FlowSuiteRunner runner = new FlowSuiteRunner(new AdbClient(), selected, parsed, path,
             project.orElse(null), outputFor(options, project, Path.of("test-runs")),
-            options.path("--secrets-file", null));
+            options.path("--secrets-file", null)).keepHierarchy(options.flag("--keep-hierarchy"));
         boolean passed = runner.run();
         System.out.println("Report: " + runner.root().resolve("suite-report.json"));
         return passed ? 0 : 1;
@@ -610,6 +610,12 @@ public final class Main {
             Selectors can combine id=, text=, text-contains=, desc=, and class=.
             text-contains= targets an inline substring within a single-line accessibility node.
             tap-if-visible waits up to its timeout and is a no-op when the selector stays absent.
+            within-id=<resource id> restricts matches to descendants of that container, before index.
+            step if-visible <selector> [timeout=ms] ... step end runs a nested block only when visible.
+            Blocks cannot cross before/step/after phases. Without timeout, the condition checks once.
+            screenshot-if-visible <selector> [name=...] [timeout=ms] captures only on a match.
+            Taps and long-presses reject centres covered by later drawing-order branches or windows.
+            Coverage is best effort when UIAutomator omits drawing-order/window metadata.
             Selectors may also carry index=N (zero-based nth match) and the state filters enabled=,
             checked=, focused=, clickable=, and selected= (true|false), for example
             assert-visible id=... checked=true. They narrow a selector and never select on their own.
@@ -617,8 +623,13 @@ public final class Main {
             [duration=500..10000, default 800]; swipe direction= [<selector>] [distance=10..90 percent of
             the screen, default 50] [duration=100..5000, default 300] (with a selector it starts at that
             element, otherwise it is centred on the screen); scroll-to <selector> [direction=up]
-            [max-swipes=1..50, default 10] swipes until the element is visible and fails at the end of
-            the content or at max-swipes.
+            [max-swipes=1..50, default 10] [from-id=<resource id>] [clear-of-id=<id>[,<id>...]]
+            [distance=10..90, default 50] [duration=100..5000, default 1000] swipes until the element is
+            visible and fails at the end of the content or at max-swipes; from-id starts every swipe at
+            that element instead of the screen centre, and clear-of-id keeps swiping while the element
+            overlaps any of those (a panel or floating button drawn over the content).
+            scroll-to also avoids covered tap points. End detection compares a scrollable container's
+            children and confirms with a fresh dump; without a container it uses max-swipes only.
             Input: press-key key=enter|search|delete|tab|home|app-switch|volume-up|volume-down,
             clear-text <selector> (deletes the field's text), and hide-keyboard (Back only while the
             keyboard is showing).
@@ -646,6 +657,13 @@ public final class Main {
             web-clear-storage requires origin= and types=local,session,indexeddb,cache.
             Interface assertions accept name=, method= or methods=, exists=, and source=any|runtime|agent.
             Cookie/storage values are compared in memory and never written to output or reports.
+            body-file paths resolve relative to the source file; @fixtures/x.json resolves under
+            flowsDir/fixtures (or the standalone flows/tests + flows/fixtures tree). Validation and
+            runtime reject missing files, '..', absolute paths and symlink escapes. Runtime filenames
+            containing expressions are checked during preflight. Suite hooks use the same resolver.
+            Runs check screen/lock state before setup, and foreground before UI work (after launch
+            when the flow launches the app). --keep-hierarchy saves XML for every executed step,
+            linked in report details; skipped steps have no hierarchy and dump errors are recorded.
             api-request supports host-side HTTP, headers, body/body-file, query parameters,
             JSON/header assertions and captures, ${env.NAME}, ${secret.name}, ${var.name},
             runtime value/date actions, requirements, and conditional guards.
@@ -736,10 +754,10 @@ public final class Main {
               project info|tests|suites|validate [<directory>]
               test validate <file.flow> [--project <directory>]
               test run <file.flow> [--project <directory>] [--serial <adb-serial>]
-                       [--output <directory>] [--secrets-file <path>]
+                       [--output <directory>] [--secrets-file <path>] [--keep-hierarchy]
               suite validate <file.suite> [--project <directory>]
               suite run [<file.suite>] [--project <directory>] [--serial <adb-serial>]
-                        [--output <directory>] [--secrets-file <path>]
+                        [--output <directory>] [--secrets-file <path>] [--keep-hierarchy]
               schema
 
             Inside a project, `test run login` resolves flows/tests/login.flow and writes to

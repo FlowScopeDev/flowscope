@@ -15,7 +15,7 @@ public final class FlowTestParser {
     private static final Set<String> ACTIONS = Set.of(
         "launch", "wait-visible", "tap", "tap-if-visible", "type", "scroll", "back",
         "long-press", "swipe", "scroll-to", "press-key", "clear-text", "hide-keyboard",
-        "assert-visible", "assert-not-visible", "screenshot", "api-request",
+        "assert-visible", "assert-not-visible", "screenshot", "screenshot-if-visible", "if-visible", "end", "api-request",
         "set-date", "set-value", "transform", "secret",
         "clear-app-data", "force-stop", "grant-permission", "revoke-permission",
         "reset-app-permissions", "open-deep-link", "assert-deep-link-handler",
@@ -34,7 +34,7 @@ public final class FlowTestParser {
     static final long SWIPE_MIN_PERCENT = 10, SWIPE_MAX_PERCENT = 90;
     static final long SCROLL_TO_MAX_SWIPES_LIMIT = 50;
     private static final Set<String> SELECTOR_ACTIONS = Set.of("wait-visible", "tap", "tap-if-visible",
-        "assert-visible", "assert-not-visible", "long-press", "scroll-to", "clear-text");
+        "assert-visible", "assert-not-visible", "long-press", "scroll-to", "clear-text", "if-visible", "screenshot-if-visible");
     private static final Set<String> DIRECTIONS = Set.of("up", "down", "left", "right");
 
     private FlowTestParser() {}
@@ -45,13 +45,15 @@ public final class FlowTestParser {
     }
 
     public static FlowTest parse(Path path) throws IOException {
-        return parseLines(Files.readAllLines(path, StandardCharsets.UTF_8),
+        FlowTest test = parseLines(Files.readAllLines(path, StandardCharsets.UTF_8),
             path.getFileName().toString(), path.toString(), path.toAbsolutePath().getParent());
+        FlowFiles.validate(test.sourceDirectory(), test.steps());
+        return test;
     }
 
     /**
-     * Parses `.flow` source that is not on disk yet, so an editor can validate exactly what
-     * {@code flowscope test validate} would say about the same text. Never reads or writes files.
+     * Parses `.flow` source that is not on disk yet, for syntax validation in an editor. Disk parsing additionally validates referenced files.
+     * Never reads or writes files.
      */
     public static FlowTest parseSource(String source, String name) {
         return parseLines(List.of(source.split("\\R", -1)), name, name,
@@ -68,6 +70,7 @@ public final class FlowTestParser {
         List<FlowTest.Requirement> requirements = new ArrayList<>();
         boolean versionSeen = false;
         int lastPhase = 0;
+        List<FlowTest.Step> blocks = new ArrayList<>();
 
         List<LogicalLine> lines = logicalLines(physicalLines);
         for (LogicalLine logical : lines) {
@@ -97,12 +100,22 @@ public final class FlowTestParser {
                     if (ordinal < lastPhase) {
                         throw error(lineNumber, keyword + " statements are out of lifecycle order");
                     }
+                    if (!blocks.isEmpty() && blocks.getLast().phase() != phase) {
+                        throw error(lineNumber, "if-visible block must end in the same phase");
+                    }
                     lastPhase = ordinal;
-                    steps.add(parseStep(tokens, lineNumber, phase));
+                    FlowTest.Step step = parseStep(tokens, lineNumber, phase);
+                    if (step.action().equals("if-visible")) blocks.add(step);
+                    if (step.action().equals("end")) {
+                        if (blocks.isEmpty()) throw error(lineNumber, "end without if-visible");
+                        blocks.removeLast();
+                    }
+                    steps.add(step);
                 }
                 default -> throw error(lineNumber, "unknown statement: " + keyword);
             }
         }
+        if (!blocks.isEmpty()) throw error(blocks.getLast().line(), "if-visible requires end");
         if (!versionSeen) throw new ParseError(0, "Empty test: " + origin);
         if (packageName == null || packageName.isBlank()) {
             throw new ParseError(0, "Missing package statement in " + origin);
@@ -170,6 +183,16 @@ public final class FlowTestParser {
 
     private static void validateAction(String action, Map<String, String> arguments, int line) {
         validateGuards(arguments, line);
+        if (action.equals("end") && !arguments.isEmpty()) throw error(line, "end accepts no arguments");
+        if (arguments.containsKey("within-id")) {
+            if (!(SELECTOR_ACTIONS.contains(action) || action.equals("type") || action.equals("swipe"))) {
+                throw error(line, "within-id is only valid on selector actions");
+            }
+            if (arguments.get("within-id").isBlank()) throw error(line, "within-id must name a resource id");
+            if (arguments.keySet().stream().noneMatch(UiHierarchy.SELECTOR_KEYS::contains)) {
+                throw error(line, "within-id requires a target selector");
+            }
+        }
         boolean hasSelector = arguments.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);
         if ((SELECTOR_ACTIONS.contains(action)) && !hasSelector) {
             throw error(line,
@@ -440,6 +463,11 @@ public final class FlowTestParser {
     }
 
     private static void validateGestures(String action, Map<String, String> arguments, int line) {
+        for (String key : List.of("from-id", "clear-of-id")) {
+            if (arguments.containsKey(key) && !action.equals("scroll-to")) {
+                throw error(line, key + " is only valid on scroll-to");
+            }
+        }
         switch (action) {
             case "long-press" -> boundedMillis(arguments, "duration", LONG_PRESS_MIN_MILLIS, LONG_PRESS_MAX_MILLIS, line);
             case "swipe" -> {
@@ -450,6 +478,13 @@ public final class FlowTestParser {
             case "scroll-to" -> {
                 requireDirection(action, arguments, line, false);
                 boundedMillis(arguments, "max-swipes", 1, SCROLL_TO_MAX_SWIPES_LIMIT, line);
+                boundedMillis(arguments, "distance", SWIPE_MIN_PERCENT, SWIPE_MAX_PERCENT, line);
+                boundedMillis(arguments, "duration", SWIPE_MIN_MILLIS, SWIPE_MAX_MILLIS, line);
+                for (String key : List.of("from-id", "clear-of-id")) {
+                    if (arguments.containsKey(key) && arguments.get(key).isBlank()) {
+                        throw error(line, key + " must name a resource id");
+                    }
+                }
             }
             case "press-key" -> {
                 String key = arguments.get("key");

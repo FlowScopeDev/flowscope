@@ -15,8 +15,16 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 - Runs started from the CLI appear live in the IDE's **Runs** rail. A run in flight keeps a
   `progress.jsonl` in its report directory (step and test positions and literal action names only),
   which is deleted once the report is written; a run whose process died reads as interrupted.
+- `scroll-to from-id=<resource id>` starts every swipe at that element instead of the screen centre,
+  so a pinned panel over the lower half of the screen cannot swallow the swipe.
+- `scroll-to clear-of-id=<id>[,<id>...]` keeps swiping while the element overlaps any of those, so a
+  tap after it is not swallowed by a panel or floating button drawn over the content; `scroll-to` also takes `distance=`
+  and `duration=` like `swipe`.
 
-Nothing yet.
+### Fixed
+
+- Selectors skip nodes with no area. Compose reports a node scrolled out of its viewport as
+  `[0,0][0,0]`, which made `assert-visible` and `scroll-to` treat an off-screen element as visible.
 
 ## [1.0.0] - 2026-10-19
 
