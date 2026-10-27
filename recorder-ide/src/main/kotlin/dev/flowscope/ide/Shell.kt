@@ -1947,17 +1947,40 @@ private fun RailRunRow(report: RunReport, onOpen: () -> Unit, onReveal: () -> Un
     ) {
         Box(
             Modifier.size(6.dp).clip(CircleShape)
-                .background(if (report.isPassed()) SignalGreen else SignalRed),
+                .background(
+                    when {
+                        report.isRunning() -> SignalAmber
+                        report.isInterrupted() -> TextLow
+                        report.isPassed() -> SignalGreen
+                        else -> SignalRed
+                    },
+                ),
         )
         Spacer(Modifier.width(7.dp))
-        Text(
-            report.name(),
-            color = TextMid,
-            fontSize = 11.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                report.name(),
+                color = TextMid,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Spelled out, not just coloured: a live or abandoned run must read as one.
+            val detail = when {
+                report.isRunning() -> report.activity()?.let { "Running · $it" } ?: "Running"
+                report.isInterrupted() -> "Interrupted · no report"
+                else -> null
+            }
+            detail?.let {
+                Text(
+                    it,
+                    color = TextLow,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         Spacer(Modifier.width(6.dp))
         Text(
             "${report.passed()}/${report.total()}",

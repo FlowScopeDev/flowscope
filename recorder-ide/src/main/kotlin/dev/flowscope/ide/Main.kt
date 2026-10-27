@@ -559,6 +559,36 @@ private fun FlowScopeApp(
         }
     }
 
+    // Runs started anywhere — the CLI, CI on this machine, another IDE window — land in the same
+    // reports directory. Only file metadata is read each second; the run list is re-read when it
+    // changes. A running row also re-reads every few seconds without a change, because a CLI that
+    // was killed stops writing rather than saying so. Never notifies: CLI runs must not produce
+    // desktop notifications, and the IDE's own runs already post theirs.
+    LaunchedEffect(projectState.reportsDirectory) {
+        val directory = projectState.reportsDirectory
+        var seen: String? = null
+        var unchangedTicks = 0
+        while (isActive) {
+            val stamp = withContext(Dispatchers.IO) {
+                runCatching { RunReport.fingerprint(directory, RunListLimit) }.getOrNull()
+            }
+            val stale = projectState.runs.any { it.isRunning() } && ++unchangedTicks >= 3
+            if (stamp != null && (stamp != seen || stale)) {
+                if (seen != null || stale) {
+                    val runs = withContext(Dispatchers.IO) {
+                        runCatching { RunReport.list(directory, RunListLimit) }.getOrNull()
+                    }
+                    if (runs != null && directory == projectState.reportsDirectory) {
+                        projectState.runs = runs
+                    }
+                }
+                seen = stamp
+                unchangedTicks = 0
+            }
+            delay(1_000)
+        }
+    }
+
     // ------------------------------------------------------------------- files
     //
     // Ahead of the project commands because opening a project now opens a file: a switch restores

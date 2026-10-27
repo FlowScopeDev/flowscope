@@ -210,6 +210,17 @@ Lifecycle instructions are grouped as `BEFORE`, `TEST`, and `AFTER` in card view
 their offline HTML report from the rail and retain a separate reveal-folder action. JSON remains the
 machine-readable source for the IDE, while JUnit output supports CI.
 
+The rail's runs are whatever the reports directory holds, wherever they were started. Every runner —
+CLI or IDE — appends `progress.jsonl` to its run directory while in flight (a start line with the
+writer's pid and process start time, then one line per step, and per test for a suite; never an
+argument value) and deletes it once the report is written. A suite's child tests write into the
+suite's file, not their own. The IDE stats the newest run directories once a second and re-reads the
+list only when that metadata changes, plus every few seconds while a row is running, because a killed
+CLI stops writing rather than saying so. A row reads `Running · <test> · step n/N · <action>` while
+live and `Interrupted · no report` once its writer is gone (pid and start time no longer match) or it
+ended on an exception. Both are worded, not just coloured. Watching is display-only: the IDE never
+stops, controls, or notifies for a run it did not start.
+
 Tests and suites nested into subdirectories render as a collapsible tree rather than a flat list of
 full paths: a folder row carries a worded disclosure state (`Expand`/`Collapse`, never colour alone)
 and indents its contents one level, so the rail reads the same shape as the project's own

@@ -10,6 +10,12 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ## [Unreleased]
 
+### Added
+
+- Runs started from the CLI appear live in the IDE's **Runs** rail. A run in flight keeps a
+  `progress.jsonl` in its report directory (step and test positions and literal action names only),
+  which is deleted once the report is written; a run whose process died reads as interrupted.
+
 Nothing yet.
 
 ## [1.0.0] - 2026-10-19

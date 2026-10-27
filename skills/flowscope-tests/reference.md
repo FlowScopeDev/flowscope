@@ -148,6 +148,8 @@ Exit codes: `0` success, `1` a test failed, `2` invalid input. Every run writes 
 `report.html` and `junit.xml`. A suite run's `suite-report.html` also embeds each test's
 `screenshot`/`web-screenshot` evidence as a thumbnail gallery under that test's row, linked to the
 full-size file, and `suite-report.json` carries the same list as a `screenshots` array per test.
+While a run is in flight its directory also holds a transient `progress.jsonl` (the IDE shows it
+live); it is deleted when the report is written, so never parse it — read the report.
 `flowscope version` prints the build, and `flowscope doctor` leads
 with it — include both in a bug report. What these formats and exit codes promise not to break is
 recorded in `COMPATIBILITY.md`.

@@ -40,6 +40,9 @@ public final class FlowTestRunner {
     private WebViewState previousWebState;
     private Set<String> sweepBefore;
     private Consumer<StepProgress> listener = progress -> {};
+    // A suite child reports through the suite's own progress file instead.
+    private boolean writesProgressFile = true;
+    private RunProgress progressFile;
 
     /**
      * Progress for a UI: one event before a step runs and one when it finishes. Never carries an
@@ -131,6 +134,18 @@ public final class FlowTestRunner {
         return this;
     }
 
+    /** A suite's child test: its steps go into the suite's `progress.jsonl`, not one of its own. */
+    FlowTestRunner withoutProgressFile() {
+        this.writesProgressFile = false;
+        return this;
+    }
+
+    private void progress(StepProgress event) {
+        // File first: a listener may be what reads it.
+        if (progressFile != null) progressFile.step(event);
+        listener.accept(event);
+    }
+
     /** Metadata-only cookie/storage changes observed at WebView action boundaries. */
     public List<String> webChanges() {
         return results.stream().map(StepResult::details).map(details -> details.get("webChanges"))
@@ -194,6 +209,7 @@ public final class FlowTestRunner {
             sweepHook = new Thread(() -> sweepUiautomator(uiautomatorBefore), "flowscope-uiautomator-sweep");
             Runtime.getRuntime().addShutdownHook(sweepHook);
             sweepBefore = uiautomatorBefore;
+            if (writesProgressFile) progressFile = RunProgress.start(root, "test", test.name(), test.steps().size());
             Instant started = Instant.now();
             if (test.mode() == CaptureMode.INSTRUMENTED) {
                 agentEvents = AgentEventCapture.start(adb, device.serial(), test.packageName());
@@ -206,8 +222,10 @@ public final class FlowTestRunner {
             boolean passed = before && main && after;
             if (agentEvents != null) agentEvents.stop();
             writeReports(passed, started, Instant.now());
+            if (progressFile != null) progressFile.finish();
             return passed;
         } finally {
+            if (progressFile != null) progressFile.interrupt();
             web.close();
             if (sweepHook != null) {
                 sweepUiautomator(sweepBefore);
@@ -263,7 +281,7 @@ public final class FlowTestRunner {
             if (!values.conditionsPass(step.arguments())) {
                 addSkipped(i, step, "condition not met"); continue;
             }
-            listener.accept(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "running"));
+            progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "running"));
             long started = System.nanoTime();
             Instant stepStarted = Instant.now();
             // Any other step can change the UI before it looks, so it must not see a remembered dump.
@@ -275,7 +293,7 @@ public final class FlowTestRunner {
                 results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.action());
-                listener.accept(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed"));
+                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed"));
             } catch (Exception failure) {
                 passed = false;
                 captureEvidence("failure-" + String.format("%02d", i + 1));
@@ -283,7 +301,7 @@ public final class FlowTestRunner {
                 results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, Map.of(),
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.action(), message);
-                listener.accept(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed"));
+                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed"));
                 if (stopOnFailure) stopped = true;
             } finally {
                 stepWindows.put(i + 1, new Instant[] {stepStarted, Instant.now()});
@@ -295,7 +313,7 @@ public final class FlowTestRunner {
     private void addSkipped(int i, FlowTest.Step step, String reason) {
         results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of(), 0, 0));
         System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.action());
-        listener.accept(new StepProgress(i + 1, test.steps().size(), step.phase().value(), step.action(),
+        progress(new StepProgress(i + 1, test.steps().size(), step.phase().value(), step.action(),
             step.line(), "skipped"));
     }
 

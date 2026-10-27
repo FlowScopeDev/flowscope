@@ -38,8 +38,10 @@ command disagree, the command is right and this page is a bug.
    is the one thing that is never done, because a checked-in test cannot be re-reviewed.
 
 What is explicitly *not* promised: the wording of human-readable messages, the HTML report's layout,
-timing and the dump-count instrumentation in reports, the on-disk shape of `~/.flowscope/`, and the
-recording session format, which is an internal capture artifact rather than a durable input.
+timing and the dump-count instrumentation in reports, the on-disk shape of `~/.flowscope/`, the
+recording session format, which is an internal capture artifact rather than a durable input, and
+`progress.jsonl`, the transient file a run keeps while in flight so the IDE can show it live. It is
+deleted once the report is written; read the report instead.
 
 ## Exit codes
 

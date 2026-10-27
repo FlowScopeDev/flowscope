@@ -193,6 +193,20 @@ public final class FlowSuiteRunner {
             }
             runtimeValues.preflightReferences(Files.readString(file, StandardCharsets.UTF_8));
         }
+        RunProgress progressFile = RunProgress.start(root, "suite", suite.name(), resolved.size());
+        try {
+            boolean passed = runWithProgress(started, suiteBuiltins, runtimeValues, hostRuntime,
+                progressFile);
+            progressFile.finish();
+            return passed;
+        } finally {
+            progressFile.interrupt();
+        }
+    }
+
+    private boolean runWithProgress(Instant started, Map<String, String> suiteBuiltins,
+        RuntimeValues runtimeValues, HostRuntime hostRuntime, RunProgress progressFile)
+        throws Exception {
         List<HookOutcome> hooks = new ArrayList<>();
         boolean setupPassed = runHooks(FlowTest.Phase.BEFORE, true, runtimeValues, hostRuntime, hooks);
         List<TestOutcome> outcomes = new ArrayList<>();
@@ -210,7 +224,7 @@ public final class FlowSuiteRunner {
             }
 
             System.out.printf("TEST %02d/%02d  %s%n", number, total, current.entry().reference());
-            listener.accept(new Progress(number, total, current.entry().reference(), "running"));
+            reportProgress(progressFile, new Progress(number, total, current.entry().reference(), "running"));
 
             Instant testStarted = Instant.now();
             boolean passed;
@@ -218,7 +232,8 @@ public final class FlowSuiteRunner {
             List<String> teardownErrors = List.of();
             FlowTestRunner runner =
                 new FlowTestRunner(adb, device, current.test(), root, current.directoryName(), http,
-                    environment, secretSources, runtimeValues, suiteBuiltins);
+                    environment, secretSources, runtimeValues, suiteBuiltins)
+                    .withoutProgressFile().observe(progressFile::step);
             try {
                 passed = runner.run();
                 // A failed step assertion returns false rather than throwing, so the reason has to
@@ -243,7 +258,7 @@ public final class FlowSuiteRunner {
 
             System.out.printf("DONE %02d/%02d  %s · %s · %.1fs%n",
                 number, total, status, current.test().name(), elapsed / 1000.0);
-            listener.accept(new Progress(number, total, current.entry().reference(), status));
+            reportProgress(progressFile, new Progress(number, total, current.entry().reference(), status));
 
             if (!passed && !suite.continueOnFailure()) stopped = true;
         }
@@ -266,6 +281,11 @@ public final class FlowSuiteRunner {
             allPassed ? "passed" : "failed",
             totals.passed(), totals.failed(), totals.skipped(), totals.total());
         return allPassed;
+    }
+
+    private void reportProgress(RunProgress progressFile, Progress progress) {
+        progressFile.test(progress);
+        listener.accept(progress);
     }
 
     private boolean runHooks(FlowTest.Phase phase, boolean stopOnFailure, RuntimeValues values,

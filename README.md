@@ -233,6 +233,16 @@ rather than recorded delays. Every run writes `report.json`, an offline `report.
 flow is not a blank wait; it stays off when stdout is piped, such as in CI. The IDE's run bar shows
 the same step-by-step progress live, as worded text rather than colour.
 
+Runs started from the CLI show up in the IDE too. While a test or suite runs, its report directory
+holds a `progress.jsonl` (literal actions, phases, line numbers and suite references only — never
+argument values) that is replaced by the report when the run ends. The IDE checks its reports
+directory every second, so a run started with `flowscope test run` or `suite run` against the open
+project appears in the **Runs** rail as `Running · step 4/12 · tap` and then as its result. A run whose
+process died before writing a report reads `Interrupted · no report`. The IDE only displays these
+runs; it never controls them or sends a desktop notification for them. Outside a project the CLI
+writes to `./test-runs`, which the IDE does not watch — pass `--output ~/.flowscope/test-runs` to see
+such a run with no project open.
+
 Each of the three phases is reported distinctly, because a leaked fixture and a failed assertion
 need different fixes. `report.json` separates `primaryFailure` (setup or test) from
 `teardownFailures`; `report.html` gives cleanup its own **Cleanup failures** heading; `junit.xml`

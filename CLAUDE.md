@@ -218,6 +218,13 @@ control is disabled so the user can still understand it. Prefer the established 
 target and use action labels such as “Move up”, “Duplicate”, “Capture checkpoint”, or “Settings”;
 do not rely on an icon's shape or colour to communicate purpose.
 
+Every runner, CLI or IDE, keeps `progress.jsonl` (`RunProgress`) in its run directory while in
+flight and deletes it after the report is written; a suite's child tests write into the suite's file.
+It carries only what `StepProgress` carries — never argument values — plus the writer's pid and
+process start time, so a dead writer reads as `interrupted`. The IDE polls `RunReport.fingerprint`
+once a second and lists in-flight runs from any source. It only displays them: it never controls or
+notifies for a run it did not start. The file is not public surface (`COMPATIBILITY.md`).
+
 Runs started from the IDE post one best-effort operating-system notification after reports have been
 written. Distinguish a single test from a regression suite, include aggregate suite counts, and keep
 failure details inside FlowScope rather than exposing them in notification text. Notification delivery
