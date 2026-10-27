@@ -197,6 +197,11 @@ internal class ShellState {
     /** Set when an action would discard unsaved work and is waiting on the user's answer. */
     var pendingConfirm by mutableStateOf<PendingConfirm?>(null)
 
+    fun selectRun(directory: Path) {
+        selection = Selection.Run(directory)
+        drawerOpen = true
+    }
+
     fun toggleSettings() {
         if (surface == WorkSurface.Settings) {
             surface = surfaceBeforeSettings

@@ -241,7 +241,10 @@ project appears in the **Runs** rail as `Running · step 4/12 · tap` and then a
 process died before writing a report reads `Interrupted · no report`. The IDE only displays these
 runs; it never controls them or sends a desktop notification for them. Outside a project the CLI
 writes to `./test-runs`, which the IDE does not watch — pass `--output ~/.flowscope/test-runs` to see
-such a run with no project open.
+such a run with no project open. Clicking a run selects it in the **Detail** pane and opens
+that pane if hidden. It shows the test/suite name, status, current test and step, pass counts, start
+time, and run folder, refreshing while it runs and switching to the final result on completion.
+Use **Open HTML report** when available or **Reveal run folder** from the pane.
 
 Each of the three phases is reported distinctly, because a leaked fixture and a failed assertion
 need different fixes. `report.json` separates `primaryFailure` (setup or test) from

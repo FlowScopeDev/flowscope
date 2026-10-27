@@ -38,6 +38,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1054,7 +1055,7 @@ internal fun ContextDrawer(
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             when (selection) {
                 is Selection.None -> Text(
-                    "Select an event, step, or checkpoint to inspect it here.",
+                    "Select a run, event, step, or checkpoint to inspect it here.",
                     color = TextLow,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
@@ -1104,6 +1105,7 @@ internal fun ContextDrawer(
                         CopyButton("Copy selector", it)
                     }
                 }
+                is Selection.Run -> RunDetailContent(selection.directory)
                 is Selection.Checkpoint -> {
                     DrawerField("CHECKPOINT", selection.artifact.sequence.toString())
                     DrawerField("REASON", selection.artifact.reason)
@@ -1137,7 +1139,7 @@ internal fun ContextDrawer(
 }
 
 @Composable
-private fun DrawerField(label: String, value: String) {
+internal fun DrawerField(label: String, value: String) {
     Column(Modifier.padding(bottom = 12.dp)) {
         Text(
             label,
@@ -1710,6 +1712,7 @@ internal fun FlowFileRail(
     onCreateProject: () -> Unit,
     onOpenRun: (Path) -> Unit,
     onRevealRun: (Path) -> Unit,
+    selectedRun: Path? = null,
 ) {
     Column(
         Modifier.width(RailWidth).fillMaxHeight().background(Ink150)
@@ -1767,6 +1770,7 @@ internal fun FlowFileRail(
             runs.forEach { report ->
                 RailRunRow(
                     report,
+                    selected = report.directory() == selectedRun,
                     onOpen = { onOpenRun(report.directory()) },
                     onReveal = { onRevealRun(report.directory()) },
                 )
@@ -1939,9 +1943,11 @@ private fun RailRow(
 }
 
 @Composable
-private fun RailRunRow(report: RunReport, onOpen: () -> Unit, onReveal: () -> Unit) {
+private fun RailRunRow(report: RunReport, selected: Boolean, onOpen: () -> Unit, onReveal: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen)
+        Modifier.fillMaxWidth().background(if (selected) Ink250 else Color.Transparent)
+            .semantics { this.selected = selected }
+            .clickable(onClick = onOpen)
             .padding(horizontal = 12.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -244,6 +244,13 @@ argument value: only the literal action name, phase, and line number from the `.
 shape `flowscope test run` prints as one line per step at an interactive terminal (suppressed when
 stdout is piped, as in CI).
 
+Clicking a Runs rail row selects and highlights that run and opens the Detail pane, preserving the
+editor buffer. The pane observes the selected run directory once a second, including runs started
+from the CLI: name, status, current test/step, passed/total counts, start time and folder are visible
+before a final report exists. It follows the same selection through completion or interruption.
+Opening the HTML report and revealing the folder are explicit pane actions; clicking an active run
+never opens a file manager. Observing a run does not control it or produce notifications.
+
 When an IDE-started run completes, FlowScope posts one native system notification after its reports
 are ready. A test notification names the test and its result. A regression notification names the
 suite and summarizes passed, failed, and skipped tests. Detailed failures stay in FlowScope and the

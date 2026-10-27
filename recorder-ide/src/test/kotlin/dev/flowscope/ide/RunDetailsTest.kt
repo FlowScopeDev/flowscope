@@ -1,0 +1,112 @@
+package dev.flowscope.ide
+
+import dev.flowscope.host.RunProgress
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardOpenOption.APPEND
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.io.TempDir
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class RunDetailsTest {
+    @TempDir lateinit var directory: Path
+
+    @Test
+    fun `clicking a run opens its drawer without changing the editor surface`() {
+        val shell = ShellState().apply {
+            surface = WorkSurface.Flow
+            drawerOpen = false
+            selection = Selection.Step(2, "step launch")
+        }
+        shell.selectRun(directory)
+        assertTrue(shell.drawerOpen)
+        assertEquals(Selection.Run(directory), shell.selection)
+        assertEquals(WorkSurface.Flow, shell.surface)
+
+        val other = directory.resolve("other-run")
+        shell.selectRun(other)
+        assertEquals(Selection.Run(other), shell.selection)
+    }
+
+    @Test
+    fun `selected test updates through progress completion and later HTML creation`() = runBlocking {
+        start("test", 2)
+        val snapshots = withTimeout(10_000) {
+            watchRunDetails(directory, 10).distinctUntilChanged().onEach { details ->
+                val report = assertNotNull(details.report)
+                when {
+                    report.isRunning && report.activity() == null -> append(
+                        """{"event":"step","number":2,"total":2,"phase":"test","action":"tap","line":8,"status":"running"}""",
+                    )
+                    report.isRunning -> {
+                        Files.writeString(directory.resolve("report.json"), """
+                            {"name":"Example","status":"passed","steps":[{"status":"passed"},{"status":"passed"}]}
+                        """.trimIndent())
+                        Files.delete(directory.resolve(RunProgress.FILE))
+                    }
+                    details.htmlReport == null -> Files.writeString(directory.resolve("report.html"), "report")
+                }
+            }.take(4).toList()
+        }
+        assertEquals("step 2/2 · tap", snapshots[1].report!!.activity())
+        assertTrue(snapshots[2].report!!.isPassed)
+        assertEquals(2, snapshots[2].report!!.passed())
+        assertNull(snapshots[2].htmlReport)
+        assertEquals(directory.resolve("report.html"), snapshots[3].htmlReport)
+    }
+
+    @Test
+    fun `suite details show child test and step then the final suite result`() = runBlocking {
+        start("suite", 3)
+        append("""{"event":"test","number":2,"total":3,"reference":"tests/checkout.flow","status":"running"}""")
+        append("""{"event":"step","number":5,"total":12,"phase":"test","action":"assert-visible","line":10,"status":"running"}""")
+        val snapshots = withTimeout(10_000) {
+            watchRunDetails(directory, 10).distinctUntilChanged().onEach { details ->
+                if (details.report?.isRunning == true) {
+                    Files.writeString(directory.resolve("suite-report.json"), """
+                        {"name":"Example","status":"failed","totals":{"total":3,"passed":1,"failed":1,"skipped":1}}
+                    """.trimIndent())
+                    Files.writeString(directory.resolve("suite-report.html"), "report")
+                    Files.delete(directory.resolve(RunProgress.FILE))
+                }
+            }.take(2).toList()
+        }
+        val live = assertNotNull(snapshots.first().report)
+        assertTrue(live.isSuite)
+        assertEquals("test 2/3 · tests/checkout.flow · step 5/12 · assert-visible", live.activity())
+        val finished = assertNotNull(snapshots.last().report)
+        assertEquals("failed", finished.status())
+        assertFalse(finished.isRunning)
+        assertEquals(1, finished.passed())
+        assertEquals(directory.resolve("suite-report.html"), snapshots.last().htmlReport)
+    }
+
+    @Test
+    fun `missing or interrupted runs remain inspectable without a finished report`() {
+        assertNull(RunDetails.read(directory).report)
+        start("test", 2)
+        append("""{"event":"end","status":"interrupted"}""")
+        val interrupted = RunDetails.read(directory)
+        assertTrue(assertNotNull(interrupted.report).isInterrupted)
+        assertNull(interrupted.htmlReport)
+    }
+
+    private fun start(kind: String, total: Int) {
+        Files.writeString(directory.resolve(RunProgress.FILE),
+            """{"event":"start","kind":"$kind","name":"Example","total":$total,"pid":${ProcessHandle.current().pid()},"startedAt":"2026-10-27T10:00:00Z"}""" + "\n")
+    }
+
+    private fun append(event: String) {
+        Files.writeString(directory.resolve(RunProgress.FILE), "$event\n", APPEND)
+    }
+}

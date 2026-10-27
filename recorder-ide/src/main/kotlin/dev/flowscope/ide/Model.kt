@@ -41,6 +41,7 @@ internal sealed interface Selection {
     data object None : Selection
     data class Event(val event: CapturedEvent) : Selection
     data class Step(val number: Int, val source: String) : Selection
+    data class Run(val directory: Path) : Selection
     data class Checkpoint(val artifact: EvidenceArtifact) : Selection
     data class WebMetadata(val title: String, val fields: List<Pair<String, String>>) : Selection
 
@@ -97,6 +98,7 @@ internal data class FlowRail(
     val onCreateProject: () -> Unit,
     val onOpenRun: (Path) -> Unit,
     val onRevealRun: (Path) -> Unit,
+    val selectedRun: Path? = null,
 )
 
 /**

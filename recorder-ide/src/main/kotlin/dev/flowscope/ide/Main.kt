@@ -1808,14 +1808,8 @@ private fun FlowScopeApp(
         onCreateProject = {
             chooseDirectory(window, "Create a FlowScope project")?.let { createProject(it, null) }
         },
-        onOpenRun = { directory ->
-            scope.launch(Dispatchers.IO) {
-                val report = listOf(directory.resolve("suite-report.html"), directory.resolve("report.html"))
-                    .firstOrNull { Files.isRegularFile(it) }
-                if (report != null) openWithDefaultApplication(report)
-                else revealInFileManager(directory)
-            }
-        },
+        onOpenRun = shell::selectRun,
+        selectedRun = (shell.selection as? Selection.Run)?.directory,
         onRevealRun = { directory ->
             scope.launch(Dispatchers.IO) { revealInFileManager(directory) }
         },
@@ -2674,6 +2668,7 @@ private fun FlowEditorSurface(
                 onCreateProject = rail.onCreateProject,
                 onOpenRun = rail.onOpenRun,
                 onRevealRun = rail.onRevealRun,
+                selectedRun = rail.selectedRun,
             )
             VerticalDivider(Modifier.fillMaxHeight().width(1.dp), color = Border)
         }
