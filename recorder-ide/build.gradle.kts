@@ -93,6 +93,10 @@ compose.desktop {
 // released — the release DMG we actually ship is built from createReleaseDistributable's output,
 // so it needs the same treatment as the local createDistributable one.
 tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
+    // Apple Development certificates work for local installs, but Compose's distribution signer
+    // only accepts Developer ID/App Store identities. Keep this opt-in local path separate.
+    val localSigningIdentity = providers.gradleProperty("flowscope.mac.localSigningIdentity")
+    inputs.property("flowscope.mac.localSigningIdentity", localSigningIdentity.orElse("-"))
     doLast {
         if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true)) return@doLast
         if (providers.gradleProperty("flowscope.mac.signingIdentity").isPresent) return@doLast
@@ -104,6 +108,10 @@ tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDi
             check(exit == 0) { "Command failed ($exit): ${command.joinToString(" ")}" }
         }
         runTool("xattr", "-cr", app.absolutePath)
-        runTool("codesign", "--force", "--deep", "--sign", "-", app.absolutePath)
+        val identity = localSigningIdentity.orNull?.trim() ?: "-"
+        check(identity.isNotEmpty()) { "flowscope.mac.localSigningIdentity must not be blank" }
+        runTool("codesign", "--force", "--deep", "--sign", identity,
+            "--timestamp=none", "--preserve-metadata=entitlements", app.absolutePath)
+        runTool("codesign", "--verify", "--deep", "--strict", app.absolutePath)
     }
 }

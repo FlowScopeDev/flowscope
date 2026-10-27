@@ -120,6 +120,10 @@ rather than only disappearing, so a disabled control still explains itself.
 
 ### Switching projects
 
+macOS controls access to projects in protected folders such as Documents. Local packaged builds
+can use an Apple Development signing identity to preserve permission continuity across rebuilds
+(see `INSTALL.md`); changing identities can require another system permission prompt.
+
 A project owns the target application ID and the open file, so switching swaps both. The ID comes
 from the new project's `defaults.package`, or, when it declares none, from the `applicationId` in
 the project's own Gradle build — detected and offered in Project settings, never written back

@@ -301,6 +301,12 @@ the IDE's `packageVersion`, the generated `version.properties` behind `FlowScope
 release workflow all read it from there; never add a second copy. `flowscope version` and the IDE's
 Settings → About report it, and `flowscope doctor` leads with it.
 
+Local macOS installs can opt into an existing Apple Development certificate
+using `flowscope.mac.localSigningIdentity` in user-local Gradle properties. Track it as a packaging
+input and fail on signing errors; never silently downgrade to ad-hoc signing. The separate
+`flowscope.mac.signingIdentity` distribution setting takes precedence. Keep personal identities out
+of the repository. Stable certificate signing avoids changing the app's privacy identity on each build.
+
 macOS desktop releases are tagged `v<flowscope.version>`, which triggers
 `.github/workflows/release-macos-dmg.yml` to build `packageReleaseDmg` and `:recorder-host:distZip`,
 checksum both, render `release/release-notes-template.md`, and attach everything to a GitHub

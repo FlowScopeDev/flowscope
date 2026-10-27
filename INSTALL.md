@@ -138,3 +138,23 @@ into a bug report.
 On macOS a local `createDistributable` build is stripped of inherited quarantine metadata and
 ad-hoc signed, so Finder will open it on the machine that built it. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Repeated Documents-folder permission prompts
+
+Ad-hoc signatures change identity when the app is rebuilt, so macOS may ask for folder access
+again. Quit older copies (including apps launched from a mounted DMG) and use only the installed
+copy in `/Applications`. Switching signing identities requires a fresh Allow decision.
+
+For local builds, use an existing Apple Development certificate to keep the signing identity stable:
+
+```bash
+security find-identity -v -p codesigning
+./gradlew :recorder-ide:createReleaseDistributable \
+  -Pflowscope.mac.localSigningIdentity='<certificate SHA-1 from the command above>'
+```
+
+To reuse it across builds, set `flowscope.mac.localSigningIdentity` in your user-local
+`~/.gradle/gradle.properties`; do not commit a personal certificate selection. Signing failures stop
+the build instead of falling back to ad-hoc signing. This is for your own Mac, not notarized
+distribution; `flowscope.mac.signingIdentity` remains the Developer ID distribution setting and
+takes precedence. No Full Disk Access grant or privacy database reset is needed for this setup.

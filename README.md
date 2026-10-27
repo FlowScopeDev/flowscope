@@ -83,6 +83,8 @@ working-directory default.
 On macOS, `run-flowscope.command` launches the development build. A Finder-distributed `.app` still
 requires Developer ID signing and notarization. Local `createDistributable` builds are stripped of
 inherited quarantine/provenance metadata and ad-hoc signed so Finder can open them on the build Mac.
+For a stable local identity across rebuilds, set `flowscope.mac.localSigningIdentity` to an existing
+Apple Development certificate; see [folder permission troubleshooting](INSTALL.md#repeated-documents-folder-permission-prompts).
 Compose Desktop produces Windows packages from a Windows host and macOS packages from a Mac host.
 
 ## Install the desktop app
