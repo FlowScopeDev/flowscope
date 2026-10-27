@@ -28,6 +28,10 @@ final class DeviceReadiness {
             // Window focus takes precedence: a VPN/password dialog can cover a resumed activity.
             String windows = adb.run(List.of("-s", serial, "shell", "dumpsys", "window", "windows")).stdout();
             String actual = AdbClient.parseForegroundPackage(windows);
+            if (actual == null) {
+                String displays = adb.run(List.of("-s", serial, "shell", "dumpsys", "window", "displays")).stdout();
+                actual = AdbClient.parseForegroundPackage(displays);
+            }
             if (actual == null) actual = adb.foregroundPackage(serial);
             if (actual != null && !actual.equals(packageName)) {
                 throw new IllegalStateException("foreground is " + actual + "; expected " + packageName);

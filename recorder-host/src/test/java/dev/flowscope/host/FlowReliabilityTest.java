@@ -237,6 +237,24 @@ class FlowReliabilityTest {
         assertTrue(Files.readString(locked.root().resolve("suite-report.json")).contains("device is locked"));
     }
 
+    @Test void focusedDisplayDialogTakesPrecedenceOverResumedApp() {
+        FakeAdb adb = new FakeAdb() {
+            @Override public CommandResult run(List<String> args, long timeout) {
+                String command = String.join(" ", args);
+                if (command.endsWith("window displays")) {
+                    return new CommandResult(0, "mCurrentFocus=Window{abc u0 com.pritunl/.Password}", "");
+                }
+                if (command.endsWith("activity activities")) {
+                    return new CommandResult(0, "mResumedActivity=ActivityRecord{abc u0 com.example/.Main}", "");
+                }
+                return super.run(args, timeout);
+            }
+        };
+        Exception failure = assertThrows(IllegalStateException.class,
+            () -> DeviceReadiness.check(adb, DEVICE.serial(), "com.example", true));
+        assertTrue(failure.getMessage().contains("foreground is com.pritunl"));
+    }
+
     private FlowTestRunner runner(FakeAdb adb, FlowTest test) throws Exception {
         return new FlowTestRunner(adb, DEVICE, test, temp, "run-" + System.nanoTime(),
             (m, u, h, b, t) -> { throw new AssertionError("Unexpected HTTP request"); }, Map.of());
