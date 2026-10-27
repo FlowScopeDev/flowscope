@@ -133,3 +133,9 @@ failures (exit 1), with normal cleanup/reporting. Missing Android metadata remai
 checks use scroll-container children and fresh confirmation; no container means max-swipes only.
 `--keep-hierarchy` is additive on test/suite run: optional `details.hierarchy` and
 `details.hierarchyError` preserve report schema version 2. Skipped steps have no XML.
+
+The IDE's complete step list uses internal `run-plan.json` metadata plus `progress.jsonl` hook and
+step events. The plan contains no step arguments or runtime values and remains after completion.
+These observer files are not public interchange formats; final JSON/HTML/JUnit report schemas are
+unchanged. Older completed reports still show their recorded steps; older active runs cannot name
+unobserved future steps without a saved plan.

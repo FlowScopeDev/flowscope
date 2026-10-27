@@ -248,6 +248,12 @@ Clicking a Runs rail row selects and highlights that run and opens the Detail pa
 editor buffer. The pane observes the selected run directory once a second, including runs started
 from the CLI: name, status, current test/step, passed/total counts, start time and folder are visible
 before a final report exists. It follows the same selection through completion or interruption.
+A scrollable step list shows all planned actions, phase/source line and a textual status, with
+completed results retained and the current row highlighted. It groups suites by child test, includes
+suite hooks, and tracks repeated tests independently. Pending steps become skipped or not run when
+a run stops; a running step becomes interrupted if the writer disappears. Future step identities
+come from a metadata-only run plan written before execution, never from a potentially edited source
+file. Finished reports replace live statuses without dropping the step list.
 Opening the HTML report and revealing the folder are explicit pane actions; clicking an active run
 never opens a file manager. Observing a run does not control it or produce notifications.
 

@@ -1,5 +1,16 @@
 package dev.flowscope.ide
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.flowscope.host.RunReport
+import dev.flowscope.host.RunSteps
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
@@ -25,13 +37,13 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 
 /** Observes the selected directory even if newer runs push it out of the rail's recent-run limit. */
-internal data class RunDetails(val report: RunReport?, val htmlReport: Path?) {
+internal data class RunDetails(val report: RunReport?, val htmlReport: Path?, val steps: RunSteps.Snapshot) {
     companion object {
         fun read(directory: Path): RunDetails {
             val report = RunReport.read(directory).orElse(null)
             val html = listOf("suite-report.html", "report.html")
                 .map(directory::resolve).firstOrNull(Files::isRegularFile)
-            return RunDetails(report, html)
+            return RunDetails(report, html, RunSteps.read(directory, report))
         }
     }
 }
@@ -72,6 +84,10 @@ internal fun RunDetailContent(directory: Path) {
         }
         val unit = if (report.isSuite) "tests" else "steps"
         DrawerField("PROGRESS", "${report.passed()} of ${report.total()} $unit passed")
+        details?.steps?.let { snapshot ->
+            RunStepList(snapshot)
+            Spacer(Modifier.height(12.dp))
+        }
         report.startedAt()?.let { DrawerField("STARTED", it) }
         if (report.isInterrupted) {
             Text("The runner stopped before writing its final report.", color = TextLow, fontSize = 12.sp)
@@ -95,4 +111,84 @@ internal fun RunDetailContent(directory: Path) {
         onClick = { scope.launch(Dispatchers.IO) { revealInFileManager(directory) } },
         modifier = Modifier.fillMaxWidth(),
     ) { Text("Reveal run folder", fontSize = 12.sp) }
+}
+
+/** The plan gives future steps their names; outcomes only change each row's status. */
+@Composable
+private fun RunStepList(snapshot: RunSteps.Snapshot) {
+    val groups = snapshot.groups()
+    if (groups.isEmpty()) {
+        Text("Waiting for step details…", color = TextLow, fontSize = 12.sp)
+        return
+    }
+    Text("STEPS", color = TextMid, fontSize = 10.sp, modifier = Modifier.padding(bottom = 6.dp))
+    val listState = rememberLazyListState()
+    var offset = 0
+    var currentIndex: Int? = null
+    var currentKey: String? = null
+    groups.forEach { group ->
+        offset++ // Group heading.
+        group.steps().forEachIndexed { index, step ->
+            if (step.status() == "running") {
+                currentIndex = offset + index
+                currentKey = "${group.id()}:${step.number()}"
+            }
+        }
+        offset += group.steps().size
+    }
+    LaunchedEffect(currentKey) {
+        currentIndex?.let { index ->
+            if (!listState.isScrollInProgress && listState.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+                listState.scrollToItem(index.coerceAtLeast(0))
+            }
+        }
+    }
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp, max = 440.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        groups.forEach { group ->
+            item(key = "${group.id()}:header") {
+                Column(Modifier.padding(vertical = 8.dp)) {
+                    Text(group.name(), color = TextHi, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+                    if (group.reference().isNotBlank()) {
+                        Text(group.reference(), color = TextLow, fontSize = 10.sp)
+                    }
+                }
+            }
+            items(group.steps(), key = { "${group.id()}:${it.number()}" }) { step ->
+                val current = step.status() == "running"
+                val color = when (step.status()) {
+                    "passed" -> SignalGreen
+                    "failed" -> SignalRed
+                    "running", "interrupted" -> SignalAmber
+                    else -> TextLow
+                }
+                Column(
+                    Modifier.fillMaxWidth().background(if (current) Ink250 else Color.Transparent)
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                ) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("#${step.number()}", color = TextLow, fontSize = 10.sp)
+                        Text(when (step.status()) {
+                            "running" -> "CURRENT"
+                            "not-run" -> "NOT RUN"
+                            else -> step.status().uppercase()
+                        }, color = color, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Text(step.action().ifBlank { "Step details unavailable" }, color = TextHi, fontSize = 12.sp)
+                    if (step.phase().isNotBlank() || step.line() > 0) {
+                        Text(listOfNotNull(step.phase().takeIf { it.isNotBlank() }?.uppercase(),
+                            step.line().takeIf { it > 0 }?.let { "line $it" }).joinToString(" · "),
+                            color = TextLow, fontSize = 10.sp)
+                    }
+                }
+            }
+        }
+    }
+    if (!snapshot.planned()) {
+        Text("This run has no saved step plan; only recorded step details are available.",
+            color = TextLow, fontSize = 10.sp, modifier = Modifier.padding(top = 6.dp))
+    }
 }

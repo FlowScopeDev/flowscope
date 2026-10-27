@@ -224,6 +224,11 @@ It carries only what `StepProgress` carries — never argument values — plus t
 process start time, so a dead writer reads as `interrupted`. The IDE polls `RunReport.fingerprint`
 once a second and lists in-flight runs from any source. It only displays them: it never controls or
 notifies for a run it did not start. The file is not public surface (`COMPATIBILITY.md`).
+`run-plan.json` retains a metadata-only list of steps before execution (action, phase, line, ordinal,
+and suite grouping/report reference), never arguments or values. `RunSteps` combines it with live
+progress and completed child reports for the detail pane. Suite hooks emit progress too. Pending
+steps must never be inferred as passed; distinguish skipped, not run and interrupted. Reads of child
+report references stay inside the run directory, including through symlinks.
 
 Runs started from the IDE post one best-effort operating-system notification after reports have been
 written. Distinguish a single test from a regression suite, include aggregate suite counts, and keep

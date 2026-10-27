@@ -101,6 +101,25 @@ class RunDetailsTest {
         assertNull(interrupted.htmlReport)
     }
 
+    @Test
+    fun `details include named passed current and future steps from the run plan`() {
+        start("test", 3)
+        Files.writeString(directory.resolve("run-plan.json"), """
+            {"groups":[{"id":"test","name":"Example","report":"report.json","steps":[
+            {"number":1,"line":3,"phase":"before","action":"set-value"},
+            {"number":2,"line":4,"phase":"test","action":"tap"},
+            {"number":3,"line":5,"phase":"after","action":"force-stop"}]}]}
+        """.trimIndent())
+        append("""{"event":"step","number":1,"total":3,"phase":"before","action":"set-value","line":3,"status":"passed"}""")
+        append("""{"event":"step","number":2,"total":3,"phase":"test","action":"tap","line":4,"status":"running"}""")
+        val details = RunDetails.read(directory)
+        assertTrue(details.steps.planned())
+        val steps = details.steps.groups().single().steps()
+        assertEquals(listOf("passed", "running", "pending"), steps.map { it.status() })
+        assertEquals(listOf("set-value", "tap", "force-stop"), steps.map { it.action() })
+        assertEquals(listOf(3, 4, 5), steps.map { it.line() })
+    }
+
     private fun start(kind: String, total: Int) {
         Files.writeString(directory.resolve(RunProgress.FILE),
             """{"event":"start","kind":"$kind","name":"Example","total":$total,"pid":${ProcessHandle.current().pid()},"startedAt":"2026-10-27T10:00:00Z"}""" + "\n")

@@ -51,6 +51,12 @@ public final class RunProgress {
             + ",\"line\":" + step.line() + ",\"status\":" + Json.quote(step.status()) + "}");
     }
 
+    void hook(int number, int total, FlowTest.Step hook, String status) {
+        append("{\"event\":\"hook\",\"number\":" + number + ",\"total\":" + total
+            + ",\"phase\":" + Json.quote(hook.phase().value()) + ",\"action\":" + Json.quote(hook.action())
+            + ",\"line\":" + hook.line() + ",\"status\":" + Json.quote(status) + "}");
+    }
+
     void test(FlowSuiteRunner.Progress test) {
         append("{\"event\":\"test\",\"number\":" + test.number() + ",\"total\":" + test.total()
             + ",\"reference\":" + Json.quote(test.reference())
@@ -132,6 +138,11 @@ public final class RunProgress {
                     currentStep = null;
                     outcomes.put(testNumber, text(event, "status"));
                     total = (int) testTotal;
+                }
+                case "hook" -> {
+                    currentTest = null;
+                    currentStep = "running".equals(text(event, "status"))
+                        ? "suite " + text(event, "phase") + " · " + text(event, "action") : null;
                 }
                 case "step" -> {
                     String status = text(event, "status");

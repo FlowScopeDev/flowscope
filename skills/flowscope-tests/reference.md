@@ -178,3 +178,8 @@ Runs check lock/screen state before setup and the focused package before UI work
 launch/deep-link when present). Unknown Android state fields are best effort. `--keep-hierarchy`
 saves `evidence/step-NN.xml` for executed steps, linked by `details.hierarchy`; skipped steps have
 none. Failed captures set `details.hierarchyError` without changing the test verdict.
+
+In the IDE, selecting a run shows completed, current and pending steps. Suites include child-test
+steps and suite setup/cleanup. New runs retain an internal metadata-only plan so future steps can be
+shown before execution; it does not contain arguments, secrets or captured values. Older active runs
+only name observed steps. Skipped/not-run/interrupted steps remain distinct from failures.

@@ -199,6 +199,14 @@ public final class FlowSuiteRunner {
             }
             runtimeValues.preflightReferences(Files.readString(file, StandardCharsets.UTF_8));
         }
+        List<RunSteps.Group> plan = new ArrayList<>();
+        plan.add(RunSteps.hookGroup(FlowTest.Phase.BEFORE, suite.hooks()));
+        for (int i = 0; i < resolved.size(); i++) {
+            Resolved child = resolved.get(i);
+            plan.add(RunSteps.testGroup(i + 1, child.entry().reference(), child.test(), child.directoryName() + "/report.json"));
+        }
+        plan.add(RunSteps.hookGroup(FlowTest.Phase.AFTER, suite.hooks()));
+        RunSteps.write(root, plan);
         RunProgress progressFile = RunProgress.start(root, "suite", suite.name(), resolved.size());
         try {
             boolean passed = runWithProgress(started, suiteBuiltins, runtimeValues, hostRuntime,
@@ -214,7 +222,7 @@ public final class FlowSuiteRunner {
         RuntimeValues runtimeValues, HostRuntime hostRuntime, RunProgress progressFile)
         throws Exception {
         List<HookOutcome> hooks = new ArrayList<>();
-        boolean setupPassed = runHooks(FlowTest.Phase.BEFORE, true, runtimeValues, hostRuntime, hooks);
+        boolean setupPassed = runHooks(FlowTest.Phase.BEFORE, true, runtimeValues, hostRuntime, hooks, progressFile);
         List<TestOutcome> outcomes = new ArrayList<>();
         int total = resolved.size();
         boolean stopped = !setupPassed;
@@ -223,6 +231,7 @@ public final class FlowSuiteRunner {
             Resolved current = resolved.get(index);
             int number = index + 1;
             if (stopped) {
+                reportProgress(progressFile, new Progress(number, total, current.entry().reference(), "skipped"));
                 outcomes.add(new TestOutcome(number, current.entry().line(),
                     current.entry().reference(), current.test().name(), "skipped", 0,
                     null, null));
@@ -269,7 +278,7 @@ public final class FlowSuiteRunner {
             if (!passed && !suite.continueOnFailure()) stopped = true;
         }
 
-        boolean cleanupPassed = runHooks(FlowTest.Phase.AFTER, false, runtimeValues, hostRuntime, hooks);
+        boolean cleanupPassed = runHooks(FlowTest.Phase.AFTER, false, runtimeValues, hostRuntime, hooks, progressFile);
 
         Instant ended = Instant.now();
         SuiteReport report = new SuiteReport(suite.name(), suiteFileLabel, projectRootLabel,
@@ -295,20 +304,24 @@ public final class FlowSuiteRunner {
     }
 
     private boolean runHooks(FlowTest.Phase phase, boolean stopOnFailure, RuntimeValues values,
-        HostRuntime runtime, List<HookOutcome> outcomes) {
+        HostRuntime runtime, List<HookOutcome> outcomes, RunProgress progressFile) {
         boolean passed = true, stopped = false, readinessChecked = false;
         for (FlowTest.Step hook : suite.hooks()) {
             if (hook.phase() != phase) continue;
+            int number = suite.hooks().indexOf(hook) + 1;
             if (stopped) {
+                progressFile.hook(number, suite.hooks().size(), hook, "skipped");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "skipped",
                     0, "earlier " + phase.value() + " hook failed", Map.of()));
                 continue;
             }
             if (!values.conditionsPass(hook.arguments())) {
+                progressFile.hook(number, suite.hooks().size(), hook, "skipped");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "skipped",
                     0, "condition not met", Map.of()));
                 continue;
             }
+            progressFile.hook(number, suite.hooks().size(), hook, "running");
             long started = System.nanoTime();
             try {
                 if (phase == FlowTest.Phase.BEFORE && !readinessChecked && !resolved.isEmpty()) {
@@ -320,10 +333,12 @@ public final class FlowSuiteRunner {
                     ? FlowTestParser.parsePositiveLong(expanded.get("timeout"), hook.line(), "timeout")
                     : 10_000;
                 Map<String, String> details = runtime.execute(hook.action(), hook.arguments(), timeout);
+                progressFile.hook(number, suite.hooks().size(), hook, "passed");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "passed",
                     Duration.ofNanos(System.nanoTime() - started).toMillis(), null, details));
             } catch (Exception failure) {
                 passed = false;
+                progressFile.hook(number, suite.hooks().size(), hook, "failed");
                 String message = values.redact(failure.getMessage() == null
                     ? failure.getClass().getSimpleName() : failure.getMessage());
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "failed",

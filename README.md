@@ -244,6 +244,11 @@ writes to `./test-runs`, which the IDE does not watch — pass `--output ~/.flow
 such a run with no project open. Clicking a run selects it in the **Detail** pane and opens
 that pane if hidden. It shows the test/suite name, status, current test and step, pass counts, start
 time, and run folder, refreshing while it runs and switching to the final result on completion.
+The step list shows every planned step with its action, phase, source line and status: passed,
+current, pending, failed, skipped, interrupted, or not run. Suites group steps by child test and
+include suite setup/cleanup. The list follows the current step while letting you scroll through
+previous and future steps. New runs save a metadata-only `run-plan.json` before execution so future
+steps are visible immediately; older active runs can only name steps already observed.
 Use **Open HTML report** when available or **Reveal run folder** from the pane.
 
 Each of the three phases is reported distinctly, because a leaked fixture and a failed assertion

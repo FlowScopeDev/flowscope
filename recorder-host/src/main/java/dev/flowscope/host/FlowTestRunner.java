@@ -218,6 +218,7 @@ public final class FlowTestRunner {
             sweepHook = new Thread(() -> sweepUiautomator(uiautomatorBefore), "flowscope-uiautomator-sweep");
             Runtime.getRuntime().addShutdownHook(sweepHook);
             sweepBefore = uiautomatorBefore;
+            RunSteps.write(root, List.of(RunSteps.testGroup(0, "", test, "report.json")));
             if (writesProgressFile) progressFile = RunProgress.start(root, "test", test.name(), test.steps().size());
             Instant started = Instant.now();
             if (test.mode() == CaptureMode.INSTRUMENTED) {
