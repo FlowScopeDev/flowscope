@@ -300,13 +300,25 @@ before set-date name=loanStart value=${var.windowEnd} offset=-P6M zone=Asia/Kolk
 email addresses; `transform` provides a fixed allowlist of string operations. Built-ins include
 `${run.id}`, `${run.startedAt}`, `${test.name}`, `${test.attempt}`, and `${device.serial}`.
 
-For local secrets, select a file in **Settings → Secrets** or pass it explicitly:
+Project runs automatically read `<flowsDir>/.secrets` (normally `flows/.secrets`). Keep it out of
+Git and owner-only (`chmod 600 flows/.secrets`). **Settings → Secrets** lists names with hidden values;
+choose **Reveal and edit JSON**, edit a string-to-string object such as `{"API_JWT":"local-token"}`,
+and **Save secrets**. Saving writes dotenv with owner-only permissions, adds ignore entries, hides
+values again, and refuses to overwrite a file changed on disk. Comments are replaced when saving.
+
+Each project's selected override is remembered separately. **Use default** returns to its `.secrets`;
+without a project, the existing global selection applies. CLI runs can override the default explicitly:
 
 ```bash
 chmod 600 ~/.flowscope/test.env
 flowscope test run login.flow --secrets-file ~/.flowscope/test.env
 flowscope suite run smoke.suite --secrets-file ~/.flowscope/test.env
 ```
+
+IDE-started tests and suites have a **Stop run** button while running. Stop interrupts the active
+step, skips remaining tests, and runs the current test's and suite's `after` cleanup. The button shows
+**Stopping · running cleanup…** until reports are written, then the result is **Cancelled**. Cleanup
+errors remain in the report. Runs started elsewhere remain display-only.
 
 The strict dotenv file accepts `NAME=value` entries only. Process environment values take
 precedence. Values and derived values remain in memory and are removed from console errors, JSON,

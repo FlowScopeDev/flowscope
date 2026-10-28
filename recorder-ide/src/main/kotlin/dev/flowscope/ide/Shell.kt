@@ -613,7 +613,7 @@ internal fun RunButton(run: RunControl) {
     }
     HoverTip(
         when {
-            run.running -> "Running…"
+            run.running -> run.label
             run.enabled -> run.label
             else -> "${run.label} · needs a device and a file that parses"
         },
@@ -625,12 +625,12 @@ internal fun RunButton(run: RunControl) {
                     contentDescription = run.label
                     role = Role.Button
                 }
-                .clickable(enabled = run.enabled && !run.running, onClick = run.onRun),
+                .clickable(enabled = run.actionable, onClick = run::activate),
             contentAlignment = Alignment.Center,
         ) {
             Canvas(Modifier.size(16.dp)) {
                 if (run.running) {
-                    // A square reads as "busy, click does nothing" without implying it stops a run.
+                    // Stop cancels only this IDE-owned run; cleanup completes before Run is enabled.
                     drawRoundRect(
                         color = tint,
                         topLeft = Offset(4.dp.toPx(), 4.dp.toPx()),
@@ -1956,7 +1956,7 @@ private fun RailRunRow(report: RunReport, selected: Boolean, onOpen: () -> Unit,
                 .background(
                     when {
                         report.isRunning() -> SignalAmber
-                        report.isInterrupted() -> TextLow
+                        report.isInterrupted() || report.isCancelled() -> TextLow
                         report.isPassed() -> SignalGreen
                         else -> SignalRed
                     },
@@ -1975,6 +1975,7 @@ private fun RailRunRow(report: RunReport, selected: Boolean, onOpen: () -> Unit,
             val detail = when {
                 report.isRunning() -> report.activity()?.let { "Running · $it" } ?: "Running"
                 report.isInterrupted() -> "Interrupted · no report"
+                report.isCancelled() -> "Cancelled"
                 else -> null
             }
             detail?.let {

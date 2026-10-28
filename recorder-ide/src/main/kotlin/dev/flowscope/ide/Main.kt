@@ -210,7 +210,8 @@ private fun FlowScopeApp(
     val shell = remember { ShellState() }
     val timeline = remember { TimelineState() }
     val session = remember { SessionState() }
-    var secretsFile by remember { mutableStateOf(Preferences.loadSecretsFile()) }
+    var secretsOverride by remember(projectState.root) { mutableStateOf(Preferences.loadSecretsFile(projectState.root)) }
+    val secretsFile = secretsOverride ?: projectState.project?.let(dev.flowscope.host.ProjectSecrets::defaultFile)
     var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
     val deviceState = remember {
         DeviceState().apply {
@@ -965,6 +966,7 @@ private fun FlowScopeApp(
     }
 
     fun saveTest(runAfterSave: Boolean, saveAs: Boolean = false) {
+        if (authoring.running) return
         val device = deviceState.selected
         if (authoring.source.isBlank()) {
             authoring.status = "Create or record a test first"
@@ -979,119 +981,136 @@ private fun FlowScopeApp(
             return
         }
         val kind = authoring.kind
+        val runReportsDirectory = projectState.reportsDirectory
+        val runProject = projectState.project
+        val runSecretsOverride = secretsOverride
+        val cancellation = dev.flowscope.host.RunCancellation()
+        authoring.cancellation = cancellation
+        authoring.stopping = false
+        authoring.running = true
         scope.launch {
-            deviceState.busy = true
-            authoring.running = true
-            val existing = authoring.currentFile
-            val target = if (existing != null && !saveAs) existing
-                else deriveTarget(authoring.source, kind).toAbsolutePath()
-            val contents = flowFileContents(authoring.source)
-            authoring.status = "Running…"
+            try {
+                deviceState.busy = true
+                val existing = authoring.currentFile
+                val target = if (existing != null && !saveAs) existing
+                    else deriveTarget(authoring.source, kind).toAbsolutePath()
+                val contents = flowFileContents(authoring.source)
+                authoring.status = "Running…"
 
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    Files.createDirectories(target.parent)
-                    Files.writeString(target, contents, StandardCharsets.UTF_8)
-                    if (kind == EditorKind.Suite) {
-                        val suite = FlowSuiteParser.parse(target)
-                        val runner = FlowSuiteRunner(
-                            adb, device!!, suite, target, projectState.project,
-                            projectState.reportsDirectory, secretsFile,
-                        ).observe { progress ->
-                            scope.launch { authoring.status = suiteProgressStatus(progress) }
-                        }
-                        val passed = runner.run()
-                        val report = RunReport.read(runner.root()).orElse(null)
-                        SaveOutcome(
-                            target,
-                            passed,
-                            runner.root(),
-                            suiteLabel(suite, passed),
-                            regressionCompletionNotice(
-                                suite.name(),
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val runSecretsFile = dev.flowscope.host.ProjectSecrets.resolve(runProject, runSecretsOverride)
+                        Files.createDirectories(target.parent)
+                        Files.writeString(target, contents, StandardCharsets.UTF_8)
+                        if (kind == EditorKind.Suite) {
+                            val suite = FlowSuiteParser.parse(target)
+                            val runner = FlowSuiteRunner(
+                                adb, device, suite, target, runProject,
+                                runReportsDirectory, runSecretsFile,
+                            ).cancellation(cancellation).observe { progress ->
+                                scope.launch { if (!authoring.stopping) authoring.status = suiteProgressStatus(progress) }
+                            }
+                            val passed = runner.run()
+                            val report = RunReport.read(runner.root()).orElse(null)
+                            SaveOutcome(
+                                target,
                                 passed,
-                                report?.total() ?: suite.entries().size,
-                                report?.passed() ?: if (passed) suite.entries().size else 0,
-                                report?.failed() ?: if (passed) 0 else 1,
-                            ),
-                        )
-                    } else {
-                        val parsed = FlowTestParser.parse(target)
-                        val runner = FlowTestRunner(
-                            adb, device!!, parsed, projectState.reportsDirectory, secretsFile,
-                        ).observe { progress ->
-                            scope.launch { authoring.status = stepProgressStatus(progress) }
+                                runner.root(),
+                                if (runner.isCancelled) "CANCELLED" else suiteLabel(suite, passed),
+                                if (runner.isCancelled) cancelledNotice(suite.name(), true) else regressionCompletionNotice(
+                                    suite.name(),
+                                    passed,
+                                    report?.total() ?: suite.entries().size,
+                                    report?.passed() ?: if (passed) suite.entries().size else 0,
+                                    report?.failed() ?: if (passed) 0 else 1,
+                                ),
+                                cancelled = runner.isCancelled,
+                            )
+                        } else {
+                            val parsed = FlowTestParser.parse(target)
+                            val runner = FlowTestRunner(
+                                adb, device, parsed, runReportsDirectory, runSecretsFile,
+                            ).cancellation(cancellation).observe { progress ->
+                                scope.launch { if (!authoring.stopping) authoring.status = stepProgressStatus(progress) }
+                            }
+                            val passed = runner.run()
+                            val steps = parsed.steps().size
+                            val teardown = runner.teardownFailures()
+                            // The body held and only cleanup broke. Reporting that as a plain failure
+                            // sends the author hunting through the test for a bug that is not there.
+                            val cleanupOnly =
+                                !runner.isCancelled && !passed && runner.primaryFailure() == null && teardown.isNotEmpty()
+                            SaveOutcome(
+                                target, passed, runner.root(),
+                                when {
+                                    runner.isCancelled -> "CANCELLED"
+                                    passed -> "PASSED $steps/$steps"
+                                    cleanupOnly -> "FAILED · CLEANUP"
+                                    else -> "FAILED"
+                                },
+                                if (runner.isCancelled) cancelledNotice(parsed.name(), false) else testCompletionNotice(parsed.name(), passed, steps),
+                                runner.webChanges(),
+                                teardown,
+                                cleanupOnly,
+                                runner.isCancelled,
+                            )
                         }
-                        val passed = runner.run()
-                        val steps = parsed.steps().size
-                        val teardown = runner.teardownFailures()
-                        // The body held and only cleanup broke. Reporting that as a plain failure
-                        // sends the author hunting through the test for a bug that is not there.
-                        val cleanupOnly =
-                            !passed && runner.primaryFailure() == null && teardown.isNotEmpty()
-                        SaveOutcome(
-                            target, passed, runner.root(),
-                            when {
-                                passed -> "PASSED $steps/$steps"
-                                cleanupOnly -> "FAILED · CLEANUP"
-                                else -> "FAILED"
-                            },
-                            testCompletionNotice(parsed.name(), passed, steps),
-                            runner.webChanges(),
-                            teardown,
-                            cleanupOnly,
-                        )
                     }
+                }.onSuccess { outcome ->
+                    authoring.markSaved(outcome.target, contents)
+                    authoring.status = "${if (outcome.cancelled) "Cancelled" else if (outcome.passed) "Passed" else "Failed"} · " +
+                        shown(outcome.reportRoot ?: outcome.target)
+                    authoring.lastRun = FlowRunResult(
+                        passed = outcome.passed,
+                        label = outcome.label ?: if (outcome.passed) "PASSED" else "FAILED",
+                        reportRoot = outcome.reportRoot?.toString(),
+                    )
+                    outcome.completionNotice?.let(DesktopNotifications::show)
+                    val subject = if (kind == EditorKind.Suite) "Suite" else "Test"
+                    addEvent(
+                        if (outcome.passed) "✓" else "×",
+                        when {
+                            outcome.cancelled -> "$subject cancelled"
+                            outcome.passed -> "$subject passed"
+                            // Naming this one "failed" would contradict the run bar and the report,
+                            // both of which say the test body passed.
+                            outcome.cleanupOnly -> "$subject cleanup failed"
+                            else -> "$subject failed"
+                        },
+                        authoring.status,
+                        severity = if (outcome.passed) Severity.Normal else Severity.Error,
+                    )
+                    refreshProjectListing()
+                    if (contents.lineSequence().any { " web-" in it }) {
+                        refreshWebViewInspection()
+                    }
+                    outcome.webChanges.forEach { change ->
+                        addEvent("◇", "WebView state changed", change, channel = Channel.Network)
+                    }
+                    // Detail stays inside FlowScope: the completion notification above is deliberately
+                    // generic, so the timeline is where a cleanup failure gets named.
+                    outcome.teardownFailures.forEach { cleanup ->
+                        addEvent("×", "Cleanup failed", cleanup, severity = Severity.Error)
+                    }
+                }.onFailure { failure ->
+                    authoring.status = failure.message ?: "Test operation failed"
+                    authoring.lastRun = FlowRunResult(false, "FAILED", null)
+                    DesktopNotifications.show(
+                        runErrorNotice(
+                            testNameFromSource(contents)
+                                ?: target.fileName.toString().substringBeforeLast('.'),
+                            regression = kind == EditorKind.Suite,
+                        ),
+                    )
+                    addEvent("×", "Test error", authoring.status, severity = Severity.Error)
                 }
-            }.onSuccess { outcome ->
-                authoring.markSaved(outcome.target, contents)
-                authoring.status = "${if (outcome.passed) "Passed" else "Failed"} · " +
-                    shown(outcome.reportRoot ?: outcome.target)
-                authoring.lastRun = FlowRunResult(
-                    passed = outcome.passed,
-                    label = outcome.label ?: if (outcome.passed) "PASSED" else "FAILED",
-                    reportRoot = outcome.reportRoot?.toString(),
-                )
-                outcome.completionNotice?.let(DesktopNotifications::show)
-                val subject = if (kind == EditorKind.Suite) "Suite" else "Test"
-                addEvent(
-                    if (outcome.passed) "✓" else "×",
-                    when {
-                        outcome.passed -> "$subject passed"
-                        // Naming this one "failed" would contradict the run bar and the report,
-                        // both of which say the test body passed.
-                        outcome.cleanupOnly -> "$subject cleanup failed"
-                        else -> "$subject failed"
-                    },
-                    authoring.status,
-                    severity = if (outcome.passed) Severity.Normal else Severity.Error,
-                )
-                refreshProjectListing()
-                if (contents.lineSequence().any { " web-" in it }) {
-                    refreshWebViewInspection()
-                }
-                outcome.webChanges.forEach { change ->
-                    addEvent("◇", "WebView state changed", change, channel = Channel.Network)
-                }
-                // Detail stays inside FlowScope: the completion notification above is deliberately
-                // generic, so the timeline is where a cleanup failure gets named.
-                outcome.teardownFailures.forEach { cleanup ->
-                    addEvent("×", "Cleanup failed", cleanup, severity = Severity.Error)
-                }
-            }.onFailure { failure ->
-                authoring.status = failure.message ?: "Test operation failed"
-                authoring.lastRun = FlowRunResult(false, "FAILED", null)
-                DesktopNotifications.show(
-                    runErrorNotice(
-                        testNameFromSource(contents)
-                            ?: target.fileName.toString().substringBeforeLast('.'),
-                        regression = kind == EditorKind.Suite,
-                    ),
-                )
-                addEvent("×", "Test error", authoring.status, severity = Severity.Error)
+            } finally {
+                cancellation.finish()
+                authoring.cancellation = null
+                authoring.stopping = false
+                authoring.running = false
+                deviceState.busy = false
             }
-            authoring.running = false
-            deviceState.busy = false
         }
     }
 
@@ -1208,6 +1227,7 @@ private fun FlowScopeApp(
 
     /** Opens a suite into the editor, then replays it, so the run is always of visible text. */
     fun runSuiteFile(path: Path) {
+        if (authoring.running) return
         scope.launch {
             val read = withContext(Dispatchers.IO) {
                 runCatching { Files.readString(path, StandardCharsets.UTF_8) }
@@ -1923,6 +1943,8 @@ private fun FlowScopeApp(
                         if (authoring.kind == EditorKind.Suite) "run.suite" else "run",
                     ),
                     onRun = { saveTest(true) },
+                    stopping = authoring.stopping,
+                    onStop = authoring::stopRun,
                 ),
                 onRecord = ::toggleRecording,
                 onCheckpoint = ::captureCheckpoint,
@@ -1952,15 +1974,18 @@ private fun FlowScopeApp(
                                 scope.launch(Dispatchers.IO) { Preferences.saveThemeMode(mode) }
                             },
                             secretsFile = secretsFile,
+                            secretsProjectRoot = projectState.root,
                             onChooseSecretsFile = {
                                 chooseFile(window, "Choose FlowScope secrets file")?.let { selected ->
-                                    secretsFile = selected
-                                    scope.launch(Dispatchers.IO) { Preferences.saveSecretsFile(selected) }
+                                    secretsOverride = selected
+                                    val projectRoot = projectState.root
+                                    scope.launch(Dispatchers.IO) { Preferences.saveSecretsFile(selected, projectRoot) }
                                 }
                             },
                             onClearSecretsFile = {
-                                secretsFile = null
-                                scope.launch(Dispatchers.IO) { Preferences.saveSecretsFile(null) }
+                                secretsOverride = null
+                                val projectRoot = projectState.root
+                                scope.launch(Dispatchers.IO) { Preferences.saveSecretsFile(null, projectRoot) }
                             },
                             about = AboutPanel(
                                 version = FlowScopeVersion.current(),
@@ -2829,18 +2854,18 @@ private fun FlowRunBar(
         lastResult?.let { result ->
             Row(
                 Modifier.clip(RoundedCornerShape(4.dp))
-                    .background(if (result.passed) Ink200 else SignalRedDim)
+                    .background(if (result.passed || result.label == "CANCELLED") Ink200 else SignalRedDim)
                     .padding(horizontal = 9.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
                     Modifier.size(6.dp).clip(CircleShape)
-                        .background(if (result.passed) SignalGreen else SignalRed),
+                        .background(if (result.label == "CANCELLED") SignalAmber else if (result.passed) SignalGreen else SignalRed),
                 )
                 Spacer(Modifier.width(7.dp))
                 Text(
                     result.label,
-                    color = if (result.passed) SignalGreen else SignalRed,
+                    color = if (result.label == "CANCELLED") SignalAmber else if (result.passed) SignalGreen else SignalRed,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 10.sp,
                 )
@@ -3046,6 +3071,7 @@ private data class SaveOutcome(
     val teardownFailures: List<String> = emptyList(),
     /** The test body passed and only cleanup broke, so nothing may call this a test failure. */
     val cleanupOnly: Boolean = false,
+    val cancelled: Boolean = false,
 )
 
 private fun suiteLabel(suite: FlowSuite, passed: Boolean): String {

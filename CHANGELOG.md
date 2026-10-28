@@ -12,6 +12,10 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Added
 
+- IDE Stop cancels tests and suites, skips remaining work, runs cleanup, and reports Cancelled.
+- Settings supports masked project secrets with an editable JSON view; IDE/CLI project runs
+  automatically load `<flowsDir>/.secrets`, with explicit file overrides.
+
 - Runs started from the CLI appear live in the IDE's **Runs** rail. A run in flight keeps a
   `progress.jsonl` in its report directory (step and test positions and literal action names only),
   which is deleted once the report is written; a run whose process died reads as interrupted.

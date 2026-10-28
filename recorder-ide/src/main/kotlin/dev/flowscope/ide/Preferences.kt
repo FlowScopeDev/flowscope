@@ -16,12 +16,22 @@ internal object Preferences {
     private val showDeviceFile: Path get() = FlowScopeHome.resolve("show-device.txt")
     private val secretsFilePreference: Path get() = FlowScopeHome.resolve("secrets-file.txt")
 
-    fun loadSecretsFile(): Path? = runCatching {
+    internal fun secretsPreference(projectRoot: Path?): Path {
+        if (projectRoot == null) return secretsFilePreference
+        val key = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(projectRoot.toAbsolutePath().normalize().toString().toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return FlowScopeHome.resolve("project-secrets").resolve("$key.txt")
+    }
+
+    fun loadSecretsFile(projectRoot: Path? = null): Path? = runCatching {
+        val secretsFilePreference = secretsPreference(projectRoot)
         if (!Files.isRegularFile(secretsFilePreference)) null
         else parseSecretsFilePath(Files.readString(secretsFilePreference, StandardCharsets.UTF_8))
     }.getOrNull()
 
-    fun saveSecretsFile(path: Path?) {
+    fun saveSecretsFile(path: Path?, projectRoot: Path? = null) {
+        val secretsFilePreference = secretsPreference(projectRoot)
         runCatching {
             if (path == null) Files.deleteIfExists(secretsFilePreference)
             else {

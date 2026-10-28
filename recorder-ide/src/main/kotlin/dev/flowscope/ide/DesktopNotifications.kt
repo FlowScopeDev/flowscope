@@ -46,6 +46,12 @@ internal fun regressionCompletionNotice(
     )
 }
 
+internal fun cancelledNotice(name: String, regression: Boolean) = CompletionNotice(
+    title = "FlowScope · ${if (regression) "Regression" else "Test"} cancelled",
+    message = "$name · Open FlowScope for cleanup details",
+    failed = false,
+)
+
 internal fun runErrorNotice(name: String, regression: Boolean): CompletionNotice = CompletionNotice(
     title = "FlowScope · ${if (regression) "Regression" else "Test"} failed",
     message = "$name · Run ended with an error; open FlowScope for details",

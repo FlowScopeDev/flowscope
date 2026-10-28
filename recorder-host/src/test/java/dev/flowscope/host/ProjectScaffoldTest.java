@@ -28,7 +28,7 @@ class ProjectScaffoldTest {
         assertTrue(Files.isRegularFile(project.testsDir().resolve(".gitkeep")));
         assertTrue(Files.isRegularFile(project.suitesDir().resolve(".gitkeep")));
 
-        assertEquals("# FlowScope\nreports/\nsessions/\n",
+        assertEquals("# FlowScope\nreports/\nsessions/\n**/.secrets\n**/.secrets-*.tmp\n",
             Files.readString(temp.resolve(".gitignore"), StandardCharsets.UTF_8));
     }
 
@@ -70,13 +70,13 @@ class ProjectScaffoldTest {
         Files.writeString(temp.resolve(".gitignore"), "build/\n.idea/\n", StandardCharsets.UTF_8);
         ProjectScaffold.initialize(temp, ProjectManifest.defaults("x"));
 
-        assertEquals("build/\n.idea/\n\n# FlowScope\nreports/\nsessions/\n",
+        assertEquals("build/\n.idea/\n\n# FlowScope\nreports/\nsessions/\n**/.secrets\n**/.secrets-*.tmp\n",
             Files.readString(temp.resolve(".gitignore"), StandardCharsets.UTF_8));
     }
 
     @Test
     void mergeGitignoreAddsOnlyWhatIsMissing() {
-        assertEquals("sessions/\n\n# FlowScope\nreports/\n",
+        assertEquals("sessions/\n\n# FlowScope\nreports/\n**/.secrets\n**/.secrets-*.tmp\n",
             ProjectScaffold.mergeGitignore("sessions/\n", ProjectScaffold.gitignoreLines()));
     }
 
@@ -88,7 +88,7 @@ class ProjectScaffoldTest {
 
     @Test
     void mergeGitignoreAddsATrailingNewlineBeforeAppending() {
-        assertEquals("build/\n\n# FlowScope\nreports/\nsessions/\n",
+        assertEquals("build/\n\n# FlowScope\nreports/\nsessions/\n**/.secrets\n**/.secrets-*.tmp\n",
             ProjectScaffold.mergeGitignore("build/", ProjectScaffold.gitignoreLines()));
     }
 }

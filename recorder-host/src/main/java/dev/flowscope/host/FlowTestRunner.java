@@ -44,6 +44,16 @@ public final class FlowTestRunner {
     private boolean writesProgressFile = true;
     private RunProgress progressFile;
     private boolean keepHierarchy;
+    private RunCancellation cancellation = new RunCancellation();
+
+    public FlowTestRunner cancellation(RunCancellation signal) {
+        this.cancellation = Objects.requireNonNull(signal);
+        return this;
+    }
+
+    public boolean isCancelled() { return cancellation.isRequested(); }
+    private String status(boolean passed) { return isCancelled() ? "cancelled" : passed ? "passed" : "failed"; }
+
     private boolean readinessChecked;
     private boolean foregroundChecked;
     private List<UiHierarchy.UiNode> lookupNodes = List.of();
@@ -188,6 +198,8 @@ public final class FlowTestRunner {
     public String failureMessage() {
         String primary = primaryFailure();
         List<String> teardown = teardownFailures();
+        if (isCancelled()) return "Cancelled" + (primary == null ? "" : " · " + primary)
+            + (teardown.isEmpty() ? "" : " · cleanup also failed: " + String.join(" · ", teardown));
         if (primary == null) {
             return teardown.isEmpty() ? null : "cleanup failed · " + String.join(" · ", teardown);
         }
@@ -212,9 +224,14 @@ public final class FlowTestRunner {
     public boolean run() throws Exception {
         Thread sweepHook = null;
         try {
-            preflight();
-            // Snapshot only after preflight: a flow rejected up front must not touch the device.
-            Set<String> uiautomatorBefore = uiautomatorSnapshot();
+            Set<String> observed;
+            try {
+                observed = cancellation.execute(() -> {
+                    preflight();
+                    return uiautomatorSnapshot();
+                });
+            } catch (RunCancellation.Cancelled cancelled) { observed = null; }
+            final Set<String> uiautomatorBefore = observed;
             sweepHook = new Thread(() -> sweepUiautomator(uiautomatorBefore), "flowscope-uiautomator-sweep");
             Runtime.getRuntime().addShutdownHook(sweepHook);
             sweepBefore = uiautomatorBefore;
@@ -227,14 +244,17 @@ public final class FlowTestRunner {
             boolean before = runPhase(FlowTest.Phase.BEFORE, true);
             boolean main;
             if (before) main = runPhase(FlowTest.Phase.TEST, true);
-            else { skipPhase(FlowTest.Phase.TEST, "before phase failed"); main = false; }
+            else { skipPhase(FlowTest.Phase.TEST, isCancelled() ? "run cancelled" : "before phase failed"); main = false; }
+            if (isCancelled()) sweepUiautomator(sweepBefore);
             boolean after = runPhase(FlowTest.Phase.AFTER, false);
-            boolean passed = before && main && after;
+            if (writesProgressFile) cancellation.finish();
+            boolean passed = before && main && after && !isCancelled();
             if (agentEvents != null) agentEvents.stop();
             writeReports(passed, started, Instant.now());
             if (progressFile != null) progressFile.finish();
             return passed;
         } finally {
+            if (writesProgressFile) cancellation.finish();
             if (progressFile != null) progressFile.interrupt();
             web.close();
             if (sweepHook != null) {
@@ -288,6 +308,9 @@ public final class FlowTestRunner {
         for (int i = 0; i < test.steps().size(); i++) {
             FlowTest.Step step = test.steps().get(i);
             if (step.phase() != phase) continue;
+            if (phase != FlowTest.Phase.AFTER && isCancelled()) {
+                addSkipped(i, step, "run cancelled"); passed = false; continue;
+            }
             if (stopped) { addSkipped(i, step, "earlier " + phase.value() + " instruction failed"); continue; }
             boolean ending = step.action().equals("end");
             if (ending && !visibleBlocks.isEmpty()) visibleBlocks.pop();
@@ -303,14 +326,25 @@ public final class FlowTestRunner {
             int dumpsBefore = dumpCount;
             long dumpNanosBefore = dumpNanos;
             try {
-                checkReadiness(step);
-                Map<String, String> details = new LinkedHashMap<>(execute(step, i));
+                final int stepIndex = i;
+                RunCancellation.Work<Map<String, String>> work = () -> {
+                    checkReadiness(step);
+                    return execute(step, stepIndex);
+                };
+                Map<String, String> details = new LinkedHashMap<>(phase == FlowTest.Phase.AFTER
+                    ? work.run() : cancellation.execute(work));
                 if (step.action().equals("if-visible")) visibleBlocks.push(Boolean.parseBoolean(details.get("matched")));
                 retainHierarchy(i, details);
                 results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
                 System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.action());
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed"));
+            } catch (RunCancellation.Cancelled cancelled) {
+                passed = false;
+                results.add(new StepResult(i + 1, step, "cancelled", elapsed(started),
+                    "Cancelled by user", Map.of(), dumpCount - dumpsBefore,
+                    Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
+                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "cancelled"));
             } catch (Exception failure) {
                 passed = false;
                 captureEvidence("failure-" + String.format("%02d", i + 1));
@@ -581,6 +615,7 @@ public final class FlowTestRunner {
     private Map<String, String> webAssertText(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
         do {
+            RunCancellation.checkCurrent();
             if (web.text(args, Math.max(1, remainingMillis(deadline))).equals(args.get("text"))) {
                 return webInspection(args, Math.max(1, remainingMillis(deadline)));
             }
@@ -592,6 +627,7 @@ public final class FlowTestRunner {
     private Map<String, String> webAssertUrl(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
         do {
+            RunCancellation.checkCurrent();
             String actual = web.url(args, Math.max(1, remainingMillis(deadline)));
             boolean matches = !args.containsKey("url") || actual.equals(args.get("url"));
             if (args.containsKey("path")) {
@@ -620,6 +656,7 @@ public final class FlowTestRunner {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
         String failure = "Cookie assertion did not match";
         do {
+            RunCancellation.checkCurrent();
             WebViewState state = web.inspect(args, Math.max(1, remainingMillis(deadline)));
             requireCapability(state, "Cookie inspection");
             List<WebViewState.Cookie> matches = state.cookies().stream()
@@ -664,6 +701,7 @@ public final class FlowTestRunner {
     private Map<String, String> webAssertStorage(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
         do {
+            RunCancellation.checkCurrent();
             WebViewState state = web.inspect(args, Math.max(1, remainingMillis(deadline)));
             List<WebViewState.Storage> matches = state.storage().stream()
                 .filter(entry -> entry.area().equals(args.get("area")) && entry.key().equals(args.get("key")))
@@ -704,6 +742,7 @@ public final class FlowTestRunner {
         String source = args.getOrDefault("source", "any");
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
         do {
+            RunCancellation.checkCurrent();
             boolean present;
             WebViewState state = web.inspect(args, Math.max(1, remainingMillis(deadline)));
             if (source.equals("agent")) {
@@ -730,6 +769,7 @@ public final class FlowTestRunner {
         boolean expected = Boolean.parseBoolean(args.get("value"));
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
         do {
+            RunCancellation.checkCurrent();
             WebViewState state = web.inspect(args, Math.max(1, remainingMillis(deadline)));
             if (state.security().secureContext() == expected) return rememberWebState(state);
             Thread.sleep(POLL_MILLIS);
@@ -966,6 +1006,7 @@ public final class FlowTestRunner {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
         boolean first = true;
         do {
+            RunCancellation.checkCurrent();
             // Only the first look may reuse the dump settle() just took; later polls must see live UI.
             byte[] dump = first ? currentHierarchy() : dumpHierarchy();
             first = false;
@@ -980,6 +1021,7 @@ public final class FlowTestRunner {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
         boolean first = true;
         do {
+            RunCancellation.checkCurrent();
             byte[] dump = first ? currentHierarchy() : dumpHierarchy();
             first = false;
             if (UiHierarchy.find(UiHierarchy.parse(dump), args) == null) return;
@@ -1025,6 +1067,7 @@ public final class FlowTestRunner {
             if (System.nanoTime() - begin >= SETTLE_WINDOW_NANOS) { rememberSettled(old); return; }
             long end = begin + SETTLE_WINDOW_NANOS;
             do {
+            RunCancellation.checkCurrent();
                 Thread.sleep(250);
                 byte[] now = dumpHierarchy();
                 if (Arrays.equals(old, now)) { rememberSettled(now); return; }
@@ -1384,14 +1427,27 @@ public final class FlowTestRunner {
         // Both read the shared phase-aware API, so the report, junit.xml and the console agree
         // instead of spelling the same failure three different ways.
         String primary=primaryFailure(); List<String> teardown=teardownFailures();
-        StringBuilder out=new StringBuilder("{\n  \"schemaVersion\": 2,\n  \"kind\": \"test\",\n").append("  \"name\": ").append(Json.quote(test.name())).append(",\n  \"packageName\": ").append(Json.quote(test.packageName())).append(",\n  \"mode\": ").append(Json.quote(test.mode().cliName())).append(",\n  \"deviceSerial\": ").append(Json.quote(device.serial())).append(",\n  \"startedAt\": ").append(Json.quote(started.toString())).append(",\n  \"endedAt\": ").append(Json.quote(ended.toString())).append(",\n  \"status\": ").append(Json.quote(passed?"passed":"failed")).append(",\n  \"primaryFailure\": ").append(Json.quote(primary)).append(",\n  \"teardownFailures\": [");
+        StringBuilder out=new StringBuilder("{\n  \"schemaVersion\": 2,\n  \"kind\": \"test\",\n").append("  \"name\": ").append(Json.quote(test.name())).append(",\n  \"packageName\": ").append(Json.quote(test.packageName())).append(",\n  \"mode\": ").append(Json.quote(test.mode().cliName())).append(",\n  \"deviceSerial\": ").append(Json.quote(device.serial())).append(",\n  \"startedAt\": ").append(Json.quote(started.toString())).append(",\n  \"endedAt\": ").append(Json.quote(ended.toString())).append(",\n  \"status\": ").append(Json.quote(status(passed))).append(",\n  \"primaryFailure\": ").append(Json.quote(primary)).append(",\n  \"teardownFailures\": [");
         for(int i=0;i<teardown.size();i++){if(i>0)out.append(", ");out.append(Json.quote(teardown.get(i)));} out.append("],\n  \"webView\": ").append(previousWebState == null ? "null" : WebViewInspector.json(previousWebState.sanitized())).append(",\n  \"steps\": [\n");
         for(int i=0;i<results.size();i++){var r=results.get(i);out.append("    {\"number\": ").append(r.number).append(", \"line\": ").append(r.step.line()).append(", \"phase\": ").append(Json.quote(r.step.phase().value())).append(", \"action\": ").append(Json.quote(r.step.action())).append(", \"status\": ").append(Json.quote(r.status)).append(", \"durationMillis\": ").append(r.durationMillis).append(", \"uiDumps\": ").append(r.dumps).append(", \"uiDumpMillis\": ").append(r.dumpMillis).append(", \"error\": ").append(Json.quote(r.error)).append(", \"details\": {");int d=0;for(var e:r.details.entrySet()){if(d++>0)out.append(", ");out.append(Json.quote(e.getKey())).append(": ").append(Json.quote(e.getValue()));}out.append("}}");if(i+1<results.size())out.append(',');out.append('\n');} out.append("  ],\n  \"performance\": ").append(performanceJson(started, ended));
         out.append(",\n  \"agentEvents\": ").append(agentEventsJson(started));
         return out.append("\n}\n").toString();
     }
-    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(r.step.action())).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+(passed?"passed":"failed")+"\">"+(passed?"PASSED":"FAILED")+"</strong>"+verdictHtml()+"<p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p>"+teardownHtml()+"<table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>"+performanceHtml(started,ended)+agentEventsHtml(started);}
-    private String junitXml(boolean passed,long millis){String failure=failureMessage();return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\""+xml(test.name())+"\" tests=\"1\" failures=\""+(passed?0:1)+"\" time=\""+(millis/1000.0)+"\"><testcase classname=\""+xml(test.packageName())+"\" name=\""+xml(test.name())+"\" time=\""+(millis/1000.0)+"\">"+(passed?"":"<failure message=\""+xml(failure==null?"failed":failure)+"\">"+xml(failureDetail())+"</failure>")+"</testcase></testsuite>\n";}
+    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(r.step.action())).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+status(passed)+"\">"+status(passed).toUpperCase(Locale.ROOT)+"</strong>"+verdictHtml()+"<p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p>"+teardownHtml()+"<table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>"+performanceHtml(started,ended)+agentEventsHtml(started);}
+    private String junitXml(boolean passed, long millis) {
+        boolean failed = primaryFailure() != null || !teardownFailures().isEmpty();
+        boolean skipped = isCancelled() && !failed;
+        String failure = failureMessage();
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"" + xml(test.name())
+            + "\" tests=\"1\" failures=\"" + (failed || (!passed && !skipped) ? 1 : 0)
+            + "\" skipped=\"" + (skipped ? 1 : 0) + "\" time=\"" + millis / 1000.0
+            + "\"><testcase classname=\"" + xml(test.packageName()) + "\" name=\"" + xml(test.name())
+            + "\" time=\"" + millis / 1000.0 + "\">"
+            + (skipped ? "<skipped message=\"Cancelled by user\"/>" : passed ? ""
+                : "<failure message=\"" + xml(failure == null ? "failed" : failure) + "\">"
+                    + xml(failureDetail()) + "</failure>")
+            + "</testcase></testsuite>\n";
+    }
 
     /**
      * The `<failure>` body: the primary failure labelled by its phase, then one line per cleanup

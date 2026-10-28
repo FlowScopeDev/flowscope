@@ -75,6 +75,7 @@ internal fun RunDetailContent(directory: Path) {
         DrawerField("STATUS", when {
             report.isRunning -> "Running"
             report.isInterrupted -> "Interrupted · no final report"
+            report.isCancelled -> "Cancelled"
             report.isPassed -> "Passed"
             else -> "Failed"
         })

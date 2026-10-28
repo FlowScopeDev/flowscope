@@ -405,3 +405,18 @@ runner's prior remote XML first so a failed capture cannot return stale content.
 
 With `--keep-hierarchy`, each executed step retains XML and links it in report details. Capture
 failures are diagnostic metadata, not assertion failures; skipped instructions do not capture UI.
+
+### Run cancellation and project secrets
+
+The run toolbar square is Stop for the IDE-owned run. Cancellation interrupts the active ordinary
+step; pending setup/body work and subsequent suite children are skipped even with continue-on-failure.
+Current-test and suite cleanup run without cancellation interrupts, and errors remain visible.
+The UI stays busy through cleanup/report writing and displays Cancelled in the footer, rail, drawer
+and completion notification. CLI-originated runs remain display-only.
+
+Settings scopes secret-file overrides by normalized project root; no project uses the legacy global
+selection. IDE and CLI auto-discover `<flowsDir>/.secrets`, with explicit overrides taking precedence.
+Settings shows masked names until Reveal and edit JSON; hiding, saving or changing projects drops
+the visible buffer. Saves validate the complete string map, reject concurrent file changes, write
+owner-only dotenv atomically, and add project Git exclusions. Environment overrides apply at run
+time; the editor displays the stored file, not the process environment.

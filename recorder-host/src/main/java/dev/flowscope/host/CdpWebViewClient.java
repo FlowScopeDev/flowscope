@@ -180,6 +180,7 @@ final class CdpWebViewClient implements FlowWebViewClient {
         long deadline = System.nanoTime() + Duration.ofMillis(timeoutMillis).toNanos();
         Exception last = null;
         do {
+            RunCancellation.checkCurrent();
             try {
                 if (condition.get()) return;
             } catch (Exception failure) {
@@ -198,6 +199,7 @@ final class CdpWebViewClient implements FlowWebViewClient {
         long deadline = System.nanoTime() + Duration.ofMillis(timeoutMillis).toNanos();
         Exception last = null;
         do {
+            RunCancellation.checkCurrent();
             List<Target> candidates = discoverTargets();
             List<Target> metadataMatches = pageMatch == null ? candidates : candidates.stream()
                 .filter(target -> targetMatches(target, pageMatch)).toList();
@@ -377,6 +379,7 @@ final class CdpWebViewClient implements FlowWebViewClient {
             + ",\"params\":" + params + "}", true).join();
         long deadline = System.nanoTime() + Duration.ofMillis(timeoutMillis).toNanos();
         while (System.nanoTime() < deadline) {
+            RunCancellation.checkCurrent();
             long remaining = Math.max(1, Duration.ofNanos(deadline - System.nanoTime()).toMillis());
             String message = messages.poll(remaining, TimeUnit.MILLISECONDS);
             if (message == null) break;

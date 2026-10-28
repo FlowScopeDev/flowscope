@@ -153,6 +153,15 @@ internal class AuthoringState {
      * ~60ms of each poll, so the chrome reported a run that was never happening.
      */
     var running by mutableStateOf(false)
+    var stopping by mutableStateOf(false)
+    var cancellation: dev.flowscope.host.RunCancellation? = null
+
+    fun stopRun() {
+        if (running && cancellation?.request() == true) {
+            stopping = true
+            status = "Stopping · running cleanup…"
+        }
+    }
 
     fun appendStep(step: String) {
         source = source.trimEnd() + "\n$step\n"

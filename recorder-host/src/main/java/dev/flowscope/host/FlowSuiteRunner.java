@@ -38,6 +38,12 @@ public final class FlowSuiteRunner {
     private final Map<String, String> environment;
     private final Map<String, String> secretSources;
     private boolean keepHierarchy;
+    private RunCancellation cancellation = new RunCancellation();
+    public FlowSuiteRunner cancellation(RunCancellation signal) {
+        this.cancellation = java.util.Objects.requireNonNull(signal); return this;
+    }
+    public boolean isCancelled() { return cancellation.isRequested(); }
+
 
     public FlowSuiteRunner keepHierarchy(boolean keep) { this.keepHierarchy = keep; return this; }
 
@@ -70,7 +76,13 @@ public final class FlowSuiteRunner {
     public record SuiteReport(String name, String suiteFile, String projectRoot,
                               String deviceSerial, boolean continueOnFailure,
                               Instant startedAt, Instant endedAt, List<TestOutcome> tests,
-                              List<HookOutcome> hooks) {
+                              List<HookOutcome> hooks, boolean cancelled) {
+        public SuiteReport(String name, String suiteFile, String projectRoot, String deviceSerial,
+            boolean continueOnFailure, Instant startedAt, Instant endedAt,
+            List<TestOutcome> tests, List<HookOutcome> hooks) {
+            this(name, suiteFile, projectRoot, deviceSerial, continueOnFailure, startedAt, endedAt,
+                tests, hooks, false);
+        }
         public SuiteReport(String name, String suiteFile, String projectRoot, String deviceSerial,
             boolean continueOnFailure, Instant startedAt, Instant endedAt,
             List<TestOutcome> tests) {
@@ -214,6 +226,7 @@ public final class FlowSuiteRunner {
             progressFile.finish();
             return passed;
         } finally {
+            cancellation.finish();
             progressFile.interrupt();
         }
     }
@@ -230,7 +243,7 @@ public final class FlowSuiteRunner {
         for (int index = 0; index < total; index++) {
             Resolved current = resolved.get(index);
             int number = index + 1;
-            if (stopped) {
+            if (stopped || isCancelled()) {
                 reportProgress(progressFile, new Progress(number, total, current.entry().reference(), "skipped"));
                 outcomes.add(new TestOutcome(number, current.entry().line(),
                     current.entry().reference(), current.test().name(), "skipped", 0,
@@ -248,7 +261,7 @@ public final class FlowSuiteRunner {
             FlowTestRunner runner =
                 new FlowTestRunner(adb, device, current.test(), root, current.directoryName(), http,
                     environment, secretSources, runtimeValues, suiteBuiltins)
-                    .withoutProgressFile().keepHierarchy(keepHierarchy).observe(progressFile::step);
+                    .withoutProgressFile().cancellation(cancellation).keepHierarchy(keepHierarchy).observe(progressFile::step);
             try {
                 passed = runner.run();
                 // A failed step assertion returns false rather than throwing, so the reason has to
@@ -265,7 +278,7 @@ public final class FlowSuiteRunner {
                     ? failure.getClass().getSimpleName() : failure.getMessage());
             }
             long elapsed = Duration.between(testStarted, Instant.now()).toMillis();
-            String status = passed ? "passed" : "failed";
+            String status = runner.isCancelled() && runner.primaryFailure() == null ? "cancelled" : passed ? "passed" : "failed";
             List<String> screenshots = screenshotPaths(root, current.directoryName());
             outcomes.add(new TestOutcome(number, current.entry().line(),
                 current.entry().reference(), current.test().name(), status, elapsed,
@@ -280,10 +293,11 @@ public final class FlowSuiteRunner {
 
         boolean cleanupPassed = runHooks(FlowTest.Phase.AFTER, false, runtimeValues, hostRuntime, hooks, progressFile);
 
+        cancellation.finish();
         Instant ended = Instant.now();
         SuiteReport report = new SuiteReport(suite.name(), suiteFileLabel, projectRootLabel,
             device.serial(), suite.continueOnFailure(), started, ended, List.copyOf(outcomes),
-            List.copyOf(hooks));
+            List.copyOf(hooks), isCancelled());
         Files.writeString(root.resolve("suite-report.json"), reportJson(report),
             StandardCharsets.UTF_8);
         Files.writeString(root.resolve("suite-report.html"), reportHtml(report),
@@ -291,9 +305,9 @@ public final class FlowSuiteRunner {
         Files.writeString(root.resolve("junit.xml"), junitXml(report), StandardCharsets.UTF_8);
 
         Totals totals = totals(outcomes);
-        boolean allPassed = setupPassed && cleanupPassed && totals.failed() == 0 && totals.skipped() == 0;
+        boolean allPassed = !isCancelled() && setupPassed && cleanupPassed && totals.failed() == 0 && totals.skipped() == 0;
         System.out.printf("SUITE %s · %d passed · %d failed · %d skipped · %d total%n",
-            allPassed ? "passed" : "failed",
+            isCancelled() ? "cancelled" : allPassed ? "passed" : "failed",
             totals.passed(), totals.failed(), totals.skipped(), totals.total());
         return allPassed;
     }
@@ -309,10 +323,11 @@ public final class FlowSuiteRunner {
         for (FlowTest.Step hook : suite.hooks()) {
             if (hook.phase() != phase) continue;
             int number = suite.hooks().indexOf(hook) + 1;
-            if (stopped) {
+            if (stopped || (phase != FlowTest.Phase.AFTER && isCancelled())) {
+                passed = false;
                 progressFile.hook(number, suite.hooks().size(), hook, "skipped");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "skipped",
-                    0, "earlier " + phase.value() + " hook failed", Map.of()));
+                    0, isCancelled() ? "run cancelled" : "earlier " + phase.value() + " hook failed", Map.of()));
                 continue;
             }
             if (!values.conditionsPass(hook.arguments())) {
@@ -324,18 +339,27 @@ public final class FlowSuiteRunner {
             progressFile.hook(number, suite.hooks().size(), hook, "running");
             long started = System.nanoTime();
             try {
-                if (phase == FlowTest.Phase.BEFORE && !readinessChecked && !resolved.isEmpty()) {
-                    readinessChecked = true;
-                    DeviceReadiness.beforeSetup(adb, device, resolved.getFirst().test());
-                }
-                Map<String, String> expanded = runtime.expanded(hook.arguments());
-                long timeout = expanded.containsKey("timeout")
-                    ? FlowTestParser.parsePositiveLong(expanded.get("timeout"), hook.line(), "timeout")
-                    : 10_000;
-                Map<String, String> details = runtime.execute(hook.action(), hook.arguments(), timeout);
+                boolean checkReadiness = phase == FlowTest.Phase.BEFORE && !readinessChecked && !resolved.isEmpty();
+                readinessChecked = true;
+                RunCancellation.Work<Map<String, String>> work = () -> {
+                    if (checkReadiness) {
+                        DeviceReadiness.beforeSetup(adb, device, resolved.getFirst().test());
+                    }
+                    Map<String, String> expanded = runtime.expanded(hook.arguments());
+                    long timeout = expanded.containsKey("timeout")
+                        ? FlowTestParser.parsePositiveLong(expanded.get("timeout"), hook.line(), "timeout")
+                        : 10_000;
+                    return runtime.execute(hook.action(), hook.arguments(), timeout);
+                };
+                Map<String, String> details = phase == FlowTest.Phase.AFTER ? work.run() : cancellation.execute(work);
                 progressFile.hook(number, suite.hooks().size(), hook, "passed");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "passed",
                     Duration.ofNanos(System.nanoTime() - started).toMillis(), null, details));
+            } catch (RunCancellation.Cancelled cancelled) {
+                passed = false;
+                progressFile.hook(number, suite.hooks().size(), hook, "cancelled");
+                outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "cancelled",
+                    Duration.ofNanos(System.nanoTime() - started).toMillis(), "Cancelled by user", Map.of()));
             } catch (Exception failure) {
                 passed = false;
                 progressFile.hook(number, suite.hooks().size(), hook, "failed");
@@ -375,6 +399,7 @@ public final class FlowSuiteRunner {
             switch (outcome.status()) {
                 case "passed" -> passed++;
                 case "failed" -> failed++;
+                case "cancelled" -> { if (outcome.teardownErrors().isEmpty()) skipped++; else failed++; }
                 default -> skipped++;
             }
         }
@@ -402,7 +427,7 @@ public final class FlowSuiteRunner {
             .append(",\n");
         out.append("  \"endedAt\": ").append(Json.quote(WALL_TIME.format(report.endedAt())))
             .append(",\n");
-        out.append("  \"status\": \"").append(allPassed ? "passed" : "failed").append("\",\n");
+        out.append("  \"status\": \"").append(report.cancelled() ? "cancelled" : allPassed ? "passed" : "failed").append("\",\n");
         out.append("  \"totals\": {\"total\": ").append(totals.total())
             .append(", \"passed\": ").append(totals.passed())
             .append(", \"failed\": ").append(totals.failed())
@@ -487,7 +512,7 @@ public final class FlowSuiteRunner {
             + "font-size:11px;color:#687382}"
             + "td.screenshots img{display:block;height:120px;border:1px solid #dae0e8;"
             + "border-radius:4px;margin-bottom:4px}</style><h1>"
-            + html(report.name()) + "</h1><p>" + totals.passed() + " passed · "
+            + html(report.name()) + "</h1>" + (report.cancelled() ? "<strong>Cancelled</strong>" : "") + "<p>" + totals.passed() + " passed · "
             + totals.failed() + " failed · " + totals.skipped() + " skipped</p><table><tr>"
             + "<th>#</th><th>Test</th><th>Status</th><th>Duration</th><th>Report</th>"
             + "<th>Error</th></tr>" + rows + "</table>" + hooks;
@@ -497,23 +522,24 @@ public final class FlowSuiteRunner {
         Totals totals = totals(report.tests());
         List<HookOutcome> failedHooks = report.hooks().stream()
             .filter(hook -> hook.status().equals("failed")).toList();
-        int lifecycleCases = report.hooks().isEmpty() ? 0 : 1;
+        boolean cancelledLifecycle = report.cancelled() && failedHooks.isEmpty();
+        int lifecycleCases = report.hooks().isEmpty() && !cancelledLifecycle ? 0 : 1;
         StringBuilder out = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
             .append("<testsuite name=\"").append(xml(report.name())).append("\" tests=\"")
             .append(totals.total() + lifecycleCases).append("\" failures=\"")
             .append(totals.failed() + (failedHooks.isEmpty() ? 0 : 1))
-            .append("\" skipped=\"").append(totals.skipped()).append("\">\n");
+            .append("\" skipped=\"").append(totals.skipped() + (cancelledLifecycle ? 1 : 0)).append("\">\n");
         for (TestOutcome test : report.tests()) {
             out.append("  <testcase name=\"").append(xml(test.name())).append("\" classname=\"")
                 .append(xml(test.reference())).append("\" time=\"")
                 .append(test.durationMillis() / 1000.0).append("\">");
-            if (test.status().equals("failed")) {
+            if (test.status().equals("failed") || !test.teardownErrors().isEmpty()) {
                 // `error` is the test's own failureMessage(), which already names the phase and every
                 // cleanup failure. The phase-by-phase breakdown stays in the per-test junit.xml this
                 // row links to; repeating it here would say the same thing twice.
                 out.append("<failure message=\"").append(xml(test.error())).append("\">")
                     .append(xml(test.error())).append("</failure>");
-            } else if (test.status().equals("skipped")) out.append("<skipped/>");
+            } else if (test.status().equals("skipped") || test.status().equals("cancelled")) out.append("<skipped/>");
             out.append("</testcase>\n");
         }
         if (lifecycleCases == 1) {
@@ -525,6 +551,7 @@ public final class FlowSuiteRunner {
                 out.append("<failure message=\"").append(xml(message)).append("\">")
                     .append(xml(message)).append("</failure>");
             }
+            if (cancelledLifecycle) out.append("<skipped message=\"Cancelled by user\"/>");
             out.append("</testcase>\n");
         }
         return out.append("</testsuite>\n").toString();

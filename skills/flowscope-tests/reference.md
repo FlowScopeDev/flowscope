@@ -102,8 +102,10 @@ zones and ISO/epoch/custom formats. `offset=` takes `±Nd/h/m/s` shorthand or an
 Period/Duration (e.g. `-P6M`, `PT30M`), and a `set-date`'s formatted output can feed `value=` on the
 next one to chain dates, as above. `transform` allows trim, case, URL/base64, substring, prefix and
 suffix only. Guards support `if/unless` presence and equality for variables and environment inputs.
-Reports never keep runtime values, headers, bodies, or query values. Load local secrets explicitly
-with `--secrets-file <path>`; the file must be owner-only on POSIX.
+Reports never keep runtime values, headers, bodies, or query values. Project runs auto-load `<flowsDir>/.secrets`; `--secrets-file <path>` overrides it.
+Without a project, pass the file explicitly. Files must be owner-only on POSIX and excluded from Git.
+Settings remembers overrides per project and supports an explicitly revealed JSON editor that saves
+back to dotenv. Environment values override matching entries at runtime; the editor shows file values.
 Diagnostic redaction covers environment/file values selected by references, requirements, secret
 bindings, or environment equality guards, including one-character secrets. Unrelated environment
 or file entries do not rewrite selectors such as `id=item_1`. Runtime values remain protected
@@ -183,3 +185,7 @@ In the IDE, selecting a run shows completed, current and pending steps. Suites i
 steps and suite setup/cleanup. New runs retain an internal metadata-only plan so future steps can be
 shown before execution; it does not contain arguments, secrets or captured values. Older active runs
 only name observed steps. Skipped/not-run/interrupted steps remain distinct from failures.
+
+IDE Stop cancels only its own run, interrupts the active step, skips future work, and runs test/suite
+`after` cleanup. Reports use `cancelled` for the run and interrupted step, `skipped` for unstarted
+work, and retain cleanup failures. JUnit cancellation is skipped unless real failures need preserving.

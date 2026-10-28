@@ -17,7 +17,7 @@ import java.util.stream.Stream;
  * these, so it reads them through this typed accessor rather than growing more ad-hoc string
  * extraction.
  *
- * <p>{@code status} is `passed` or `failed` for a finished run, `running` for one still in flight
+ * <p>{@code status} is `passed`, `failed` or `cancelled` for a finished run, `running` for one still in flight
  * (from the CLI or the IDE), and `interrupted` for one whose process ended without a report.
  * {@code activity} describes what a running run is doing now, and is null otherwise.
  */
@@ -29,6 +29,8 @@ public record RunReport(Path directory, String kind, String name, String status,
     public boolean isSuite() {
         return "suite".equals(kind);
     }
+
+    public boolean isCancelled() { return "cancelled".equals(status); }
 
     public boolean isPassed() {
         return "passed".equals(status);
@@ -75,8 +77,10 @@ public record RunReport(Path directory, String kind, String name, String status,
             Object steps = root.get("steps");
             int total = steps instanceof List<?> list ? list.size() : 0;
             int passed = 0;
+            int failed = 0;
             if (steps instanceof List<?> list) {
                 for (Object step : list) {
+                    if (step instanceof Map<?, ?> entry && "failed".equals(entry.get("status"))) failed++;
                     if (step instanceof Map<?, ?> entry && "passed".equals(entry.get("status"))) {
                         passed++;
                     }
@@ -86,7 +90,7 @@ public record RunReport(Path directory, String kind, String name, String status,
                 Json.requireString(root, "name", TEST_REPORT),
                 Json.requireString(root, "status", TEST_REPORT),
                 Json.optionalString(root, "startedAt", TEST_REPORT),
-                total, passed, total - passed, null));
+                total, passed, failed, null));
         } catch (IOException | IllegalArgumentException unreadable) {
             return Optional.empty();
         }

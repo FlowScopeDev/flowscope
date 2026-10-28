@@ -54,7 +54,7 @@ public final class ProjectScaffold {
      * content and must stay out of Git (CLAUDE.md).
      */
     static List<String> gitignoreLines() {
-        return List.of("# FlowScope", "reports/", "sessions/");
+        return List.of("# FlowScope", "reports/", "sessions/", "**/.secrets", "**/.secrets-*.tmp");
     }
 
     /** Appends only the missing lines. Never reorders or rewrites what is already there. */

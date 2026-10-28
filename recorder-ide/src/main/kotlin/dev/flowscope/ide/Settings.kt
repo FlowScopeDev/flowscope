@@ -50,6 +50,7 @@ internal fun SettingsSurface(
     onChooseSecretsFile: () -> Unit,
     onClearSecretsFile: () -> Unit,
     about: AboutPanel,
+    secretsProjectRoot: Path? = null,
     commands: List<Command> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
@@ -128,10 +129,10 @@ internal fun SettingsSurface(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Local secrets file", color = TextHi, fontSize = 13.sp)
+                    Text(if (secretsProjectRoot == null) "Local secrets file" else "Project secrets file", color = TextHi, fontSize = 13.sp)
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        secretsFile?.fileName?.toString() ?: "Not configured",
+                        secretsFile?.toString() ?: "Not configured",
                         color = TextMid,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
@@ -141,7 +142,7 @@ internal fun SettingsSurface(
                         when {
                             secretsFile == null -> "Choose an owner-only dotenv file for local runs."
                             Files.isRegularFile(secretsFile) && Files.isReadable(secretsFile) -> "Ready for local runs"
-                            else -> "File unavailable — choose a replacement"
+                            else -> "No file yet — use Reveal and edit to create it"
                         },
                         color = if (secretsFile != null &&
                             !(Files.isRegularFile(secretsFile) && Files.isReadable(secretsFile))
@@ -150,7 +151,7 @@ internal fun SettingsSurface(
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        "Values stay in memory and are never shown or written to reports.",
+                        "Values are hidden until revealed. Environment values override the file during runs.",
                         color = TextMid,
                         fontSize = 11.sp,
                     )
@@ -161,9 +162,11 @@ internal fun SettingsSurface(
                 }
                 if (secretsFile != null) {
                     Spacer(Modifier.width(8.dp))
-                    OutlinedButton(onClick = onClearSecretsFile) { Text("Clear", fontSize = 12.sp) }
+                    OutlinedButton(onClick = onClearSecretsFile) { Text(if (secretsProjectRoot == null) "Clear" else "Use default", fontSize = 12.sp) }
                 }
             }
+
+            SecretsEditor(secretsFile, secretsProjectRoot)
 
             Spacer(Modifier.height(34.dp))
             Text(

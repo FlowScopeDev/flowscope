@@ -139,3 +139,17 @@ step events. The plan contains no step arguments or runtime values and remains a
 These observer files are not public interchange formats; final JSON/HTML/JUnit report schemas are
 unchanged. Older completed reports still show their recorded steps; older active runs cannot name
 unobserved future steps without a saved plan.
+
+## Cancellation and project secrets
+
+Run-report schema 2 adds `cancelled` as a status for an explicitly stopped run and its interrupted
+step or suite child. Future steps/tests remain `skipped`; cleanup outcomes and failures retain their
+existing fields. Suite totals include cancelled children among skipped unless cleanup failed. JUnit
+uses skipped cases for cancellation and retains genuine failures, including cleanup failures. Existing
+passed/failed runs and CLI exit codes are unchanged; cancellation is not success.
+
+Project runs now auto-load `<flowsDir>/.secrets`; explicit `--secrets-file` overrides it. Existing
+dotenv syntax and environment precedence are unchanged. A missing default means no file; an invalid
+or insecure default fails rather than silently ignoring it. No-project CLI runs still require an
+explicit file. IDE overrides are project-specific, with its legacy global choice used only without
+a project. The editable JSON view is an IDE interface, not a new secret-file format.

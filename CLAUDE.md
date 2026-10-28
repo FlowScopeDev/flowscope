@@ -131,8 +131,11 @@ actions are always restricted to the test's declared package; never use a global
 Runtime values use one taint-aware in-memory store. `${secret.name}`, generated values, dates,
 transforms, API captures, and suite variables must never persist their values. `set-date`,
 `set-value`, `transform`, and `secret` are fixed declarative actions—not an expression or scripting
-escape hatch. Local dotenv secrets load only through an explicit CLI option or the user-local IDE
-preference, never automatically from a project. Environment values override matching file entries;
+escape hatch. Local dotenv secrets auto-load from `<flowsDir>/.secrets` when a project is selected or discovered.
+An explicit CLI `--secrets-file` or project-specific IDE selection overrides that default; a global IDE
+selection applies only without a project. Never discover secrets without a project. Settings may
+show names masked and reveal/edit values as JSON only on an explicit click; save owner-only dotenv
+atomically and refuse concurrent edits. Ignore secret files and temporary writes in project Git. Environment values override matching file entries;
 POSIX secret files must be owner-only.
 Diagnostic redaction must track selected source values rather than every environment or secrets-file
 entry. References, requirements, secret bindings, and environment equality guards select source
@@ -229,6 +232,13 @@ and suite grouping/report reference), never arguments or values. `RunSteps` comb
 progress and completed child reports for the detail pane. Suite hooks emit progress too. Pending
 steps must never be inferred as passed; distinguish skipped, not run and interrupted. Reads of child
 report references stay inside the run directory, including through symlinks.
+
+IDE Stop applies only to its own active run. A run-scoped `RunCancellation` interrupts ordinary
+steps and blocking I/O, skips remaining setup/test work regardless of continue-on-failure, and
+never interrupts test/suite `after` cleanup. Clear cancellation interrupts before cleanup; retain
+cleanup failures. Freeze the cancellation verdict before reports and release the UI only after
+cleanup/reporting finishes. Cancelled runs/active steps use `cancelled`, unstarted work is `skipped`;
+JUnit represents cancellation as skipped unless real failures need retaining. No process-wide kills.
 
 Runs started from the IDE post one best-effort operating-system notification after reports have been
 written. Distinguish a single test from a regression suite, include aggregate suite counts, and keep

@@ -1,6 +1,11 @@
 package dev.flowscope.host;
 
-import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -39,18 +44,43 @@ interface FlowHttpClient {
                 : HttpRequest.BodyPublishers.ofString(body);
             request.method(method, publisher);
             long started = System.nanoTime();
-            HttpResponse<InputStream> response = client.send(request.build(),
-                HttpResponse.BodyHandlers.ofInputStream());
-            byte[] bytes;
-            try (InputStream stream = response.body()) {
-                bytes = stream.readNBytes(MAX_RESPONSE_BYTES + 1);
+            var pending = client.sendAsync(request.build(), info -> new LimitedBody());
+            HttpResponse<byte[]> response;
+            try {
+                response = pending.get(timeoutMillis, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException | TimeoutException stopped) {
+                pending.cancel(true);
+                if (stopped instanceof InterruptedException interrupted) throw interrupted;
+                throw new java.net.http.HttpTimeoutException("API request timed out");
+            } catch (ExecutionException failed) {
+                if (failed.getCause() instanceof Exception cause) throw cause;
+                throw failed;
             }
-            if (bytes.length > MAX_RESPONSE_BYTES) {
-                throw new IllegalStateException("API response exceeded 2 MiB");
-            }
+            byte[] bytes = response.body();
             return new Response(response.statusCode(), new String(bytes,
                 java.nio.charset.StandardCharsets.UTF_8), response.headers().map(),
                 Duration.ofNanos(System.nanoTime() - started).toMillis());
         };
+    }
+
+    /** Bound memory while waiting interruptibly for the complete body, including slow servers. */
+    final class LimitedBody implements HttpResponse.BodySubscriber<byte[]> {
+        private final HttpResponse.BodySubscriber<byte[]> delegate = HttpResponse.BodySubscribers.ofByteArray();
+        private Flow.Subscription subscription;
+        private long size;
+        private boolean done;
+        public CompletionStage<byte[]> getBody() { return delegate.getBody(); }
+        public void onSubscribe(Flow.Subscription value) { subscription = value; delegate.onSubscribe(value); }
+        public void onNext(List<ByteBuffer> buffers) {
+            if (done) return;
+            for (ByteBuffer buffer : buffers) size += buffer.remaining();
+            if (size > MAX_RESPONSE_BYTES) {
+                done = true;
+                subscription.cancel();
+                delegate.onError(new IllegalStateException("API response exceeded 2 MiB"));
+            } else delegate.onNext(buffers);
+        }
+        public void onError(Throwable error) { if (!done) { done = true; delegate.onError(error); } }
+        public void onComplete() { if (!done) { done = true; delegate.onComplete(); } }
     }
 }

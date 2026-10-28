@@ -31,7 +31,8 @@ not exist.
 5. **Validate.** `flowscope test validate flows/tests/<name>.flow`. Exit `0` is valid, `2` is a syntax
    error with a line number. Fix and repeat. Validate the whole project with `flowscope project validate`.
 6. **Run it when a device is available:** `flowscope test run <name> --serial <serial>`. Add
-   `--secrets-file <owner-only-path>` only when the flow declares local secret inputs. Exit `0`
+   `--secrets-file <owner-only-path>` to override the project default `<flowsDir>/.secrets`, or when
+   running without a project. Never commit secret files or include their values in artifacts. Exit `0`
    passed, `1` failed. On failure read `reports/<run>/report.json`; it records the failing step, a
    screenshot and the last UI hierarchy. Use `--keep-hierarchy` on test or suite runs to retain XML
    for each executed step. Fix the selector or the wait, never add a sleep.

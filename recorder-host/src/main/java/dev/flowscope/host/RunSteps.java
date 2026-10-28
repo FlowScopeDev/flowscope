@@ -12,7 +12,7 @@ import java.util.Set;
 /** Metadata-only step plan and results for the IDE. Never serializes step arguments or values. */
 public final class RunSteps {
     public static final String FILE = "run-plan.json";
-    private static final Set<String> STATUSES = Set.of("pending", "running", "passed", "failed", "skipped", "interrupted", "not-run");
+    private static final Set<String> STATUSES = Set.of("pending", "running", "passed", "failed", "skipped", "interrupted", "not-run", "cancelled");
 
     private RunSteps() {}
 

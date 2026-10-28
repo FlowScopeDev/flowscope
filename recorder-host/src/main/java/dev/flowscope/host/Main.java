@@ -428,7 +428,7 @@ public final class Main {
         Device selected = selectDevice(new AdbClient(), serialFor(options, project));
         FlowTestRunner runner = new FlowTestRunner(
             new AdbClient(), selected, flowTest, outputFor(options, project, Path.of("test-runs")),
-            options.path("--secrets-file", null)).keepHierarchy(options.flag("--keep-hierarchy"));
+            ProjectSecrets.resolve(project.orElse(null), options.path("--secrets-file", null))).keepHierarchy(options.flag("--keep-hierarchy"));
         if (progressEnabled()) runner.observe(Main::printStepProgress);
         boolean passed = runner.run();
         // Name the phase that broke on stderr: a cleanup failure and a failed assertion are very
@@ -505,7 +505,7 @@ public final class Main {
         Device selected = selectDevice(new AdbClient(), serialFor(options, project));
         FlowSuiteRunner runner = new FlowSuiteRunner(new AdbClient(), selected, parsed, path,
             project.orElse(null), outputFor(options, project, Path.of("test-runs")),
-            options.path("--secrets-file", null)).keepHierarchy(options.flag("--keep-hierarchy"));
+            ProjectSecrets.resolve(project.orElse(null), options.path("--secrets-file", null))).keepHierarchy(options.flag("--keep-hierarchy"));
         boolean passed = runner.run();
         System.out.println("Report: " + runner.root().resolve("suite-report.json"));
         return passed ? 0 : 1;
@@ -673,7 +673,8 @@ public final class Main {
             set-date output can feed value= on the next one to chain dates. set-value supports
             uuid, integer, string, and email generators. transform is restricted to trim, case,
             URL/base64 encoding, substring, prefix, and suffix. Runtime values are never reported.
-            test and suite runs accept --secrets-file <owner-only-path>; environment values win.
+            test and suite runs auto-load <flowsDir>/.secrets in a project; --secrets-file <owner-only-path>
+            overrides it. Environment values win. No project means no automatic secret-file discovery.
             Every run writes report.json, report.html, and junit.xml.
 
             FlowScope suite format v1

@@ -45,6 +45,7 @@ public class AdbClient {
      */
     public CommandResult run(List<String> arguments, long timeoutMillis)
         throws IOException, InterruptedException {
+        RunCancellation.checkCurrent();
         Process process = new ProcessBuilder(command(arguments)).start();
         ByteArrayOutputStream stdout = new ByteArrayOutputStream();
         ByteArrayOutputStream stderr = new ByteArrayOutputStream();
@@ -116,6 +117,7 @@ public class AdbClient {
 
     public byte[] execOut(String serial, String... deviceCommand)
         throws IOException, InterruptedException {
+        RunCancellation.checkCurrent();
         List<String> command = new ArrayList<>();
         command.add(executable);
         command.add("-s");
@@ -125,10 +127,22 @@ public class AdbClient {
         // Unlike `shell`, adb exec-out already escapes its command arguments.
         Process process = new ProcessBuilder(command).start();
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        process.getInputStream().transferTo(bytes);
-        String error = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-        int exitCode = process.waitFor();
-        if (exitCode != 0) throw new IOException("ADB command failed: " + error.strip());
+        ByteArrayOutputStream errors = new ByteArrayOutputStream();
+        Thread outPump = Thread.ofVirtual().start(() -> drain(process.getInputStream(), bytes));
+        Thread errPump = Thread.ofVirtual().start(() -> drain(process.getErrorStream(), errors));
+        try {
+            if (!process.waitFor(DEFAULT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly();
+                throw new IOException("ADB exec-out timed out");
+            }
+            outPump.join();
+            errPump.join();
+        } catch (InterruptedException interrupted) {
+            process.destroyForcibly();
+            throw interrupted;
+        }
+        if (process.exitValue() != 0) throw new IOException("ADB command failed: "
+            + errors.toString(StandardCharsets.UTF_8).strip());
         return bytes.toByteArray();
     }
 

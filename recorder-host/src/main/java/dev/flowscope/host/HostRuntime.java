@@ -262,6 +262,8 @@ final class HostRuntime {
                 if (!queryNames.isEmpty()) details.put("queryNames", String.join(",", queryNames));
                 if (!captured.isEmpty()) details.put("captured", String.join(",", captured));
                 return Map.copyOf(details);
+            } catch (InterruptedException cancelled) {
+                throw cancelled;
             } catch (Exception failure) {
                 last = failure;
                 if (interval <= 0 || System.nanoTime() >= deadline) break;

@@ -71,8 +71,12 @@ internal data class RunControl(
     val kind: EditorKind,
     val shortcut: String,
     val onRun: () -> Unit,
+    val stopping: Boolean = false,
+    val onStop: () -> Unit = {},
 ) {
-    val label: String get() = if (kind == EditorKind.Suite) "Run suite on device" else "Run flow on device"
+    val actionable: Boolean get() = if (running) !stopping else enabled
+    fun activate() { if (actionable) { if (running) onStop() else onRun() } }
+    val label: String get() = if (stopping) "Stopping · running cleanup…" else if (running) "Stop run" else if (kind == EditorKind.Suite) "Run suite on device" else "Run flow on device"
 }
 
 /**
