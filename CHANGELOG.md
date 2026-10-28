@@ -23,6 +23,9 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Fixed
 
+- The XML and Compose sample list tests scroll to item 45 and back to item 1 by selector,
+  avoiding flaky assumptions that equal swipe counts return to the same position.
+
 - Selectors skip nodes with no area. Compose reports a node scrolled out of its viewport as
   `[0,0][0,0]`, which made `assert-visible` and `scroll-to` treat an off-screen element as visible.
 

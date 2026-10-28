@@ -7,13 +7,9 @@ timeout 10000
 step launch
 step tap id=io.github.flowscopedev.sample:id/open_list_compose
 step wait-visible id=item_1
-step scroll direction=up
-step scroll direction=up
-step scroll direction=up
+step scroll-to id=item_45 max-swipes=20
 step assert-not-visible id=item_1
-step scroll direction=down
-step scroll direction=down
-step scroll direction=down
+step scroll-to id=item_1 direction=down max-swipes=20
 step tap id=item_1
 step assert-visible id=detail_title
 step assert-visible text="This is the detail text for item 1."

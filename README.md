@@ -219,6 +219,9 @@ Compose, gestures and scrolling, text input and validation, runtime permissions,
 WebViews, install-referrer simulation, and network and background work — the fastest way to see
 what a real test looks like.
 
+The XML and Compose list flows use `scroll-to` to reach item 45 and return to item 1 before
+opening its detail screen; they do not assume equal swipe counts restore the original position.
+
 Eleven of them run as `sample.suite`, which CI replays on an Android API 35 emulator on every push,
 so they cannot drift from the app. `sample-gestures.flow` is the exception and says so in its first
 line: it is parser-validated but not yet verified on a device.

@@ -398,7 +398,9 @@ A shared file resolver serves on-disk validation, preflight and reads, including
 `@fixtures` under flowsDir. Literal unsafe paths fail before API setup. Runtime expression paths
 remain preflight inputs. Device readiness checks distinguish locked/off devices and foreign focused
 windows; an intentional launch precedes foreground validation. Slow scroll-to gestures compare only
-scroll-container descendants, with a second fresh dump confirming a suspected end. Dumps clear the
+scroll-container descendants, with a second fresh dump confirming a suspected end. The XML and
+Compose sample list flows use target-based scrolling to item 45 and back to item 1, preserving
+the detail-navigation checks without depending on symmetric swipe distances. Dumps clear the
 runner's prior remote XML first so a failed capture cannot return stale content.
 
 With `--keep-hierarchy`, each executed step retains XML and links it in report details. Capture
