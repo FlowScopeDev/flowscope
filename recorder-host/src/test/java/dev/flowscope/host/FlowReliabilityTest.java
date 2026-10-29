@@ -95,6 +95,21 @@ class FlowReliabilityTest {
         assertEquals("dialog", UiHierarchy.covering(windows, windows.getFirst(), 50, 50).id());
     }
 
+    @Test void transparentContainerCoversOnlyThroughItsChildren() throws Exception {
+        var nodes = hierarchy("<node bounds=\"[0,0][100,100]\">"
+            + "<node resource-id=\"content\" drawing-order=\"1\" bounds=\"[0,0][100,100]\">"
+            + node("target", "drawing-order=\"1\"") + "</node>"
+            + "<node resource-id=\"decor\" drawing-order=\"3\" bounds=\"[0,0][100,100]\">"
+            + "<node resource-id=\"status_bar\" drawing-order=\"1\" bounds=\"[0,0][100,10]\"/>"
+            + "<node resource-id=\"nav_bar\" drawing-order=\"2\" bounds=\"[0,90][100,100]\"/></node>"
+            + "<node resource-id=\"scrim\" clickable=\"true\" drawing-order=\"4\" bounds=\"[0,60][100,100]\">"
+            + "<node resource-id=\"scrim_label\" bounds=\"[0,95][10,100]\"/></node></node>");
+        var target = UiHierarchy.find(nodes, Map.of("id", "target"));
+        assertNull(UiHierarchy.covering(nodes, target, 50, 50));
+        assertEquals("status_bar", UiHierarchy.covering(nodes, target, 50, 5).id());
+        assertEquals("scrim", UiHierarchy.covering(nodes, target, 50, 70).id());
+    }
+
     @Test void coveredTapFailsBeforeSendingInput() throws Exception {
         FakeAdb adb = new FakeAdb();
         adb.nodes = node("target", "drawing-order=\"1\"") + node("need_help_btn", "drawing-order=\"2\"");

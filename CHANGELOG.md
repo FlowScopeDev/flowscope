@@ -39,6 +39,13 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 - The XML and Compose sample list tests scroll to item 45 and back to item 1 by selector,
   avoiding flaky assumptions that equal swipe counts return to the same position.
 
+- A `uiautomator dump` that exits 0 without writing its file (`null root node`, `could not get idle
+  state`, common just after `launch`) is retried instead of failing the step with an XML parse error.
+
+- Cover detection ignores non-clickable containers and judges them by their children. The system
+  decor is a full-screen layout holding only the status and navigation bar strips, and it made every
+  target count as covered, so `scroll-to` swiped past elements it could see and taps were refused.
+
 - Selectors skip nodes with no area. Compose reports a node scrolled out of its viewport as
   `[0,0][0,0]`, which made `assert-visible` and `scroll-to` treat an off-screen element as visible.
 

@@ -188,6 +188,13 @@ class FlowGestureActionsTest {
     }
 
     @Test
+    void aDumpThatWroteNoFileIsRetried() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(screen(node("Home", 0, 0, 1000, 100, "")));
+        adb.unwrittenDumps = 2;
+        assertTrue(run(adb, "step assert-visible text=\"Home\""));
+    }
+
+    @Test
     void fromIdIsOnlyAcceptedOnScrollTo() {
         assertRejected("step tap text=\"x\" from-id=app:id/list", "from-id is only valid on scroll-to");
         assertRejected("step scroll-to text=\"x\" from-id=\"\"", "from-id must name a resource id");
@@ -289,6 +296,7 @@ class FlowGestureActionsTest {
         final List<String> commands = new ArrayList<>();
         private final List<String> screens;
         int swipes;
+        int unwrittenDumps;
         String inputMethod = "";
 
         ScriptedAdb(String... screens) {
@@ -310,6 +318,10 @@ class FlowGestureActionsTest {
 
         @Override
         public byte[] execOut(String serial, String... command) {
+            if (List.of(command).contains("cat") && unwrittenDumps > 0) {
+                unwrittenDumps--;
+                return "cat: /data/local/tmp/flowscope-test-window.xml: No such file or directory".getBytes(StandardCharsets.UTF_8);
+            }
             if (List.of(command).contains("cat")) {
                 return screens.get(Math.min(swipes, screens.size() - 1)).getBytes(StandardCharsets.UTF_8);
             }

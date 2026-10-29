@@ -107,11 +107,18 @@ public final class UiHierarchy {
         return nodes.stream().filter(node -> node.hasArea() && node.matches(arguments)).skip(index).findFirst().orElse(null);
     }
 
-    /** Only unrelated branches can cover a target; a label inside its button is not an overlay. */
+    /**
+     * Only unrelated branches can cover a target; a label inside its button is not an overlay. A
+     * non-clickable container is judged by its children alone: the system decor is a full-screen
+     * layout holding only the status and navigation bar strips, and covers nothing between them.
+     */
     static UiNode covering(List<UiNode> nodes, UiNode target, int x, int y) {
+        var containers = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<UiNode, Boolean>());
+        for (UiNode node : nodes) if (node.parent != null) containers.add(node.parent);
         UiNode cover = null;
         for (UiNode node : nodes) {
             if (node == target || !node.hasArea() || !node.contains(x, y)
+                || (containers.contains(node) && !node.clickable)
                 || descendant(node, target) || descendant(target, node)) continue;
             if (drawnAfter(node, target) && (cover == null || drawnAfter(node, cover))) cover = node;
         }
