@@ -63,9 +63,21 @@ The desktop workspace is functional end to end:
 
 - **Live recorder** streams zero-code accessibility/log events or instrumented UI/API/service events.
 - **Test steps** edits, validates, saves, and runs the generated `.flow` test on the selected device.
-- **Evidence** browses checkpoint screenshots and opens the session folder.
+- **Timeline, Evidence, and Tree** share a **Session / Selected run** source. Selecting a test or
+  suite shows live runner steps, saved screenshots and hierarchies, and completed child reports'
+  sanitized agent events. Switching tabs or inspecting an event keeps that source selected.
+- **Evidence** groups run artifacts by test and step when metadata is available; recording
+  checkpoints remain under Session. Missing screenshots and hierarchies are shown explicitly.
+- Native **Tree → Refresh artifacts** rereads captured output; **Inspect live device** captures a
+  fresh hierarchy when no run is active. It never substitutes live data for a run's saved evidence.
 - **Component tree** renders the latest captured UIAutomator hierarchy.
-- **Performance** collects package-scoped `dumpsys meminfo` and `gfxinfo` output.
+- **Perf → Run timing** shows saved durations, slow steps, and hierarchy-dump costs.
+  **Device snapshot** explicitly collects package-scoped `dumpsys meminfo` and `gfxinfo` output,
+  reports partial/unavailable/failed collection, and compares only the same device, package and process.
+- Recording Logcat and agent streams follow the package UID across app restarts; failures appear in
+  the IDE. Logs contain warnings/errors only. Zero-code does not observe app network/background work;
+  those events need instrumented debug-agent hooks. Host API steps are labelled as runner actions,
+  and ordinary test runs do not collect recording Logcat.
 - **Settings** opens from the gear immediately left of Record in the session bar. Appearance can follow the
   operating system or be pinned to Light or Dark; the choice is applied immediately and saved in
   `~/.flowscope/theme.txt`. **Show device display** (also in the command palette) can be turned off to stop the

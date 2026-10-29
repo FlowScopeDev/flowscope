@@ -27,6 +27,11 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Fixed
 
+- Timeline, Evidence and Tree follow selected tests/suites, including live steps and saved artifacts;
+  Perf separates run timing from device snapshots and reports unavailable/partial collection.
+- Recording Logcat and agent streams survive app restarts through exact package UID matching,
+  surface capture failures, and clean up streams when startup fails.
+
 - The XML and Compose sample list tests scroll to item 45 and back to item 1 by selector,
   avoiding flaky assumptions that equal swipe counts return to the same position.
 

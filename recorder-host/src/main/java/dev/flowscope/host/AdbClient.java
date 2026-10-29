@@ -188,6 +188,18 @@ public class AdbClient {
         return EmulatorClient.parseAvdName(result.stdout());
     }
 
+    /** Exact package match: pm's trailing package filter itself only performs substring matching. */
+    public String packageUid(String serial, String packageName) throws IOException, InterruptedException {
+        CommandResult result = run(List.of("-s", serial, "shell", "pm", "list", "packages", "-U", packageName));
+        if (result.exitCode() != 0) return null;
+        Pattern pattern = Pattern.compile("^package:" + Pattern.quote(packageName) + "\\s+uid:(\\d+)(?:\\s.*)?$");
+        for (String line : result.stdout().split("\\R")) {
+            Matcher match = pattern.matcher(line.strip());
+            if (match.matches()) return match.group(1);
+        }
+        return null;
+    }
+
     /**
      * Installed application IDs on the device, third-party packages first so the list is useful
      * for picking a target under test. Returns an empty list if the device cannot be queried.

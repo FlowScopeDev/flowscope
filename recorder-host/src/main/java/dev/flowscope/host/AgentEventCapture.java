@@ -11,8 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Collects the debug agent's Logcat events while an instrumented test runs, so the report can show
@@ -28,7 +26,6 @@ final class AgentEventCapture {
     private static final java.util.Set<String> LISTED = java.util.Set.of(
         "agent.hello", "semantic.action", "network.request", "network.response", "background.work");
     private static final int MAX_LISTED = 500;
-    private static final Pattern UID = Pattern.compile("uid:(\\d+)");
 
     record Event(Instant arrivedAt, String kind, String summary) {}
 
@@ -42,14 +39,12 @@ final class AgentEventCapture {
     static AgentEventCapture start(AdbClient adb, String serial, String packageName) {
         AgentEventCapture capture = new AgentEventCapture();
         try {
-            AdbClient.CommandResult uids = adb.run(
-                List.of("-s", serial, "shell", "pm", "list", "packages", "-U", packageName));
-            Matcher matcher = UID.matcher(uids.stdout());
-            if (uids.exitCode() != 0 || !matcher.find()) {
+            String uid = adb.packageUid(serial, packageName);
+            if (uid == null) {
                 capture.unavailable = "the package's UID could not be determined";
                 return capture;
             }
-            capture.process = adb.stream(serial, "logcat", "--uid=" + matcher.group(1), "-T", "1",
+            capture.process = adb.stream(serial, "logcat", "--uid=" + uid, "-T", "1",
                 "-v", "raw", "-s", "FlowScopeAgent:I", "*:S");
             Process stream = capture.process;
             capture.pump = Thread.ofVirtual().name("flowscope-test-agent-events").start(() -> {

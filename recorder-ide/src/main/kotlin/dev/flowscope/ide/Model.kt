@@ -130,10 +130,9 @@ internal data class EvidenceArtifact(
     val sequence: Int,
     val reason: String,
     val directory: Path,
-) {
-    val screenshot: Path get() = directory.resolve("screenshot.png")
-    val hierarchy: Path get() = directory.resolve("hierarchy.xml")
-}
+    val screenshot: Path? = directory.resolve("screenshot.png"),
+    val hierarchy: Path? = directory.resolve("hierarchy.xml"),
+)
 
 // One structured health model feeds the session bar and its subsystem detail menu.
 internal enum class Subsystem(val label: String) {

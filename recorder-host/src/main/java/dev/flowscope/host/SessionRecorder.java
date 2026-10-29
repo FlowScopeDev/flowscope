@@ -35,9 +35,17 @@ public final class SessionRecorder implements AutoCloseable {
     private Thread logcatPump;
     private Process agentEvents;
     private Thread agentEventsPump;
-    private Process accessibility;
+    private volatile Process accessibility;
     private Thread accessibilityPump;
     private volatile String accessibilityPid;
+    private final java.util.concurrent.ConcurrentMap<String, String> captureIssues = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public java.util.Map<String, String> captureIssues() { return java.util.Map.copyOf(captureIssues); }
+
+    private void captureIssue(String channel, String message) {
+        captureIssues.put(channel, message);
+        observer.accept("capture-status", channel + ": " + message);
+    }
     /** Kills the on-device monitor if the JVM dies without close(), so it is not orphaned. */
     private final Thread shutdownHook = new Thread(this::killAccessibilityRemote, "flowscope-recorder-shutdown");
     private int checkpointNumber;
@@ -128,12 +136,21 @@ public final class SessionRecorder implements AutoCloseable {
 
     public void start() throws IOException, InterruptedException {
         Runtime.getRuntime().addShutdownHook(shutdownHook);
-        writeManifest(null);
-        String packagePid = findPackagePid();
-        startFilteredLogcat(packagePid);
-        if (mode == CaptureMode.INSTRUMENTED) startAgentEvents(packagePid);
-        captureCheckpoint("recording-started");
-        if (mode == CaptureMode.ZERO_CODE) startAccessibilityBestEffort(false);
+        try {
+            writeManifest(null);
+            String uid = adb.packageUid(device.serial(), packageName);
+            try { startFilteredLogcat(uid); }
+            catch (IOException failure) { captureIssue("logs", "Logcat could not start."); }
+            if (mode == CaptureMode.INSTRUMENTED) {
+                try { startAgentEvents(uid); }
+                catch (IOException failure) { captureIssue("agent", "Agent stream could not start."); }
+            }
+            captureCheckpoint("recording-started");
+            if (mode == CaptureMode.ZERO_CODE) startAccessibilityBestEffort(false);
+        } catch (IOException | InterruptedException | RuntimeException failure) {
+            try { close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
     public Path recordInteractively() throws IOException, InterruptedException {
@@ -194,16 +211,17 @@ public final class SessionRecorder implements AutoCloseable {
         Files.writeString(directory.resolve("metadata.json"), metadata, StandardCharsets.UTF_8);
     }
 
-    private void startFilteredLogcat(String packagePid) throws IOException {
+    private void startFilteredLogcat(String packageUid) throws IOException {
         Path target = root.resolve("logcat.txt.gz");
-        if (packagePid == null) {
+        if (packageUid == null) {
+            captureIssue("logs", "Package UID unavailable; Logcat was not captured.");
             try (GZIPOutputStream ignored = new GZIPOutputStream(Files.newOutputStream(target))) {}
             Files.writeString(root.resolve("logcat-error.txt"),
-                "Package process is not running; Logcat was not captured.\n", StandardCharsets.UTF_8);
+                "Package UID unavailable; Logcat was not captured.\n", StandardCharsets.UTF_8);
             return;
         }
         String[] command = new String[] {
-            "logcat", "--pid=" + packagePid, "-T", "1", "-v", "epoch", "*:W"};
+            "logcat", "--uid=" + packageUid, "-T", "1", "-v", "epoch", "*:W"};
         logcat = adb.stream(device.serial(), command);
         logcatPump = Thread.ofVirtual().name("flowscope-logcat-compressor").start(() -> {
             try (BufferedReader reader = new BufferedReader(
@@ -214,26 +232,30 @@ public final class SessionRecorder implements AutoCloseable {
                      new java.io.OutputStreamWriter(gzip, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("---------")) continue;
                     writer.write(line);
                     writer.newLine();
                     observer.accept("logs", line);
                 }
             } catch (IOException ignored) {
                 // The ADB stream closes during normal recorder shutdown.
+            } finally {
+                if (!closed.get()) captureIssue("logs", "Logcat stream stopped unexpectedly; restart recording to reconnect.");
             }
         });
     }
 
-    private void startAgentEvents(String packagePid) throws IOException {
+    private void startAgentEvents(String packageUid) throws IOException {
         Path target = root.resolve("events.jsonl");
-        if (packagePid == null) {
+        if (packageUid == null) {
+            captureIssue("agent", "Package UID unavailable; agent events were not captured.");
             Files.writeString(target, "", StandardCharsets.UTF_8);
             Files.writeString(root.resolve("agent-error.txt"),
-                "Package process is not running; agent events were not captured.\n",
+                "Package UID unavailable; agent events were not captured.\n",
                 StandardCharsets.UTF_8);
             return;
         }
-        String[] command = new String[] {"logcat", "--pid=" + packagePid, "-T", "1", "-v",
+        String[] command = new String[] {"logcat", "--uid=" + packageUid, "-T", "1", "-v",
             "raw", "-s", "FlowScopeAgent:I", "*:S"};
         agentEvents = adb.stream(device.serial(), command);
         agentEventsPump = Thread.ofVirtual().name("flowscope-agent-events").start(() -> {
@@ -251,6 +273,8 @@ public final class SessionRecorder implements AutoCloseable {
                 }
             } catch (IOException ignored) {
                 // The ADB stream closes during normal recorder shutdown.
+            } finally {
+                if (!closed.get()) captureIssue("agent", "Agent stream stopped unexpectedly; restart recording to reconnect.");
             }
         });
     }
@@ -279,6 +303,7 @@ public final class SessionRecorder implements AutoCloseable {
             sweepUiautomator(existingPids);
             throw new IOException("Could not start the accessibility event monitor");
         }
+        Process monitor = accessibility;
         Path target = root.resolve("accessibility-events.txt");
         accessibilityPump = Thread.ofVirtual().name("flowscope-accessibility-events").start(() -> {
             StandardOpenOption[] options = append
@@ -295,6 +320,8 @@ public final class SessionRecorder implements AutoCloseable {
                 }
             } catch (IOException ignored) {
                 // The remote monitor closes during normal recorder shutdown.
+            } finally {
+                if (!closed.get() && accessibility == monitor) captureIssue("accessibility", "Accessibility monitor stopped unexpectedly; UI events unavailable.");
             }
         });
     }
@@ -303,6 +330,7 @@ public final class SessionRecorder implements AutoCloseable {
         try {
             startAccessibility(append);
         } catch (IOException unavailable) {
+            captureIssue("accessibility", "Accessibility monitor unavailable; embedded-device interactions can still be recorded.");
             Files.writeString(root.resolve("accessibility-error.txt"),
                 unavailable.getMessage() + "\n", StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE, StandardOpenOption.APPEND);
@@ -316,13 +344,6 @@ public final class SessionRecorder implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while locating the accessibility monitor", interrupted);
         }
-    }
-
-    private String findPackagePid() throws IOException, InterruptedException {
-        AdbClient.CommandResult result = adb.run(List.of(
-            "-s", device.serial(), "shell", "pidof", packageName));
-        if (result.exitCode() != 0 || result.stdout().isBlank()) return null;
-        return result.stdout().strip().split("\\s+")[0];
     }
 
     private void writeManifest(Instant endedAt) throws IOException {
@@ -358,6 +379,8 @@ public final class SessionRecorder implements AutoCloseable {
     }
 
     private void stopAccessibility() {
+        Process stopped = accessibility;
+        accessibility = null;
         String remotePid = accessibilityPid;
         accessibilityPid = null;
         if (remotePid != null) {
@@ -369,8 +392,7 @@ public final class SessionRecorder implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
-        stop(accessibility);
-        accessibility = null;
+        stop(stopped);
         join(accessibilityPump);
         accessibilityPump = null;
     }

@@ -66,6 +66,7 @@ import dev.flowscope.host.WebViewTarget
 internal fun EvidenceSurface(
     modifier: Modifier,
     evidence: List<EvidenceArtifact>,
+    runSource: Boolean = false,
     selected: EvidenceArtifact?,
     image: ImageBitmap?,
     nodes: List<UiHierarchy.UiNode>,
@@ -83,14 +84,14 @@ internal fun EvidenceSurface(
             Text("Evidence", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextHi)
             Spacer(Modifier.width(10.dp))
             Text(
-                "${evidence.size} CHECKPOINT(S)",
+                "${evidence.size} ARTIFACT(S)",
                 color = TextMid,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 9.sp,
                 letterSpacing = 1.sp,
             )
             Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = onRefresh) { Text("Refresh", fontSize = 12.sp) }
+            OutlinedButton(onClick = onRefresh) { Text("Refresh artifacts", fontSize = 12.sp) }
             Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = onOpenFolder, enabled = evidence.isNotEmpty()) {
                 Text("Open folder", fontSize = 12.sp)
@@ -102,8 +103,9 @@ internal fun EvidenceSurface(
             EmptyState(
                 mark = EmptyMark.Evidence,
                 caps = "NO EVIDENCE",
-                message = "Capture a checkpoint to record a screenshot, hierarchy, and window state.",
-                hint = "⌘⇧C",
+                message = if (runSource) "This run has no saved evidence yet. Screenshots, failures and retained hierarchies appear here when written."
+                    else "Start recording, then capture a checkpoint for a screenshot and hierarchy.",
+                hint = if (runSource) null else "⌘⇧C",
                 modifier = Modifier.weight(1f),
             )
             return@Column
@@ -172,7 +174,7 @@ internal fun EvidenceSurface(
                     Box(Modifier.fillMaxSize().padding(14.dp), contentAlignment = Alignment.Center) {
                         Image(
                             painter = BitmapPainter(image),
-                            contentDescription = selected?.let { "Checkpoint ${it.sequence}" },
+                            contentDescription = selected?.let { "Artifact ${it.sequence} · ${it.reason}" },
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -220,7 +222,7 @@ internal fun EvidenceSurface(
                 )
                 if (nodes.isEmpty()) {
                     Text(
-                        "No hierarchy was captured for this checkpoint.",
+                        "No hierarchy was captured for this artifact.",
                         color = TextLow,
                         fontSize = 11.sp,
                         modifier = Modifier.padding(horizontal = 12.dp),
@@ -417,12 +419,15 @@ private fun EmptyGlyph(mark: EmptyMark) {
 internal fun PerformanceSurface(
     modifier: Modifier,
     snapshot: PerformanceSnapshot?,
+    runTimings: List<String>? = null,
+    collection: PerformanceCollection? = null,
     previous: PerformanceSnapshot?,
     packageName: String,
     busy: Boolean,
     onCollect: () -> Unit,
 ) {
     var showRaw by remember { mutableStateOf(false) }
+    var deviceSnapshot by remember(runTimings != null) { mutableStateOf(runTimings == null) }
 
     Column(modifier.background(Panel)) {
         Row(
@@ -450,17 +455,32 @@ internal fun PerformanceSurface(
                 )
                 Spacer(Modifier.width(8.dp))
             }
-            OutlinedButton(onClick = onCollect, enabled = !busy) {
+            OutlinedButton(onClick = { deviceSnapshot = true; onCollect() }, enabled = !busy && packageName.isNotBlank()) {
                 Text(if (busy) "Collecting…" else "Collect snapshot", fontSize = 12.sp)
             }
         }
         HorizontalDivider(color = Border)
 
+        Row(Modifier.padding(horizontal = 12.dp)) {
+            OutlinedButton(onClick = { deviceSnapshot = false }, enabled = runTimings != null) { Text("Run timing") }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = { deviceSnapshot = true }) { Text("Device snapshot") }
+        }
+        if (deviceSnapshot && collection != null) {
+            Text("${collection.status} · ${collection.message}" + (snapshot?.let {
+                "\n${it.target?.serial} · process ${it.process} · ${it.collectedAt}"
+            } ?: ""), color = TextMid, fontSize = 11.sp, modifier = Modifier.padding(12.dp))
+        }
         when {
+            !deviceSnapshot -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(14.dp)) {
+                Text("Run timing", color = TextHi)
+                Text(runTimings?.takeIf { it.isNotEmpty() }?.joinToString("\n")
+                    ?: "Timing becomes available after each test report is written.", color = TextMid, fontSize = 12.sp)
+            }
             snapshot == null -> EmptyState(
                 mark = EmptyMark.Performance,
-                caps = "NO SNAPSHOT",
-                message = "Collect a snapshot to inspect memory and rendering for this package.",
+                caps = if (busy) "COLLECTING" else "NO SNAPSHOT",
+                message = if (busy) "Reading memory and rendering counters from the device…" else "Collect a snapshot to inspect memory and rendering for this package.",
                 modifier = Modifier.weight(1f),
             )
             showRaw -> Column(
@@ -627,6 +647,8 @@ internal fun TreeSurface(
     nodes: List<UiHierarchy.UiNode>,
     subtitle: String,
     onRefresh: () -> Unit,
+    liveEnabled: Boolean = false,
+    onInspectLive: () -> Unit = {},
     webSnapshot: WebViewSnapshot?,
     webLoading: Boolean,
     webError: String?,
@@ -662,7 +684,7 @@ internal fun TreeSurface(
             Spacer(Modifier.width(10.dp))
             Text(
                 if (view == "NATIVE") "${visible.size} node(s) · $subtitle"
-                else webSnapshot?.targetUrl().orEmpty(),
+                else "Live WebView · " + webSnapshot?.targetUrl().orEmpty(),
                 color = TextMid,
                 fontSize = 11.sp,
                 maxLines = 1,
@@ -670,7 +692,9 @@ internal fun TreeSurface(
             )
             Spacer(Modifier.weight(1f))
             if (view == "NATIVE") {
-                OutlinedButton(onClick = onRefresh) { Text("Refresh", fontSize = 12.sp) }
+                OutlinedButton(onClick = onRefresh) { Text("Refresh artifacts", fontSize = 12.sp) }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onInspectLive, enabled = liveEnabled) { Text("Inspect live device", fontSize = 12.sp) }
             } else {
                 HoverTip("Refresh WebView inspection") {
                     Box(
@@ -698,8 +722,7 @@ internal fun TreeSurface(
             EmptyState(
                 mark = EmptyMark.Tree,
                 caps = "NO HIERARCHY",
-                message = "Capture a checkpoint to inspect the UI hierarchy.",
-                hint = "⌘⇧C",
+                message = "Select an artifact with a saved hierarchy, or use Inspect live device. Live inspection is unavailable during a run.",
                 modifier = Modifier.weight(1f),
             )
         } else {

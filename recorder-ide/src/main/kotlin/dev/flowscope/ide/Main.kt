@@ -210,6 +210,65 @@ private fun FlowScopeApp(
     val shell = remember { ShellState() }
     val timeline = remember { TimelineState() }
     val session = remember { SessionState() }
+    val performance = remember { PerformanceState() }
+    var runInspection by remember { mutableStateOf(RunInspection()) }
+    var loadedRun by remember { mutableStateOf<Path?>(null) }
+    var runArtifact by remember { mutableStateOf<EvidenceArtifact?>(null) }
+    var inspectionImage by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var inspectionNodes by remember { mutableStateOf<List<dev.flowscope.host.UiHierarchy.UiNode>>(emptyList()) }
+    var inspectionRefresh by remember { mutableIntStateOf(0) }
+    var inspectionRevision by remember { mutableIntStateOf(0) }
+    var liveTree by remember { mutableStateOf<List<dev.flowscope.host.UiHierarchy.UiNode>?>(null) }
+    var liveTreeStatus by remember { mutableStateOf<String?>(null) }
+    var liveTreeBusy by remember { mutableStateOf(false) }
+    var captureNotices by remember { mutableStateOf<List<String>>(emptyList()) }
+    val inspectedRun = shell.inspectionRun.takeIf { shell.inspectRun }
+    val shownEvents = if (inspectedRun != null) runInspection.events else timeline.events
+    val shownEvidence = if (inspectedRun != null) runInspection.artifacts else session.evidence
+    val shownArtifact = if (inspectedRun != null) runArtifact else session.selectedEvidence
+
+    LaunchedEffect(inspectedRun, inspectionRefresh) {
+        if (loadedRun != inspectedRun) {
+            loadedRun = inspectedRun
+            runInspection = RunInspection()
+            runArtifact = null
+            liveTree = null
+            liveTreeStatus = null
+            if (shell.selection is Selection.Event || shell.selection is Selection.Checkpoint) shell.selection = Selection.None
+        }
+        val root = inspectedRun ?: return@LaunchedEffect
+        do {
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching { readRunInspection(root) }.getOrElse {
+                    RunInspection(notes = listOf("Could not read run artifacts."))
+                }
+            }
+            runInspection = loaded
+            runArtifact = loaded.artifacts.firstOrNull {
+                it.screenshot == runArtifact?.screenshot && it.hierarchy == runArtifact?.hierarchy
+            } ?: loaded.artifacts.lastOrNull()
+            inspectionRevision++
+            if (!loaded.running && !authoring.running) break
+            delay(1_000)
+        } while (isActive)
+    }
+    LaunchedEffect(shownEvents) {
+        if (inspectedRun != null) {
+            val selected = (shell.selection as? Selection.Event)?.event
+            shownEvents.firstOrNull { it.id == selected?.id }?.let { shell.selection = Selection.Event(it) }
+        }
+    }
+    LaunchedEffect(shownArtifact, inspectionRevision) {
+        inspectionImage = null
+        inspectionNodes = emptyList()
+        val artifact = shownArtifact ?: return@LaunchedEffect
+        inspectionImage = withContext(Dispatchers.IO) { artifact.screenshot?.let(::loadImage) }
+        inspectionNodes = withContext(Dispatchers.IO) { loadHierarchyNodes(artifact.hierarchy) }
+    }
+    LaunchedEffect(projectState.root) {
+        shell.inspectRun = false
+        shell.inspectionRun = null
+    }
     var secretsOverride by remember(projectState.root) { mutableStateOf(Preferences.loadSecretsFile(projectState.root)) }
     val secretsFile = secretsOverride ?: projectState.project?.let(dev.flowscope.host.ProjectSecrets::defaultFile)
     var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
@@ -474,14 +533,13 @@ private fun FlowScopeApp(
     fun observeRecorderLine(channel: String, line: String) {
         scope.launch {
             when (channel) {
+                "capture-status" -> {
+                    captureNotices = (captureNotices + line).distinct()
+                    addEvent("!", "Capture unavailable", line, channel = Channel.Session, severity = Severity.Warning)
+                }
                 "agent" -> {
                     val kind = jsonString(line, "kind") ?: "agent.event"
-                    val channel = when {
-                        kind.startsWith("network.") -> Channel.Network
-                        kind.startsWith("background.") -> Channel.Background
-                        kind.startsWith("activity.") || kind.startsWith("navigation") -> Channel.Lifecycle
-                        else -> Channel.Ui
-                    }
+                    val channel = agentChannel(kind)
                     val step = suggestedFlowStep(line, kind)
                     addEvent(
                         agentSymbol(kind), kind, agentDetail(line, kind),
@@ -509,6 +567,7 @@ private fun FlowScopeApp(
 
     suspend fun refreshSessionArtifacts(root: Path, preferLatest: Boolean = false) {
         val loaded = withContext(Dispatchers.IO) { loadEvidence(root) }
+        inspectionRevision++
         session.evidence = loaded
         session.selectedEvidence = if (preferLatest) loaded.lastOrNull() else {
             session.selectedEvidence?.let { selected -> loaded.firstOrNull { it.directory == selected.directory } }
@@ -1010,6 +1069,7 @@ private fun FlowScopeApp(
                             ).cancellation(cancellation).observe { progress ->
                                 scope.launch { if (!authoring.stopping) authoring.status = suiteProgressStatus(progress) }
                             }
+                            scope.launch { shell.selectRun(runner.root()) }
                             val passed = runner.run()
                             val report = RunReport.read(runner.root()).orElse(null)
                             SaveOutcome(
@@ -1033,6 +1093,7 @@ private fun FlowScopeApp(
                             ).cancellation(cancellation).observe { progress ->
                                 scope.launch { if (!authoring.stopping) authoring.status = stepProgressStatus(progress) }
                             }
+                            scope.launch { shell.selectRun(runner.root()) }
                             val passed = runner.run()
                             val steps = parsed.steps().size
                             val teardown = runner.teardownFailures()
@@ -1278,37 +1339,61 @@ private fun FlowScopeApp(
 
     fun toggleDisplay() = setShowDisplay(!deviceState.showDisplay)
 
-    fun collectPerformance() {
-        val device = deviceState.selected
-        if (device == null || deviceState.packageName.isBlank()) {
-            addEvent(
-                "!", "Performance snapshot skipped",
-                "Select a device and enter an application ID first.",
-                severity = Severity.Warning,
-            )
-            return
-        }
+    fun inspectLiveTree() {
+        val device = deviceState.selected ?: return
+        if (deviceState.busy || liveTreeBusy || projectState.runs.any { it.isRunning }) return
+        val packageName = deviceState.packageName
+        liveTreeBusy = true
+        deviceState.busy = true
         scope.launch {
-            deviceState.busy = true
-
-            runCatching {
+            val result = runCatching {
                 withContext(Dispatchers.IO) {
-                    val memory = adb.run(listOf("-s", device.serial(), "shell", "dumpsys", "meminfo", deviceState.packageName.trim()))
-                    val graphics = adb.run(listOf("-s", device.serial(), "shell", "dumpsys", "gfxinfo", deviceState.packageName.trim()))
-                    "MEMORY\n${memory.stdout.take(16_000)}\n\nRENDERING\n${graphics.stdout.take(16_000)}"
+                    val recording = session.recording
+                    if (recording != null) {
+                        recording.captureCheckpoint("live-inspection")
+                        loadEvidence(recording.root()).lastOrNull()?.hierarchy?.let { loadHierarchyNodes(it) }.orEmpty()
+                    } else {
+                        val remote = "/data/local/tmp/flowscope-inspect-${java.util.UUID.randomUUID()}.xml"
+                        val before = adb.uiautomatorPids(device.serial())
+                        try {
+                            val dump = adb.run(listOf("-s", device.serial(), "shell", "uiautomator", "dump", remote), AdbClient.DUMP_TIMEOUT_MILLIS)
+                            check(dump.exitCode() == 0) { "Device hierarchy capture failed" }
+                            dev.flowscope.host.UiHierarchy.parse(adb.execOut(device.serial(), "cat", remote))
+                        } finally {
+                            runCatching { adb.run(listOf("-s", device.serial(), "shell", "rm", "-f", remote)) }
+                            runCatching { adb.killNewUiautomator(device.serial(), before) }
+                        }
+                    }
                 }
-            }.onSuccess { raw ->
-                session.previousPerformance = session.performance
-                session.performance = parsePerformance(raw)
-                addEvent("↗", "Performance snapshot", deviceState.packageName.trim())
-            }.onFailure {
-                addEvent(
-                    "×", "Performance snapshot failed",
-                    it.message ?: "Performance collection failed",
-                    severity = Severity.Error,
-                )
             }
+            if (deviceState.selected?.serial() == device.serial() && deviceState.packageName == packageName) {
+                liveTree = result.getOrNull().orEmpty()
+                liveTreeStatus = if (result.isSuccess) "Live device · ${now()} · ${device.displayName()}" else "Live hierarchy capture failed"
+            }
+            liveTreeBusy = false
             deviceState.busy = false
+        }
+    }
+
+    LaunchedEffect(deviceState.selected?.serial(), deviceState.packageName) {
+        performance.select(deviceState.selected?.serial()?.let { PerformanceTarget(it, deviceState.packageName.trim()) })
+        liveTree = null
+        liveTreeStatus = null
+    }
+
+    fun collectPerformance() {
+        val device = deviceState.selected ?: return
+        val target = PerformanceTarget(device.serial(), deviceState.packageName.trim())
+        if (target.packageName.isBlank() || performance.busy) return
+        performance.select(target)
+        val ticket = performance.begin()
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { collectPerformanceSnapshot(adb, target) }
+            if (deviceState.selected?.serial() == target.serial && deviceState.packageName.trim() == target.packageName) {
+                performance.complete(ticket, result)
+                addEvent(if (result.status == CollectionStatus.Complete) "↗" else "!", "Performance · ${result.status}", result.message,
+                    severity = if (result.status == CollectionStatus.Complete) Severity.Normal else Severity.Warning)
+            }
         }
     }
 
@@ -1434,6 +1519,7 @@ private fun FlowScopeApp(
             else -> scope.launch {
                 deviceState.busy = true
                 session.status = "Starting capture…"
+                captureNotices = emptyList()
                 // A recording used to overwrite the buffer outright. With real files behind it that
                 // would destroy work, so unsaved work is written first and the new recording gets
                 // its own file on disk immediately — visible in the rail from the first second, and
@@ -1450,6 +1536,7 @@ private fun FlowScopeApp(
                         ).observe(::observeRecorderLine).also { it.start() }
                     }
                 }.onSuccess { activeRecording ->
+                    shell.inspectRun = false
                     session.recording = activeRecording
                     session.lastRoot = activeRecording.root()
                     session.status = "Recording live"
@@ -1691,14 +1778,14 @@ private fun FlowScopeApp(
     }
 
     fun exportTimeline(toClipboard: Boolean) {
-        val lines = timeline.events.asReversed().joinToString("\n") { it.toJsonLine() }
+        val lines = shownEvents.asReversed().joinToString("\n") { it.toJsonLine() }
         if (lines.isBlank()) {
             session.status = "No events to export"
             return
         }
         if (toClipboard) {
             copyToClipboard(lines)
-            session.status = "Timeline copied (${timeline.events.size} events)"
+            session.status = "Timeline copied (${shownEvents.size} events)"
             return
         }
         scope.launch(Dispatchers.IO) {
@@ -1795,7 +1882,7 @@ private fun FlowScopeApp(
             true) { shell.drawerOpen = !shell.drawerOpen },
         Command("display.toggle", if (deviceState.showDisplay) "Hide device display" else "Show device display",
             "", true, ::toggleDisplay),
-        Command("perf.collect", "Collect performance snapshot", "", !deviceState.busy, ::collectPerformance),
+        Command("perf.collect", "Collect performance snapshot", "", !performance.busy, ::collectPerformance),
         Command("open.folder", "Open activeRecording folder", "", session.lastRoot != null, ::openSessionFolder),
         Command("mirror", "Toggle external mirror", "", deviceState.selected != null, ::toggleMirror),
         Command("export.file", "Export timeline as JSONL", "", timeline.events.isNotEmpty()) {
@@ -1829,7 +1916,7 @@ private fun FlowScopeApp(
             chooseDirectory(window, "Create a FlowScope project")?.let { createProject(it, null) }
         },
         onOpenRun = shell::selectRun,
-        selectedRun = (shell.selection as? Selection.Run)?.directory,
+        selectedRun = inspectedRun,
         onRevealRun = { directory ->
             scope.launch(Dispatchers.IO) { revealInFileManager(directory) }
         },
@@ -1958,8 +2045,8 @@ private fun FlowScopeApp(
                             active = shell.surface,
                             onSelect = { shell.surface = it },
                             stepCount = authoring.stepCount,
-                            evidenceCount = session.evidence.size,
-                            eventCount = timeline.events.size,
+                            evidenceCount = shownEvidence.size,
+                            eventCount = shownEvents.size,
                             drawerOpen = false,
                             onToggleDrawer = {},
                         )
@@ -2175,24 +2262,44 @@ private fun FlowScopeApp(
                             active = shell.surface,
                             onSelect = { shell.surface = it },
                             stepCount = authoring.stepCount,
-                            evidenceCount = session.evidence.size,
-                            eventCount = timeline.events.size,
+                            evidenceCount = shownEvidence.size,
+                            eventCount = shownEvents.size,
                             drawerOpen = metrics.drawerVisible,
                             onToggleDrawer = { shell.drawerOpen = !shell.drawerOpen },
                         )
                         HorizontalDivider(color = Border)
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                        Column(Modifier.weight(1f).fillMaxWidth()) {
+                            if (shell.surface != WorkSurface.Flow) {
+                                InspectionSourceBar(
+                                    run = inspectedRun != null,
+                                    runName = runInspection.name,
+                                    hasRun = shell.inspectionRun != null,
+                                    onSession = { shell.inspectRun = false },
+                                    onRun = { shell.inspectRun = true },
+                                )
+                                if (inspectedRun == null && captureNotices.isNotEmpty()) {
+                                    Text(captureNotices.joinToString("\n"), color = SignalAmber, fontSize = 11.sp,
+                                        modifier = Modifier.fillMaxWidth().padding(8.dp))
+                                }
+                                if (inspectedRun != null && runInspection.notes.isNotEmpty()) {
+                                    Text(runInspection.notes.joinToString("\n"), color = TextMid, fontSize = 11.sp,
+                                        maxLines = 4, modifier = Modifier.fillMaxWidth().padding(8.dp))
+                                }
+                            }
+                            Box(Modifier.weight(1f).fillMaxWidth()) {
                             when (shell.surface) {
                                 WorkSurface.Timeline -> TimelineSurface(
                                     modifier = Modifier.fillMaxSize(),
-                                    events = timeline.events,
+                                    events = shownEvents,
+                                    emptyMessage = channelGuidance(timeline.channel, inspectedRun != null,
+                                        if (inspectedRun != null) runInspection.instrumented else deviceState.captureMode == CaptureMode.INSTRUMENTED, session.isRecording),
                                     channel = timeline.channel,
                                     onChannel = { timeline.channel = it },
                                     query = timeline.query,
                                     onQuery = { timeline.query = it },
                                     follow = timeline.follow,
                                     onFollow = { timeline.follow = it },
-                                    recording = session.isRecording,
+                                    recording = if (inspectedRun != null) runInspection.running else session.isRecording,
                                     selectedId = (shell.selection as? Selection.Event)?.event?.id,
                                     onSelect = { shell.selection = Selection.Event(it) },
                                     onExport = { exportTimeline(toClipboard = false) },
@@ -2217,32 +2324,39 @@ private fun FlowScopeApp(
                                 )
                                 WorkSurface.Evidence -> EvidenceSurface(
                                     modifier = Modifier.fillMaxSize(),
-                                    evidence = session.evidence,
-                                    selected = session.selectedEvidence,
-                                    image = session.evidenceImage,
-                                    nodes = session.hierarchyNodes,
+                                    evidence = shownEvidence,
+                                    selected = shownArtifact,
+                                    image = inspectionImage,
+                                    nodes = inspectionNodes,
+                                    runSource = inspectedRun != null,
                                     onSelect = { artifact ->
-                                        session.selectedEvidence = artifact
+                                        if (inspectedRun != null) runArtifact = artifact else session.selectedEvidence = artifact
+                                        liveTree = null
+                                        liveTreeStatus = null
                                         shell.selection = Selection.Checkpoint(artifact)
-                                        scope.launch {
-                                            session.evidenceImage = withContext(Dispatchers.IO) { loadImage(artifact.screenshot) }
-                                            session.hierarchyNodes = withContext(Dispatchers.IO) {
-                                                loadHierarchyNodes(artifact.hierarchy)
-                                            }
-                                        }
                                     },
                                     onRefresh = {
-                                        session.lastRoot?.let { root -> scope.launch { refreshSessionArtifacts(root) } }
+                                        liveTree = null
+                                        liveTreeStatus = null
+                                        if (inspectedRun != null) inspectionRefresh++
+                                        else session.lastRoot?.let { root -> scope.launch { refreshSessionArtifacts(root) } }
                                     },
-                                    onOpenFolder = { openSessionFolder() },
+                                    onOpenFolder = {
+                                        inspectedRun?.let { scope.launch(Dispatchers.IO) { revealInFileManager(it) } }
+                                            ?: openSessionFolder()
+                                    },
                                 )
                                 WorkSurface.Tree -> TreeSurface(
                                     modifier = Modifier.fillMaxSize(),
-                                    nodes = session.hierarchyNodes,
-                                    subtitle = session.selectedEvidence?.let { "Checkpoint ${it.sequence} · ${it.reason}" }
-                                        ?: "Latest captured hierarchy",
+                                    nodes = liveTree ?: inspectionNodes,
+                                    subtitle = liveTreeStatus ?: shownArtifact?.reason ?: "No captured hierarchy",
+                                    liveEnabled = !deviceState.busy && !liveTreeBusy && projectState.runs.none { it.isRunning } && deviceState.selected != null,
+                                    onInspectLive = ::inspectLiveTree,
                                     onRefresh = {
-                                        session.lastRoot?.let { root -> scope.launch { refreshSessionArtifacts(root) } }
+                                        liveTree = null
+                                        liveTreeStatus = null
+                                        if (inspectedRun != null) inspectionRefresh++
+                                        else session.lastRoot?.let { root -> scope.launch { refreshSessionArtifacts(root) } }
                                     },
                                     webSnapshot = session.webViewSnapshot,
                                     webLoading = session.webViewLoading,
@@ -2257,13 +2371,16 @@ private fun FlowScopeApp(
                                 )
                                 WorkSurface.Perf -> PerformanceSurface(
                                     modifier = Modifier.fillMaxSize(),
-                                    snapshot = session.performance,
-                                    previous = session.previousPerformance,
+                                    snapshot = performance.result?.snapshot,
+                                    previous = performance.previous,
+                                    collection = performance.result,
+                                    runTimings = if (inspectedRun != null) runInspection.timings else null,
                                     packageName = deviceState.packageName,
-                                    busy = deviceState.busy,
+                                    busy = performance.busy,
                                     onCollect = ::collectPerformance,
                                 )
                                 WorkSurface.Settings -> Unit
+                            }
                             }
                         }
                     }
@@ -2336,6 +2453,7 @@ private fun FlowScopeApp(
 private fun TimelineSurface(
     modifier: Modifier,
     events: List<CapturedEvent>,
+    emptyMessage: String,
     channel: Channel,
     onChannel: (Channel) -> Unit,
     query: String,
@@ -2378,7 +2496,8 @@ private fun TimelineSurface(
         HorizontalDivider(color = Border)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (visible.isEmpty()) {
-                EmptyTimeline(channel, query, recording, Modifier.fillMaxSize())
+                EmptyState(caps = if (query.isBlank()) "NO EVENTS" else "NO MATCHES",
+                    message = if (query.isBlank()) emptyMessage else "No events match this filter.", modifier = Modifier.fillMaxSize())
             } else {
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                     items(visible, key = { it.id }) { event ->

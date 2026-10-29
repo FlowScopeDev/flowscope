@@ -134,8 +134,9 @@ switch with a Save / Discard / Cancel prompt, and Save only continues once the w
 
 ### Work surfaces
 
-Timeline, Flow, Evidence, Tree, and Perf are tabs within one session. The device remains visible while
-moving among them. Settings occupies the full workspace and temporarily hides the device column,
+Timeline, Flow, Evidence, Tree, and Perf are tabs within the workspace. Inspection tabs share an
+explicit Session / Selected run source. Selecting a run changes that source; selecting an event or
+artifact does not. The device remains visible while moving among them. Settings occupies the full workspace and temporarily hides the device column,
 detail drawer, and drawer toggle. Activating the Settings gear again restores the exact surface and
 drawer state that preceded it.
 
@@ -282,18 +283,31 @@ an override was present; the campaign value is never rendered in the IDE or repo
 
 ## 8. Evidence, tree, and performance
 
-Evidence shows captured checkpoints as a filmstrip and uses the detail drawer for screenshot,
-hierarchy, window-state, and metadata inspection.
+Evidence reads recording checkpoints or artifacts from the selected test/suite, including live files
+and completed child reports. Pair a screenshot with a hierarchy only through step metadata or the
+runner's failure-evidence convention; unassociated files remain separate artifacts. Resolve every
+reference inside its owning run folder, including symlinks, and show missing/unreadable output.
 
-Tree has Native and WebView modes. Native renders the latest UIAutomator hierarchy as structured
-nodes. WebView lists package-owned DevTools targets and their frames, cookie metadata, Web Storage
-keys, native JavaScript bridges, and security settings. Cookie and storage values always render as
-`HIDDEN`. Runtime bridge discovery is labelled `HEURISTIC`; agent registrations are labelled
-`EXACT`. Selecting a row opens its safe metadata in the detail drawer, and the icon-only refresh
-control has a hover hint and accessibility label.
+Tree has Native and WebView modes. Native displays the selected artifact's hierarchy. Refresh
+artifacts rereads disk. Inspect live device is a separate action, unavailable during test execution;
+while recording it captures through the recorder so its accessibility monitor can pause safely.
+WebView remains explicitly live and package-scoped. It lists package-owned DevTools targets and their
+frames, cookie metadata, Web Storage keys, native JavaScript bridges, and security settings. Cookie
+and storage values always render as `HIDDEN`. Runtime bridge discovery is labelled `HEURISTIC`;
+agent registrations are labelled `EXACT`. Selecting a row opens safe metadata in the detail drawer;
+the icon-only refresh control has a hover hint and accessibility label.
 
-Perf presents package-scoped memory and rendering data as labelled metric tiles. Values, units, and
-health states remain readable without relying on colour alone.
+Timeline's Selected run view uses existing plans, progress and reports. Runner actions are labelled
+separately from observed app events; suite hooks and child tests retain their grouping. Progress
+refreshes replace stable rows, not append duplicates. Missing timestamps remain unknown. Completed
+child reports supply sanitized agent summaries. Empty states explain zero-code limitations and that
+ordinary runs do not collect Logcat. Recording follows exact package UID across app restarts and
+surfaces unavailable channels and unexpected stream exits.
+
+Perf separates Run timing (existing duration, slow-step and dump metrics) from Device snapshot
+(manual meminfo/gfxinfo collection). Display complete, partial, unavailable and failed outcomes.
+Snapshots carry device, package, PID and collection time; target changes discard old data and pending
+results, and process changes invalidate comparisons. Collection uses its own loading state.
 
 ## 9. Floating layers
 

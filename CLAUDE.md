@@ -233,6 +233,13 @@ progress and completed child reports for the detail pane. Suite hooks emit progr
 steps must never be inferred as passed; distinguish skipped, not run and interrupted. Reads of child
 report references stay inside the run directory, including through symlinks.
 
+IDE inspection has a shared Session / Selected run source independent of detail selection. Read live
+steps from RunSteps and existing progress, then completed reports; never invent timestamps or pair
+unrelated evidence. RunArtifacts bounds metadata and artifact reads inside their owning run folder,
+including symlink resolution. Test runs do not implicitly collect raw Logcat or extra hierarchies.
+Recorder streams use exact package UID matching and surface failures; device performance collection
+checks exit codes and binds comparisons and asynchronous results to device, package and process.
+
 IDE Stop applies only to its own active run. A run-scoped `RunCancellation` interrupts ordinary
 steps and blocking I/O, skips remaining setup/test work regardless of continue-on-failure, and
 never interrupts test/suite `after` cleanup. Clear cancellation interrupts before cleanup; retain

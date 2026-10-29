@@ -101,8 +101,6 @@ internal class SessionState {
     var webViewLoading by mutableStateOf(false)
     var webViewError by mutableStateOf<String?>(null)
 
-    var performance by mutableStateOf<PerformanceSnapshot?>(null)
-    var previousPerformance by mutableStateOf<PerformanceSnapshot?>(null)
 
     val isRecording: Boolean get() = recording != null
     /** Where the user should look for artifacts right now. */
@@ -200,6 +198,8 @@ internal class ShellState {
     private var surfaceBeforeSettings = WorkSurface.Timeline
     var drawerOpen by mutableStateOf(true)
     var selection by mutableStateOf<Selection>(Selection.None)
+    var inspectionRun by mutableStateOf<Path?>(null)
+    var inspectRun by mutableStateOf(false)
     var paletteOpen by mutableStateOf(false)
     var reduceMotion by mutableStateOf(false)
 
@@ -207,6 +207,8 @@ internal class ShellState {
     var pendingConfirm by mutableStateOf<PendingConfirm?>(null)
 
     fun selectRun(directory: Path) {
+        inspectionRun = directory
+        inspectRun = true
         selection = Selection.Run(directory)
         drawerOpen = true
     }
