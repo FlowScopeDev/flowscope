@@ -20,8 +20,16 @@ import java.util.Locale;
 final class ReportHtml {
     private ReportHtml() {}
 
-    /** A screenshot in a gallery: the evidence file, what captured it, and that step's verdict. */
-    record Shot(String path, String title, String note, String status) {}
+    /**
+     * A screenshot in a gallery: the evidence file, what captured it, and that step's verdict.
+     * [link] is where a thumbnail points — the file itself, or a gallery overlay's anchor.
+     */
+    record Shot(String path, String title, String note, String status, String link) {
+        Shot(String path, String title, String note, String status) {
+            this(path, title, note, status, path);
+        }
+        Shot linkedTo(String target) { return new Shot(path, title, note, status, target); }
+    }
 
     /** One figure in the summary strip. [tone] is a status word or "" for the neutral card. */
     record Stat(String value, String label, String tone) {}
@@ -34,20 +42,42 @@ final class ReportHtml {
         return at == null ? "" : WALL_TIME.format(at) + " UTC";
     }
 
+    private static final String MOON =
+        "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z\"/></svg>";
+    private static final String SUN =
+        "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4.2\"/>"
+            + "<path d=\"M12 2.6v2.1M12 19.3v2.1M4.2 4.2l1.5 1.5M18.3 18.3l1.5 1.5"
+            + "M2.6 12h2.1M19.3 12h2.1M4.2 19.8l1.5-1.5M18.3 5.7l1.5-1.5\"/></svg>";
+
     private static final String STYLE = """
         *{box-sizing:border-box}
-        :root{color-scheme:light dark;
+        :root{color-scheme:light;
         --bg:#f8f9fb;--panel:#fff;--panel2:#f4f6f8;--line:#dae0e8;--line-soft:#eef1f5;
         --text:#171b22;--mid:#46505e;--low:#687382;
         --pass:#147a50;--pass-bg:#e7f3ed;--fail:#c9323c;--fail-bg:#fde8ea;
         --warn:#9a5b00;--warn-bg:#fff0d1;--info:#315fb5;--info-bg:#e6ecf8;
         --shadow:0 1px 2px rgba(23,27,34,.05),0 10px 30px -12px rgba(23,27,34,.18)}
-        @media (prefers-color-scheme:dark){:root{
+        :root:has(#theme-dark:checked){color-scheme:dark;
         --bg:#06070a;--panel:#0b0d11;--panel2:#11141a;--line:#262c36;--line-soft:#171b22;
         --text:#edf0f4;--mid:#99a1ad;--low:#5e6673;
         --pass:#3ecf8e;--pass-bg:#0d241a;--fail:#ff4f56;--fail-bg:#2a1012;
         --warn:#ffb224;--warn-bg:#2a1f08;--info:#9dbcff;--info-bg:#121a2b;
-        --shadow:0 1px 2px rgba(0,0,0,.5),0 12px 32px -14px rgba(0,0,0,.7)}}
+        --shadow:0 1px 2px rgba(0,0,0,.5),0 12px 32px -14px rgba(0,0,0,.7)}
+
+        .themer{position:sticky;top:12px;z-index:15;display:flex;justify-content:flex-end;
+        margin-bottom:12px}
+        .themer input{position:absolute;width:1px;height:1px;opacity:0;margin:0}
+        .themer label{display:inline-flex;align-items:center;cursor:pointer;background:var(--panel);
+        border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:12px;
+        font-weight:500;color:var(--mid);box-shadow:var(--shadow);user-select:none}
+        .themer label:hover{color:var(--text);border-color:var(--low)}
+        .themer input:focus-visible+label{outline:2px solid var(--info);outline-offset:2px}
+        .themer span{display:inline-flex;align-items:center;gap:7px}
+        .themer svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;
+        stroke-linecap:round;stroke-linejoin:round}
+        .themer .to-light{display:none}
+        :root:has(#theme-dark:checked) .themer .to-dark{display:none}
+        :root:has(#theme-dark:checked) .themer .to-light{display:inline-flex}
         html{-webkit-text-size-adjust:100%}
         body{margin:0;background:var(--bg);color:var(--text);
         font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -161,12 +191,23 @@ final class ReportHtml {
         background:#fff;box-shadow:0 24px 60px -20px rgba(0,0,0,.8)}
         .lb figcaption{color:#edf0f4;font-size:13px;text-align:center}
         .lb figcaption a{color:#9dbcff}
+        .lb figcaption .count{color:#99a1ad;font-variant-numeric:tabular-nums}
+        .lb .nav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;display:flex;
+        align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;
+        font-size:26px;line-height:1;text-decoration:none;color:#edf0f4;
+        background:rgba(237,240,244,.12);border:1px solid rgba(237,240,244,.2)}
+        .lb .nav:hover{background:rgba(237,240,244,.26);text-decoration:none}
+        .lb .nav.off{opacity:.28}
+        .lb .prev{left:18px}
+        .lb .next{right:18px}
 
         .empty{padding:18px 20px;color:var(--low);font-size:13.5px}
         footer{margin-top:32px;color:var(--low);font-size:12px;text-align:center}
 
         @media (max-width:640px){.wrap{padding:24px 14px 48px}.hero{padding:20px 18px 18px 22px}
-        .hero h1{font-size:22px}.shot img{height:180px}}
+        .hero h1{font-size:22px}.shot img{height:180px}
+        .lb{padding:16px}.lb .nav{width:36px;height:36px;font-size:21px}
+        .lb .prev{left:4px}.lb .next{right:4px}}
         @media print{body{background:#fff}.card,.hero,.stat{box-shadow:none}.lb{display:none!important}
         .shot .frame:hover{transform:none}}
         """;
@@ -176,10 +217,23 @@ final class ReportHtml {
         return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
             + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
             + "<title>" + escape(title) + " · FlowScope</title>"
-            + "<style>" + STYLE + "</style></head><body><main class=\"wrap\">" + body
+            + "<style>" + STYLE + "</style></head><body><main class=\"wrap\">" + THEME_TOGGLE + body
             + "<footer>" + escape(signature()) + "</footer>"
             + "</main></body></html>\n";
     }
+
+    /**
+     * The light/dark control. A report opens light — the theme a reader expects of a document, and
+     * the one a printed or pasted screenshot looks right in — and dark is an explicit choice made
+     * here. It is a checkbox and sibling selectors rather than a script, so the page stays safe to
+     * open straight from a CI artifact; the cost is that the choice lasts for this page, not across
+     * reports.
+     */
+    private static final String THEME_TOGGLE =
+        "<div class=\"themer\"><input type=\"checkbox\" id=\"theme-dark\">"
+            + "<label for=\"theme-dark\">"
+            + "<span class=\"to-dark\">" + MOON + "Dark</span>"
+            + "<span class=\"to-light\">" + SUN + "Light</span></label></div>";
 
     /** A plain-javac build has no generated version resource; the page says so by saying less. */
     private static String signature() {
@@ -259,8 +313,8 @@ final class ReportHtml {
 
     /**
      * The screenshot gallery: a labelled thumbnail per capture plus a CSS-only overlay for each, so
-     * a full-size look costs a click and never a script. [returnId] is the section the overlay
-     * closes back to.
+     * a full-size look — and stepping through the run one capture at a time — costs a click and
+     * never a script. [returnId] is the section an overlay closes back to.
      */
     static String gallery(String returnId, List<Shot> shots) {
         if (shots.isEmpty()) return empty("This run captured no screenshots.");
@@ -268,8 +322,8 @@ final class ReportHtml {
         StringBuilder overlays = new StringBuilder();
         for (int index = 0; index < shots.size(); index++) {
             Shot shot = shots.get(index);
-            String anchor = returnId + "-" + (index + 1);
-            String alt = shot.title() + (shot.note() == null || shot.note().isBlank() ? "" : " — " + shot.note());
+            String anchor = anchor(returnId, index);
+            String alt = caption(shot);
             grid.append("<figure class=\"shot\"><a class=\"frame\" href=\"#").append(escape(anchor))
                 .append("\"><img src=\"").append(escape(shot.path())).append("\" alt=\"")
                 .append(escape(alt)).append("\" loading=\"lazy\"></a><figcaption><b>")
@@ -279,21 +333,51 @@ final class ReportHtml {
             }
             if (shot.status() != null && !shot.status().isBlank()) grid.append(pill(shot.status()));
             grid.append("</figcaption></figure>");
-            overlays.append("<div class=\"lb\" id=\"").append(escape(anchor)).append("\"><a class=\"close\" href=\"#")
-                .append(escape(returnId)).append("\" aria-label=\"Close\"></a><figure><img src=\"")
+            overlays.append("<div class=\"lb\" id=\"").append(escape(anchor))
+                .append("\"><a class=\"close\" href=\"#").append(escape(returnId))
+                .append("\" aria-label=\"Close\"></a><figure><img src=\"")
                 .append(escape(shot.path())).append("\" alt=\"").append(escape(alt))
-                .append("\" loading=\"lazy\"><figcaption>").append(escape(alt))
-                .append(" · <a href=\"").append(escape(shot.path())).append("\">Open file</a>")
-                .append("</figcaption></figure></div>");
+                .append("\" loading=\"lazy\"><figcaption><span class=\"count\">")
+                .append(index + 1).append(" / ").append(shots.size()).append("</span> · ")
+                .append(escape(alt)).append(" · <a href=\"").append(escape(shot.path()))
+                .append("\">Open file</a></figcaption></figure>")
+                .append(step("prev", "‹", "Previous screenshot",
+                    index > 0 ? anchor(returnId, index - 1) : null))
+                .append(step("next", "›", "Next screenshot",
+                    index + 1 < shots.size() ? anchor(returnId, index + 1) : null))
+                .append("</div>");
         }
         return grid.append("</div>").append(overlays).toString();
     }
 
-    /** A thumbnail strip for one row of a table, with no overlay of its own. */
+    /**
+     * One step through the gallery. At either end the control stays in place, visibly inert, rather
+     * than disappearing: a vanishing arrow reads as a rendering fault, not as "this is the last one".
+     */
+    private static String step(String direction, String glyph, String label, String target) {
+        if (target == null) {
+            return "<span class=\"nav " + direction + " off\" aria-hidden=\"true\">" + glyph + "</span>";
+        }
+        return "<a class=\"nav " + direction + "\" href=\"#" + escape(target) + "\" aria-label=\""
+            + escape(label) + "\">" + glyph + "</a>";
+    }
+
+    static String anchor(String returnId, int index) { return returnId + "-" + (index + 1); }
+
+    private static String caption(Shot shot) {
+        return shot.note() == null || shot.note().isBlank() ? shot.title()
+            : shot.title() + " — " + shot.note();
+    }
+
+    /**
+     * A thumbnail strip for one row of a table. Each thumbnail follows its [Shot.link], so a strip
+     * beside a suite's test row opens the same overlay the gallery does instead of dropping the
+     * reader onto a bare image file with no way back.
+     */
     static String strip(List<Shot> shots) {
         StringBuilder out = new StringBuilder("<div class=\"gallery strip\">");
         for (Shot shot : shots) {
-            out.append("<figure class=\"shot\"><a class=\"frame\" href=\"").append(escape(shot.path()))
+            out.append("<figure class=\"shot\"><a class=\"frame\" href=\"").append(escape(shot.link()))
                 .append("\"><img src=\"").append(escape(shot.path())).append("\" alt=\"")
                 .append(escape(shot.title())).append("\" loading=\"lazy\"></a><figcaption><b>")
                 .append(escape(shot.title())).append("</b></figcaption></figure>");

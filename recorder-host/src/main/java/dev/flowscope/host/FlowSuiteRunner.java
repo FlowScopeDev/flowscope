@@ -532,6 +532,11 @@ public final class FlowSuiteRunner {
     }
 
     private static String testsHtml(SuiteReport report) {
+        // The strip beside a row opens the same overlay the gallery does, so stepping through the
+        // run with the overlay's prev/next works whichever thumbnail the reader started from. The
+        // anchor is counted out in step with suiteShots rather than looked up by path: two tests
+        // that captured the same file would otherwise both point at whichever one was indexed last.
+        int shot = 0;
         StringBuilder rows = new StringBuilder();
         for (TestOutcome test : report.tests()) {
             rows.append("<tr><td class=\"num\">").append(test.number())
@@ -547,10 +552,13 @@ public final class FlowSuiteRunner {
             rows.append("</td><td class=\"err\">").append(html(test.error() == null ? "" : test.error()))
                 .append("</td></tr>");
             if (!test.screenshots().isEmpty()) {
+                List<ReportHtml.Shot> strip = new ArrayList<>();
+                for (String path : test.screenshots()) {
+                    strip.add(new ReportHtml.Shot(path, screenshotLabel(path), null, null,
+                        "#" + ReportHtml.anchor("screenshots", shot++)));
+                }
                 rows.append("<tr><td></td><td colspan=\"5\" class=\"screenshots\">")
-                    .append(ReportHtml.strip(test.screenshots().stream()
-                        .map(path -> new ReportHtml.Shot(path, screenshotLabel(path), null, null)).toList()))
-                    .append("</td></tr>");
+                    .append(ReportHtml.strip(strip)).append("</td></tr>");
             }
         }
         Totals totals = totals(report.tests());

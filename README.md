@@ -246,9 +246,10 @@ flowscope suite run flows/suites/sample.suite --project examples --serial <adb-s
 cleanup even when setup or the test fails. Replay uses selector conditions and UI stability checks
 rather than recorded delays. Every run writes `report.json`, an offline `report.html`, and
 `junit.xml`; failures also save a screenshot and UI hierarchy. `report.html` opens as a single
-self-contained page — no network, no scripts, and it follows the reader's light or dark system
-theme: a verdict banner, a pass/fail/skip/duration summary, a **Screenshots** gallery, the step
-table, and the performance and agent sections below it. At an interactive terminal,
+self-contained page — no network and no scripts: a verdict banner, a pass/fail/skip/duration
+summary, a **Screenshots** gallery, the step table, and the performance and agent sections below it.
+It opens light and carries a **Dark**/**Light** toggle in its top-right corner; the choice is a
+checkbox and CSS, so it applies to the open page and is not remembered between reports. At an interactive terminal,
 `flowscope test run` also prints a line before each step starts — `RUN  TEST 07/40  tap` — so a long
 flow is not a blank wait; it stays off when stdout is piped, such as in CI. The IDE's run bar shows
 the same step-by-step progress live, as worded text rather than colour.
@@ -605,7 +606,8 @@ JSON/HTML/JUnit reports per test. Each test's `step screenshot`/`web-screenshot`
 embedded as a thumbnail gallery under that test's row in `suite-report.html`, linked to the full-size
 file, so a reviewer can scan what happened without opening every per-test report. The same page
 opens with a **Screenshots** section collecting every capture across the whole suite, each labelled
-with the test that took it. With
+with the test that took it; a thumbnail in either place opens a full-size view with **‹**/**›**
+controls and a position counter, so the whole run can be stepped through one capture at a time. With
 `continue-on-failure false` (the default) it stops at the first failure and records the rest as
 skipped.
 

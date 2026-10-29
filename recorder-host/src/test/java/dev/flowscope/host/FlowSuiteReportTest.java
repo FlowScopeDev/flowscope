@@ -181,6 +181,47 @@ class FlowSuiteReportTest {
         assertEquals(true, html.contains("Test 2 · B"));
         // The per-test strip stays beside each row; the gallery is an addition, not a replacement.
         assertEquals(true, html.contains("class=\"screenshots\""));
+        // Its thumbnails open the gallery's overlay, so prev/next works from either entry point.
+        assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-1\">"));
+        assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-2\">"));
+    }
+
+    @Test
+    void everyStripThumbnailPointsAtItsOwnPositionInTheGallery() {
+        FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
+            "Smoke", "flows/suites/smoke.suite", "/app", "ABC", true, STARTED, ENDED,
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
+                    "01-A/report.json", null, List.of(),
+                    List.of("01-A/evidence/step-01.png", "01-A/evidence/step-02.png")),
+                // A test that captured nothing must not consume a gallery position.
+                new FlowSuiteRunner.TestOutcome(2, 4, "tests/b.flow", "B", "skipped", 0, null, null),
+                new FlowSuiteRunner.TestOutcome(3, 5, "tests/c.flow", "C", "passed", 10,
+                    "03-C/report.json", null, List.of(), List.of("03-C/evidence/step-01.png"))));
+
+        String html = FlowSuiteRunner.reportHtml(report);
+        int first = html.indexOf("01-A/evidence/step-01.png");
+        assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-1\">"));
+        assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-2\">"));
+        assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-3\">"));
+        assertEquals(false, html.contains("#screenshots-4"));
+        assertEquals(true, first > 0);
+    }
+
+    @Test
+    void twoTestsThatCapturedTheSamePathStillOpenTheirOwnOverlay() {
+        FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
+            "Smoke", "flows/suites/smoke.suite", "/app", "ABC", true, STARTED, ENDED,
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
+                    "01-A/report.json", null, List.of(), List.of("shared/evidence/cart.png")),
+                new FlowSuiteRunner.TestOutcome(2, 4, "tests/b.flow", "B", "failed", 10,
+                    "02-B/report.json", "tap: no element matched", List.of(),
+                    List.of("shared/evidence/cart.png"))));
+
+        String html = FlowSuiteRunner.reportHtml(report);
+        // Positional, not keyed by path: the second row must not jump back to the first overlay.
+        assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-1\">"));
+        assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-2\">"));
+        assertEquals(true, html.contains("Test 2 · B"));
     }
 
     @Test

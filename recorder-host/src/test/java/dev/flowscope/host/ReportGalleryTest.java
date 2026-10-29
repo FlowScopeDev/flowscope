@@ -80,7 +80,7 @@ class ReportGalleryTest {
     }
 
     @Test
-    void thePageIsSelfContainedAndThemeAware() throws Exception {
+    void thePageOpensLightAndCarriesItsOwnDarkToggle() throws Exception {
         FlowTest test = FlowTestParser.parseSource("""
             flowscope 1
             package com.example.debug
@@ -91,11 +91,43 @@ class ReportGalleryTest {
 
         assertTrue(runner.run());
         String html = Files.readString(runner.root().resolve("report.html"));
-        // A report is read from a CI artifact with no network: nothing may be fetched.
+        // A report is read from a CI artifact with no network: nothing may be fetched, and the
+        // theme choice is a checkbox and sibling selectors rather than a script.
         assertFalse(html.contains("<script"), html);
         assertFalse(html.contains("http://"), html);
         assertFalse(html.contains("https://"), html);
-        assertTrue(html.contains("prefers-color-scheme:dark"), html);
+        // Light is the default whatever the reader's system is set to; dark is an explicit choice.
+        assertFalse(html.contains("prefers-color-scheme"), html);
+        assertTrue(html.contains(":root{color-scheme:light;"), html);
+        assertTrue(html.contains(":root:has(#theme-dark:checked){color-scheme:dark;"), html);
+        assertTrue(html.contains("<input type=\"checkbox\" id=\"theme-dark\">"), html);
+        assertTrue(html.contains("<label for=\"theme-dark\">"), html);
+    }
+
+    @Test
+    void anOverlayStepsToItsNeighboursAndStopsAtBothEnds() {
+        String html = ReportHtml.gallery("screenshots", List.of(
+            new ReportHtml.Shot("evidence/a.png", "a", "Step 1", "passed"),
+            new ReportHtml.Shot("evidence/b.png", "b", "Step 2", "passed"),
+            new ReportHtml.Shot("evidence/c.png", "c", "Step 3", "failed")));
+
+        assertTrue(html.contains("<span class=\"nav prev off\""), html);
+        assertTrue(html.contains("<a class=\"nav next\" href=\"#screenshots-2\""), html);
+        assertTrue(html.contains("<a class=\"nav prev\" href=\"#screenshots-2\""), html);
+        assertTrue(html.contains("<span class=\"nav next off\""), html);
+        // Where the reader is in the run, without counting thumbnails.
+        assertTrue(html.contains("<span class=\"count\">2 / 3</span>"), html);
+    }
+
+    @Test
+    void aThumbnailStripFollowsEachShotsOwnLink() {
+        String file = ReportHtml.strip(List.of(new ReportHtml.Shot("01-A/evidence/a.png", "a", null, null)));
+        assertTrue(file.contains("<a class=\"frame\" href=\"01-A/evidence/a.png\">"), file);
+
+        String overlay = ReportHtml.strip(List.of(
+            new ReportHtml.Shot("01-A/evidence/a.png", "a", null, null).linkedTo("#screenshots-4")));
+        assertTrue(overlay.contains("<a class=\"frame\" href=\"#screenshots-4\">"), overlay);
+        assertTrue(overlay.contains("src=\"01-A/evidence/a.png\""), overlay);
     }
 
     @Test

@@ -170,10 +170,10 @@ flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>] [--secrets-
 ```
 
 Exit codes: `0` success, `1` a test failed, `2` invalid input. Every run writes `report.json`,
-`report.html` and `junit.xml`. `report.html` opens with a verdict banner, a summary, and a
-**Screenshots** section holding every capture the run made — each labelled with the step that took
-it, including the screenshot saved when a step fails — before the step table, whose rows keep their
-own evidence links. A suite run's `suite-report.html` carries the same **Screenshots** section
+`report.html` and `junit.xml`. `report.html` opens light (with a dark toggle) and carries a verdict
+banner, a summary, and a **Screenshots** section holding every capture the run made — each labelled
+with the step that took it, including the screenshot saved when a step fails, and steppable one at a
+time — before the step table, whose rows keep their own evidence links. A suite run's `suite-report.html` carries the same **Screenshots** section
 across every test and still embeds each test's `screenshot`/`web-screenshot` evidence as a thumbnail
 gallery under that test's row, linked to the full-size file; `suite-report.json` carries the same
 list as a `screenshots` array per test. The HTML layout is presentation only — parse `report.json`.

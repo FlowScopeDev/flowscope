@@ -12,13 +12,16 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Added
 
-- `report.html` and `suite-report.html` are redesigned: one self-contained, light/dark page with a
-  verdict banner, a pass/fail/skip/duration summary, status pills and readable durations, built on
-  the FlowScope palette. Both now open with a labelled **Screenshots** section collecting every
-  capture the run made — the step that took it, the test it belongs to in a suite, and the
-  screenshot saved when a step fails — with a click-to-enlarge view. Per-step evidence links and the
-  per-test thumbnail strip are unchanged. The HTML layout is presentation only; `report.json`,
-  `suite-report.json` and `junit.xml` are untouched.
+- `report.html` and `suite-report.html` are redesigned: one self-contained page with a verdict
+  banner, a pass/fail/skip/duration summary, status pills and readable durations, built on the
+  FlowScope palette. A report opens light and carries its own **Dark**/**Light** toggle. Both now
+  open with a labelled **Screenshots** section collecting every capture the run made — the step that
+  took it, the test it belongs to in a suite, and the screenshot saved when a step fails. A
+  thumbnail opens a full-size view with previous/next controls and a position counter, so a run can
+  be stepped through one capture at a time; the thumbnails beside a suite's test row open the same
+  view. Per-step evidence links and the per-test thumbnail strip are unchanged, and the toggle and
+  viewer use a checkbox and `:target` rather than a script, so the page still runs nothing. The HTML
+  layout is presentation only; `report.json`, `suite-report.json` and `junit.xml` are untouched.
 
 - Optional literal `label="..."` display names for flow steps, suite hooks and suite test entries,
   shown in live progress, inspection tabs and reports; unlabeled tests and existing `name=` arguments

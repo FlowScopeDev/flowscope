@@ -216,12 +216,18 @@ their offline HTML report from the rail and retain a separate reveal-folder acti
 machine-readable source for the IDE, while JUnit output supports CI.
 
 The HTML report is the one surface read outside the app — from a CI artifact, usually with no
-network — so it carries its own stylesheet and no script, font or image host, and follows the
-reader's system theme using the IDE palette. It leads with the verdict, then a summary, then a
-**Screenshots** section holding every capture the run made, each labelled with the step or test that
-took it; the step table keeps its own evidence links, because the gallery answers "what happened"
-and the table answers "where". Its layout is presentation, not API: `COMPATIBILITY.md` promises
-`report.json`, not this page.
+network — so it carries its own stylesheet and no script, font or image host. It leads with the
+verdict, then a summary, then a **Screenshots** section holding every capture the run made, each
+labelled with the step or test that took it and steppable one at a time; the step table keeps its
+own evidence links, because the gallery answers "what happened" and the table answers "where".
+
+It opens light, in the IDE's light palette, rather than following the reader's system theme: a
+report is a document that is read, printed and pasted into tickets, and a dark page is the wrong
+default for all three. Dark is an explicit choice, made by a toggle in the page. Both the toggle and
+the full-size viewer are a checkbox and `:target` with sibling selectors rather than a script, which
+keeps the page safe to open straight from an artifact; the price is that the theme choice lasts for
+the open page and is not carried to the next report. Its layout is presentation, not API:
+`COMPATIBILITY.md` promises `report.json`, not this page.
 
 The rail's runs are whatever the reports directory holds, wherever they were started. Every runner —
 CLI or IDE — appends `progress.jsonl` to its run directory while in flight (a start line with the
