@@ -16,9 +16,18 @@ public final class RunSteps {
 
     private RunSteps() {}
 
-    public record Step(int number, int line, String phase, String action, String status) {}
+    public record Step(int number, int line, String phase, String action, String status, String label) {
+        public Step(int number, int line, String phase, String action, String status) { this(number, line, phase, action, status, ""); }
+        public String displayName() { return label == null || label.isBlank() ? action : label; }
+    }
     public record Group(String id, String name, String reference, String report, String status, List<Step> steps) {}
     public record Snapshot(boolean planned, List<Group> groups) {}
+
+    static Group testGroup(int number, String reference, FlowTest test, String report, String label) {
+        Group original = testGroup(number, reference, test, report);
+        return new Group(original.id(), label == null || label.isBlank() ? original.name() : label,
+            original.reference(), original.report(), original.status(), original.steps());
+    }
 
     static Group testGroup(int number, String reference, FlowTest test, String report) {
         List<Step> steps = new ArrayList<>();
@@ -36,7 +45,7 @@ public final class RunSteps {
     }
 
     private static Step plannedStep(int number, FlowTest.Step step) {
-        return new Step(number, step.line(), step.phase().value(), step.action(), "pending");
+        return new Step(number, step.line(), step.phase().value(), step.action(), "pending", step.label());
     }
 
     static void write(Path directory, List<Group> groups) {
@@ -52,7 +61,7 @@ public final class RunSteps {
                 if (i > 0) json.append(',');
                 Step step = group.steps().get(i);
                 json.append("{\"number\":").append(step.number()).append(",\"line\":").append(step.line())
-                    .append(",\"phase\":").append(Json.quote(step.phase())).append(",\"action\":").append(Json.quote(step.action())).append('}');
+                    .append(",\"phase\":").append(Json.quote(step.phase())).append(",\"action\":").append(Json.quote(step.action())).append(FlowLabel.json(step.label())).append('}');
             }
             json.append("]}");
         }
@@ -97,6 +106,7 @@ public final class RunSteps {
             for (Map<String, Object> item : objects(suiteReport.get("tests"))) {
                 MutableGroup group = group(groups, "test:" + number(item, "number"), text(item, "name"));
                 group.reference = text(item, "reference");
+                if (!text(item, "label").isBlank()) group.name = text(item, "label");
                 group.status = status(item, "not-run");
                 if (!text(item, "report").isEmpty()) group.report = text(item, "report");
                 readSteps(directory, group);
@@ -131,7 +141,7 @@ public final class RunSteps {
             if (terminal) group.finishPending(group.status.equals("skipped") ? "skipped" : "not-run");
             List<Step> steps = group.steps.values().stream().sorted(java.util.Comparator.comparingInt(Step::number))
                 .map(s -> terminal && s.status().equals("running")
-                    ? new Step(s.number(), s.line(), s.phase(), s.action(), "interrupted") : s).toList();
+                    ? new Step(s.number(), s.line(), s.phase(), s.action(), "interrupted", s.label()) : s).toList();
             if (!steps.isEmpty()) result.add(new Group(group.id, group.name, group.reference, group.report, group.status, steps));
         }
         result.sort(java.util.Comparator.comparingInt(group -> {
@@ -161,21 +171,26 @@ public final class RunSteps {
     }
 
     private static final class MutableGroup {
-        final String id, name;
+        final String id;
+        String name;
         String reference = "", report = "", status = "pending";
         final Map<Integer, Step> steps = new LinkedHashMap<>();
         MutableGroup(String id, String name) { this.id = id; this.name = name; }
         void step(Map<String, Object> value, String fallback) {
             int number = number(value, "number");
             if (number < 1) return;
-            steps.put(number, new Step(number, number(value, "line"), text(value, "phase"), text(value, "action"), status(value, fallback)));
+            if (text(value, "label").isBlank() && steps.containsKey(number)) {
+                value = new LinkedHashMap<>(value);
+                value.put("label", steps.get(number).label());
+            }
+            steps.put(number, new Step(number, number(value, "line"), text(value, "phase"), text(value, "action"), status(value, fallback), text(value, "label")));
         }
         void placeholders(int total) {
             for (int i = 1; i <= Math.min(total, 100_000); i++) steps.putIfAbsent(i, new Step(i, 0, "", "", "pending"));
         }
         void finishPending(String replacement) {
             steps.replaceAll((n, s) -> s.status().equals("pending")
-                ? new Step(s.number(), s.line(), s.phase(), s.action(), replacement) : s);
+                ? new Step(s.number(), s.line(), s.phase(), s.action(), replacement, s.label()) : s);
         }
     }
     private static MutableGroup group(Map<String, MutableGroup> groups, String id, String name) {

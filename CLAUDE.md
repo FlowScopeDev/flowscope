@@ -111,6 +111,13 @@ keycodes. `double-tap` is not offered: `adb` cannot land two taps inside the dou
 `text-contains` targets an inline substring when UIAutomator merges clickable text into a larger
 single-line accessibility node.
 
+Every action and suite test entry may have an optional `label="..."` display name. Keep it outside
+executable arguments; reject empty/control-character labels and runtime expressions, and limit it
+to 200 characters. Labels are public author-written metadata, never secret values. Preserve action
+`name=` semantics (screenshot filenames, variable names), action identifiers and suite references.
+Propagate labels through plans, progress, reports and IDE surfaces; absent labels use the original
+action/test name. Reports add optional label fields without changing schema version 2.
+
 Prefer stable resource IDs or semantic descriptions. Text selectors are acceptable for copy that is
 part of the assertion but are weaker across localization. Do not encode raw coordinates in durable
 tests. Do not generate fixed sleeps: mutation steps wait briefly for UI stability and condition steps
@@ -223,11 +230,11 @@ do not rely on an icon's shape or colour to communicate purpose.
 
 Every runner, CLI or IDE, keeps `progress.jsonl` (`RunProgress`) in its run directory while in
 flight and deletes it after the report is written; a suite's child tests write into the suite's file.
-It carries only what `StepProgress` carries — never argument values — plus the writer's pid and
+It carries only what `StepProgress` carries, including optional literal display labels — never argument values — plus the writer's pid and
 process start time, so a dead writer reads as `interrupted`. The IDE polls `RunReport.fingerprint`
 once a second and lists in-flight runs from any source. It only displays them: it never controls or
 notifies for a run it did not start. The file is not public surface (`COMPATIBILITY.md`).
-`run-plan.json` retains a metadata-only list of steps before execution (action, phase, line, ordinal,
+`run-plan.json` retains a metadata-only list of steps before execution (action, optional label, phase, line, ordinal,
 and suite grouping/report reference), never arguments or values. `RunSteps` combines it with live
 progress and completed child reports for the detail pane. Suite hooks emit progress too. Pending
 steps must never be inferred as passed; distinguish skipped, not run and interrupted. Reads of child

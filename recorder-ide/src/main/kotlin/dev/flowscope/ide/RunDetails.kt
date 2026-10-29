@@ -178,7 +178,8 @@ private fun RunStepList(snapshot: RunSteps.Snapshot) {
                             else -> step.status().uppercase()
                         }, color = color, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                     }
-                    Text(step.action().ifBlank { "Step details unavailable" }, color = TextHi, fontSize = 12.sp)
+                    Text(step.displayName().ifBlank { "Step details unavailable" }, color = TextHi, fontSize = 12.sp)
+                    if (!step.label().isNullOrBlank()) Text(step.action(), color = TextMid, fontSize = 10.sp)
                     if (step.phase().isNotBlank() || step.line() > 0) {
                         Text(listOfNotNull(step.phase().takeIf { it.isNotBlank() }?.uppercase(),
                             step.line().takeIf { it > 0 }?.let { "line $it" }).joinToString(" · "),

@@ -451,7 +451,7 @@ public final class Main {
     private static void printStepProgress(FlowTestRunner.StepProgress progress) {
         if (!progress.status().equals("running")) return;
         System.out.printf("RUN  %s %02d/%02d  %s (line %d)%n", progress.phase().toUpperCase(),
-            progress.number(), progress.total(), progress.action(), progress.line());
+            progress.number(), progress.total(), progress.displayName(), progress.line());
     }
 
     /**
@@ -691,6 +691,15 @@ public final class Main {
 
             `test` paths are relative to the project's flows directory and must end in .flow.
             continue-on-failure defaults to false: the suite stops at the first failing test.
+            Optional display labels (literal public text; 1–200 characters; no expressions):
+              step tap id=view_more label="Tapped View More"
+              step screenshot name=home label="Screenshot of Home Taken"
+              before api-request url=https://example.test/health label="Check API health"
+              test tests/login.flow label="Returning customer login"
+            label= is supported on every before/step/after action and suite test entry.
+            It changes display text only; action arguments, screenshot name= and variable name= keep
+            their meanings. Omitted labels fall back to the action or original test name/reference.
+
             Suite before/after hooks allow api-request, set-date, set-value, transform, and secret.
             Tests read suite setup values as ${suite.var.name}; suite cleanup always runs.
             A suite run writes JSON, HTML, and JUnit aggregates plus per-test reports.

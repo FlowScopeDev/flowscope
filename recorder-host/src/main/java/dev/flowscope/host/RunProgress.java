@@ -48,19 +48,19 @@ public final class RunProgress {
     void step(FlowTestRunner.StepProgress step) {
         append("{\"event\":\"step\",\"number\":" + step.number() + ",\"total\":" + step.total()
             + ",\"phase\":" + Json.quote(step.phase()) + ",\"action\":" + Json.quote(step.action())
-            + ",\"line\":" + step.line() + ",\"status\":" + Json.quote(step.status()) + "}");
+            + FlowLabel.json(step.label()) + ",\"line\":" + step.line() + ",\"status\":" + Json.quote(step.status()) + "}");
     }
 
     void hook(int number, int total, FlowTest.Step hook, String status) {
         append("{\"event\":\"hook\",\"number\":" + number + ",\"total\":" + total
             + ",\"phase\":" + Json.quote(hook.phase().value()) + ",\"action\":" + Json.quote(hook.action())
-            + ",\"line\":" + hook.line() + ",\"status\":" + Json.quote(status) + "}");
+            + FlowLabel.json(hook.label()) + ",\"line\":" + hook.line() + ",\"status\":" + Json.quote(status) + "}");
     }
 
     void test(FlowSuiteRunner.Progress test) {
         append("{\"event\":\"test\",\"number\":" + test.number() + ",\"total\":" + test.total()
             + ",\"reference\":" + Json.quote(test.reference())
-            + ",\"status\":" + Json.quote(test.status()) + "}");
+            + FlowLabel.json(test.label()) + ",\"status\":" + Json.quote(test.status()) + "}");
     }
 
     /** The report is on disk, so the run is described by it and this file goes. */
@@ -89,6 +89,11 @@ public final class RunProgress {
         } catch (IOException ignored) {
             // Progress is a courtesy to an observer; the run itself must not notice.
         }
+    }
+
+    private static String displayName(Map<String, Object> event) {
+        String label = text(event, "label");
+        return label == null || label.isBlank() ? text(event, "action") : label;
     }
 
     /**
@@ -134,7 +139,8 @@ public final class RunProgress {
                 case "test" -> {
                     testNumber = number(event, "number");
                     testTotal = number(event, "total");
-                    currentTest = "test " + testNumber + "/" + testTotal + " · " + text(event, "reference");
+                    currentTest = "test " + testNumber + "/" + testTotal + " · "
+                        + (text(event, "label").isBlank() ? text(event, "reference") : text(event, "label"));
                     currentStep = null;
                     outcomes.put(testNumber, text(event, "status"));
                     total = (int) testTotal;
@@ -142,13 +148,13 @@ public final class RunProgress {
                 case "hook" -> {
                     currentTest = null;
                     currentStep = "running".equals(text(event, "status"))
-                        ? "suite " + text(event, "phase") + " · " + text(event, "action") : null;
+                        ? "suite " + text(event, "phase") + " · " + displayName(event) : null;
                 }
                 case "step" -> {
                     String status = text(event, "status");
                     currentStep = "running".equals(status)
                         ? "step " + number(event, "number") + "/" + number(event, "total") + " · "
-                            + text(event, "action")
+                            + displayName(event)
                         : null;
                     if (start != null && "test".equals(start.get("kind"))) {
                         outcomes.put(number(event, "number"), status);

@@ -106,8 +106,8 @@ internal fun readRunInspection(directory: Path): RunInspection {
             events += CapturedEvent(
                 id = (groupIndex + 1L) * 1_000_000 + step.number(), time = "—", epochMillis = 0,
                 symbol = when (step.status()) { "passed" -> "✓"; "failed" -> "×"; "running" -> "▶"; else -> "·" },
-                title = "Runner · ${step.action()}",
-                detail = "${groupLabel(group)} · ${step.phase()} #${step.number()} · ${step.status()} · line ${step.line()}",
+                title = "Runner · ${step.displayName()}",
+                detail = "${groupLabel(group)} · ${step.phase()} #${step.number()} · ${step.status()} · line ${step.line()} · ${step.action()}",
                 channel = actionChannel(step.action()),
                 severity = if (step.status() == "failed") Severity.Error else Severity.Normal,
             )
@@ -134,10 +134,10 @@ internal fun readRunInspection(directory: Path): RunInspection {
             for (ref in listOf(image, tree).filter(String::isNotBlank)) {
                 if (containedFile(root, ref) == null) notes += "$label · step $number: artifact missing or unsafe."
             }
-            addArtifact(image, tree, "step $number · ${step.text("action")}")
+            addArtifact(image, tree, "step $number · ${step.text("label").ifBlank { step.text("action") }}")
             if (step.text("status") == "failed" && number != null) {
                 val base = "evidence/failure-%02d".format(number)
-                addArtifact("$base.png", "$base.xml", "step $number · failure")
+                addArtifact("$base.png", "$base.xml", "step $number · ${step.text("label").ifBlank { "failure" }}")
             }
             if (details.text("hierarchyError").isNotEmpty()) notes += "$label · step $number: hierarchy capture failed."
         }
@@ -159,7 +159,7 @@ internal fun readRunInspection(directory: Path): RunInspection {
         if (perf.isNotEmpty()) {
             timings += "$label · ${perf.number("totalMillis") ?: "—"} ms · ${perf.number("uiDumps") ?: "—"} hierarchy dumps · ${perf.number("uiDumpMillis") ?: "—"} ms dumping"
             perf["slowestSteps"].objects().forEach {
-                timings += "  #${it.number("number")} ${it.text("action")} · ${it.number("durationMillis")} ms"
+                timings += "  #${it.number("number")} ${it.text("label").ifBlank { it.text("action") }} · ${it.number("durationMillis")} ms"
             }
         }
         val agent = report["agentEvents"].obj()

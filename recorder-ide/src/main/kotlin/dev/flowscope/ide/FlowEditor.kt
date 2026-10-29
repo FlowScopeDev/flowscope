@@ -286,6 +286,7 @@ internal fun toggleStep(source: String, lineIndex: Int): String = edit(source) {
 /** Plain-language summary of a step, for the card view. */
 internal fun describeStep(stepLine: String): String {
     val lifecycle = stepLine.removePrefix("#").trim()
+    runCatching { FlowTestParser.stepLabel(lifecycle) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
     val tokens = lifecycle.substringAfter(' ', "").trim()
     val action = tokens.substringBefore(' ').ifBlank { return "Empty step" }
     val selector = selectorOfStep(tokens)

@@ -117,7 +117,7 @@ public final class FlowSuiteParser {
                 java.util.stream.Collectors.joining(" ")) + "\n";
         FlowTest parsed = FlowTestParser.parseSource(source, "suite-hook");
         return parsed.steps().stream().filter(step -> step.phase() == phase).findFirst()
-            .map(step -> new FlowTest.Step(line, phase, action, step.arguments())).orElseThrow();
+            .map(step -> new FlowTest.Step(line, phase, action, step.arguments(), step.label())).orElseThrow();
     }
 
     private static String quote(String token) {
@@ -145,7 +145,12 @@ public final class FlowSuiteParser {
     }
 
     private static FlowSuite.Entry parseEntry(List<String> tokens, int line) {
-        if (tokens.size() != 2) throw error(line, "test requires exactly one path");
+        if (tokens.size() < 2 || tokens.size() > 3) throw error(line, "test requires exactly one path and an optional label= value");
+        String label = "";
+        if (tokens.size() == 3) {
+            if (!tokens.get(2).startsWith("label=")) throw error(line, "test requires exactly one path; only label= may follow it");
+            label = FlowLabel.parse(tokens.get(2).substring(6), line);
+        }
         String reference = tokens.get(1);
         if (reference.isBlank()) throw error(line, "test requires a path");
         // Validated here rather than at resolution time so `suite validate` catches a suite that
@@ -165,7 +170,7 @@ public final class FlowSuiteParser {
             throw error(line, "test path must end in " + FlowProject.TEST_EXTENSION + ": "
                 + reference);
         }
-        return new FlowSuite.Entry(line, reference);
+        return new FlowSuite.Entry(line, reference, label);
     }
 
     private static boolean parseBoolean(List<String> tokens, int line) {

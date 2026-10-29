@@ -50,11 +50,19 @@ public final class FlowSuiteRunner {
     private Consumer<Progress> listener = progress -> {};
 
     /** Progress for a UI: one event when a test starts and one when it finishes. */
-    public record Progress(int number, int total, String reference, String status) {}
+    public record Progress(int number, int total, String reference, String status, String label) {
+        public Progress(int number, int total, String reference, String status) { this(number, total, reference, status, ""); }
+        public String displayName() { return label == null || label.isBlank() ? reference : label; }
+    }
 
     public record TestOutcome(int number, int line, String reference, String name, String status,
                               long durationMillis, String report, String error,
-                              List<String> teardownErrors, List<String> screenshots) {
+                              List<String> teardownErrors, List<String> screenshots, String label) {
+        public TestOutcome(int number, int line, String reference, String name, String status,
+            long durationMillis, String report, String error, List<String> teardownErrors, List<String> screenshots) {
+            this(number, line, reference, name, status, durationMillis, report, error, teardownErrors, screenshots, "");
+        }
+        public String displayName() { return label == null || label.isBlank() ? name : label; }
         /** A test with clean teardown and no screenshots, or one that never got far enough for either. */
         public TestOutcome(int number, int line, String reference, String name, String status,
             long durationMillis, String report, String error) {
@@ -71,7 +79,11 @@ public final class FlowSuiteRunner {
     }
 
     public record HookOutcome(String phase, int line, String action, String status,
-                              long durationMillis, String error, Map<String, String> details) {}
+                              long durationMillis, String error, Map<String, String> details, String label) {
+        public HookOutcome(String phase, int line, String action, String status, long durationMillis,
+            String error, Map<String, String> details) { this(phase, line, action, status, durationMillis, error, details, ""); }
+        public String displayName() { return label == null || label.isBlank() ? action : label; }
+    }
 
     public record SuiteReport(String name, String suiteFile, String projectRoot,
                               String deviceSerial, boolean continueOnFailure,
@@ -215,7 +227,7 @@ public final class FlowSuiteRunner {
         plan.add(RunSteps.hookGroup(FlowTest.Phase.BEFORE, suite.hooks()));
         for (int i = 0; i < resolved.size(); i++) {
             Resolved child = resolved.get(i);
-            plan.add(RunSteps.testGroup(i + 1, child.entry().reference(), child.test(), child.directoryName() + "/report.json"));
+            plan.add(RunSteps.testGroup(i + 1, child.entry().reference(), child.test(), child.directoryName() + "/report.json", child.entry().label()));
         }
         plan.add(RunSteps.hookGroup(FlowTest.Phase.AFTER, suite.hooks()));
         RunSteps.write(root, plan);
@@ -244,15 +256,15 @@ public final class FlowSuiteRunner {
             Resolved current = resolved.get(index);
             int number = index + 1;
             if (stopped || isCancelled()) {
-                reportProgress(progressFile, new Progress(number, total, current.entry().reference(), "skipped"));
+                reportProgress(progressFile, new Progress(number, total, current.entry().reference(), "skipped", current.entry().label()));
                 outcomes.add(new TestOutcome(number, current.entry().line(),
                     current.entry().reference(), current.test().name(), "skipped", 0,
-                    null, null));
+                    null, null, List.of(), List.of(), current.entry().label()));
                 continue;
             }
 
-            System.out.printf("TEST %02d/%02d  %s%n", number, total, current.entry().reference());
-            reportProgress(progressFile, new Progress(number, total, current.entry().reference(), "running"));
+            System.out.printf("TEST %02d/%02d  %s%n", number, total, current.entry().displayName(current.entry().reference()));
+            reportProgress(progressFile, new Progress(number, total, current.entry().reference(), "running", current.entry().label()));
 
             Instant testStarted = Instant.now();
             boolean passed;
@@ -282,11 +294,11 @@ public final class FlowSuiteRunner {
             List<String> screenshots = screenshotPaths(root, current.directoryName());
             outcomes.add(new TestOutcome(number, current.entry().line(),
                 current.entry().reference(), current.test().name(), status, elapsed,
-                current.directoryName() + "/report.json", error, teardownErrors, screenshots));
+                current.directoryName() + "/report.json", error, teardownErrors, screenshots, current.entry().label()));
 
             System.out.printf("DONE %02d/%02d  %s · %s · %.1fs%n",
-                number, total, status, current.test().name(), elapsed / 1000.0);
-            reportProgress(progressFile, new Progress(number, total, current.entry().reference(), status));
+                number, total, status, current.entry().displayName(current.test().name()), elapsed / 1000.0);
+            reportProgress(progressFile, new Progress(number, total, current.entry().reference(), status, current.entry().label()));
 
             if (!passed && !suite.continueOnFailure()) stopped = true;
         }
@@ -327,13 +339,13 @@ public final class FlowSuiteRunner {
                 passed = false;
                 progressFile.hook(number, suite.hooks().size(), hook, "skipped");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "skipped",
-                    0, isCancelled() ? "run cancelled" : "earlier " + phase.value() + " hook failed", Map.of()));
+                    0, isCancelled() ? "run cancelled" : "earlier " + phase.value() + " hook failed", Map.of(), hook.label()));
                 continue;
             }
             if (!values.conditionsPass(hook.arguments())) {
                 progressFile.hook(number, suite.hooks().size(), hook, "skipped");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "skipped",
-                    0, "condition not met", Map.of()));
+                    0, "condition not met", Map.of(), hook.label()));
                 continue;
             }
             progressFile.hook(number, suite.hooks().size(), hook, "running");
@@ -354,19 +366,19 @@ public final class FlowSuiteRunner {
                 Map<String, String> details = phase == FlowTest.Phase.AFTER ? work.run() : cancellation.execute(work);
                 progressFile.hook(number, suite.hooks().size(), hook, "passed");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "passed",
-                    Duration.ofNanos(System.nanoTime() - started).toMillis(), null, details));
+                    Duration.ofNanos(System.nanoTime() - started).toMillis(), null, details, hook.label()));
             } catch (RunCancellation.Cancelled cancelled) {
                 passed = false;
                 progressFile.hook(number, suite.hooks().size(), hook, "cancelled");
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "cancelled",
-                    Duration.ofNanos(System.nanoTime() - started).toMillis(), "Cancelled by user", Map.of()));
+                    Duration.ofNanos(System.nanoTime() - started).toMillis(), "Cancelled by user", Map.of(), hook.label()));
             } catch (Exception failure) {
                 passed = false;
                 progressFile.hook(number, suite.hooks().size(), hook, "failed");
                 String message = values.redact(failure.getMessage() == null
                     ? failure.getClass().getSimpleName() : failure.getMessage());
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "failed",
-                    Duration.ofNanos(System.nanoTime() - started).toMillis(), message, Map.of()));
+                    Duration.ofNanos(System.nanoTime() - started).toMillis(), message, Map.of(), hook.label()));
                 if (stopOnFailure) stopped = true;
             }
         }
@@ -439,7 +451,7 @@ public final class FlowSuiteRunner {
                 if (index > 0) out.append(',');
                 out.append("{\"phase\":").append(Json.quote(hook.phase()))
                     .append(",\"line\":").append(hook.line())
-                    .append(",\"action\":").append(Json.quote(hook.action()))
+                    .append(",\"action\":").append(Json.quote(hook.action())).append(FlowLabel.json(hook.label()))
                     .append(",\"status\":").append(Json.quote(hook.status()))
                     .append(",\"durationMillis\":").append(hook.durationMillis())
                     .append(",\"error\":").append(Json.quote(hook.error()))
@@ -454,7 +466,7 @@ public final class FlowSuiteRunner {
             out.append("    {\"number\": ").append(test.number())
                 .append(", \"line\": ").append(test.line())
                 .append(", \"reference\": ").append(Json.quote(test.reference()))
-                .append(", \"name\": ").append(Json.quote(test.name()))
+                .append(", \"name\": ").append(Json.quote(test.name())).append(FlowLabel.json(test.label()))
                 .append(", \"status\": ").append(Json.quote(test.status()))
                 .append(", \"durationMillis\": ").append(test.durationMillis())
                 .append(", \"report\": ").append(Json.quote(test.report()))
@@ -473,7 +485,7 @@ public final class FlowSuiteRunner {
         StringBuilder rows = new StringBuilder();
         for (TestOutcome test : report.tests()) {
             rows.append("<tr><td>").append(test.number()).append("</td><td>")
-                .append(html(test.name())).append("</td><td class=\"").append(test.status())
+                .append(html(test.displayName())).append("</td><td class=\"").append(test.status())
                 .append("\">").append(test.status()).append("</td><td>")
                 .append(test.durationMillis()).append(" ms</td><td>");
             if (test.report() != null) {
@@ -496,7 +508,7 @@ public final class FlowSuiteRunner {
         }
         StringBuilder hookRows = new StringBuilder();
         for (HookOutcome hook : report.hooks()) hookRows.append("<tr><td>")
-            .append(html(hook.phase())).append("</td><td>").append(html(hook.action()))
+            .append(html(hook.phase())).append("</td><td>").append(html(hook.displayName()))
             .append("</td><td class=\"").append(hook.status()).append("\">")
             .append(hook.status()).append("</td><td>")
             .append(html(hook.error() == null ? "" : hook.error())).append("</td></tr>");
@@ -530,7 +542,7 @@ public final class FlowSuiteRunner {
             .append(totals.failed() + (failedHooks.isEmpty() ? 0 : 1))
             .append("\" skipped=\"").append(totals.skipped() + (cancelledLifecycle ? 1 : 0)).append("\">\n");
         for (TestOutcome test : report.tests()) {
-            out.append("  <testcase name=\"").append(xml(test.name())).append("\" classname=\"")
+            out.append("  <testcase name=\"").append(xml(test.displayName())).append("\" classname=\"")
                 .append(xml(test.reference())).append("\" time=\"")
                 .append(test.durationMillis() / 1000.0).append("\">");
             if (test.status().equals("failed") || !test.teardownErrors().isEmpty()) {
@@ -546,7 +558,7 @@ public final class FlowSuiteRunner {
             out.append("  <testcase name=\"Suite lifecycle\" classname=\"")
                 .append(xml(report.suiteFile())).append("\">");
             if (!failedHooks.isEmpty()) {
-                String message = failedHooks.stream().map(hook -> hook.phase() + ": " + hook.action()
+                String message = failedHooks.stream().map(hook -> hook.phase() + ": " + hook.displayName()
                     + ": " + hook.error()).collect(java.util.stream.Collectors.joining(" · "));
                 out.append("<failure message=\"").append(xml(message)).append("\">")
                     .append(xml(message)).append("</failure>");

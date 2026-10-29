@@ -19,6 +19,15 @@ after <action>            # cleanup, always runs; failures reported separately
 
 Blank lines and `#` comments are ignored. Double quotes keep spaces. A trailing `\` continues a line.
 
+## Optional display labels
+
+Any `before`, `step`, or `after` action may include `label="Human readable step name"`.
+Suite hooks and `test tests/example.flow label="Scenario name"` support it too. Labels are optional;
+unnamed steps keep their action name. Use literal public text (1–200 characters, no control
+characters or `${...}` expressions), never credentials. Labels do not affect execution or filenames.
+For example: `step screenshot name=home label="Screenshot of Home Taken"` and
+`step tap id=view_more label="Tapped View More"`. Screenshot/variable `name=` keeps its meaning.
+
 ## Selectors
 
 `id=`, `text=`, `text-contains=`, `desc=`, `class=` combine; every given field must match the same

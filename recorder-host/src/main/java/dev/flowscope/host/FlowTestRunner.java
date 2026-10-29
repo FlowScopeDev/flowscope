@@ -68,7 +68,12 @@ public final class FlowTestRunner {
      * interpolated argument value — only the literal action, phase and line number from the `.flow`
      * file — so it is safe to render live, before any redaction pass.
      */
-    public record StepProgress(int number, int total, String phase, String action, int line, String status) {}
+    public record StepProgress(int number, int total, String phase, String action, int line, String status, String label) {
+        public StepProgress(int number, int total, String phase, String action, int line, String status) {
+            this(number, total, phase, action, line, status, "");
+        }
+        public String displayName() { return label == null || label.isBlank() ? action : label; }
+    }
 
     public FlowTestRunner(AdbClient adb, Device device, FlowTest test, Path outputRoot) throws IOException {
         this(adb, device, test, outputRoot, (Path) null);
@@ -217,8 +222,8 @@ public final class FlowTestRunner {
     }
 
     private static String describe(StepResult result) {
-        return result.error == null ? result.step.action() + " failed"
-            : result.step.action() + ": " + result.error;
+        return result.error == null ? result.step.displayName() + " failed"
+            : result.step.displayName() + ": " + result.error;
     }
 
     public boolean run() throws Exception {
@@ -318,7 +323,7 @@ public final class FlowTestRunner {
                 if (step.action().equals("if-visible")) visibleBlocks.push(false);
                 addSkipped(i, step, "condition not met"); continue;
             }
-            progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "running"));
+            progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "running", step.label()));
             long started = System.nanoTime();
             Instant stepStarted = Instant.now();
             // Any other step can change the UI before it looks, so it must not see a remembered dump.
@@ -337,14 +342,14 @@ public final class FlowTestRunner {
                 retainHierarchy(i, details);
                 results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
-                System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.action());
-                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed"));
+                System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.displayName());
+                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed", step.label()));
             } catch (RunCancellation.Cancelled cancelled) {
                 passed = false;
                 results.add(new StepResult(i + 1, step, "cancelled", elapsed(started),
                     "Cancelled by user", Map.of(), dumpCount - dumpsBefore,
                     Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
-                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "cancelled"));
+                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "cancelled", step.label()));
             } catch (Exception failure) {
                 passed = false;
                 captureEvidence("failure-" + String.format("%02d", i + 1));
@@ -354,8 +359,8 @@ public final class FlowTestRunner {
                 if (step.action().equals("if-visible")) visibleBlocks.push(false);
                 results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
-                System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.action(), message);
-                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed"));
+                System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.displayName(), message);
+                progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed", step.label()));
                 if (stopOnFailure) stopped = true;
             } finally {
                 stepWindows.put(i + 1, new Instant[] {stepStarted, Instant.now()});
@@ -366,9 +371,9 @@ public final class FlowTestRunner {
 
     private void addSkipped(int i, FlowTest.Step step, String reason) {
         results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of(), 0, 0));
-        System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.action());
+        System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.displayName());
         progress(new StepProgress(i + 1, test.steps().size(), step.phase().value(), step.action(),
-            step.line(), "skipped"));
+            step.line(), "skipped", step.label()));
     }
 
     private void skipPhase(FlowTest.Phase phase, String reason) {
@@ -1327,7 +1332,7 @@ public final class FlowTestRunner {
         for (int i = 0; i < slow.size(); i++) {
             StepResult r = slow.get(i);
             if (i > 0) out.append(", ");
-            out.append("{\"number\": ").append(r.number).append(", \"action\": ").append(Json.quote(r.step.action()))
+            out.append("{\"number\": ").append(r.number).append(", \"action\": ").append(Json.quote(r.step.action())).append(FlowLabel.json(redact(r.step.label())))
                 .append(", \"durationMillis\": ").append(r.durationMillis).append("}");
         }
         return out.append("]}").toString();
@@ -1342,7 +1347,7 @@ public final class FlowTestRunner {
         if (total > 0) out.append(" (").append(Math.round(100.0 * dumpMillis / total)).append("% of the run)");
         out.append("</p><table><tr><th>Slowest steps</th><th>Action</th><th>Duration</th><th>UI dumps</th></tr>");
         for (StepResult r : slowestSteps()) {
-            out.append("<tr><td>#").append(r.number).append("</td><td>").append(html(r.step.action()))
+            out.append("<tr><td>#").append(r.number).append("</td><td>").append(html(redact(r.step.displayName())))
                 .append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(r.dumps)
                 .append(" (").append(r.dumpMillis).append(" ms)</td></tr>");
         }
@@ -1429,11 +1434,11 @@ public final class FlowTestRunner {
         String primary=primaryFailure(); List<String> teardown=teardownFailures();
         StringBuilder out=new StringBuilder("{\n  \"schemaVersion\": 2,\n  \"kind\": \"test\",\n").append("  \"name\": ").append(Json.quote(test.name())).append(",\n  \"packageName\": ").append(Json.quote(test.packageName())).append(",\n  \"mode\": ").append(Json.quote(test.mode().cliName())).append(",\n  \"deviceSerial\": ").append(Json.quote(device.serial())).append(",\n  \"startedAt\": ").append(Json.quote(started.toString())).append(",\n  \"endedAt\": ").append(Json.quote(ended.toString())).append(",\n  \"status\": ").append(Json.quote(status(passed))).append(",\n  \"primaryFailure\": ").append(Json.quote(primary)).append(",\n  \"teardownFailures\": [");
         for(int i=0;i<teardown.size();i++){if(i>0)out.append(", ");out.append(Json.quote(teardown.get(i)));} out.append("],\n  \"webView\": ").append(previousWebState == null ? "null" : WebViewInspector.json(previousWebState.sanitized())).append(",\n  \"steps\": [\n");
-        for(int i=0;i<results.size();i++){var r=results.get(i);out.append("    {\"number\": ").append(r.number).append(", \"line\": ").append(r.step.line()).append(", \"phase\": ").append(Json.quote(r.step.phase().value())).append(", \"action\": ").append(Json.quote(r.step.action())).append(", \"status\": ").append(Json.quote(r.status)).append(", \"durationMillis\": ").append(r.durationMillis).append(", \"uiDumps\": ").append(r.dumps).append(", \"uiDumpMillis\": ").append(r.dumpMillis).append(", \"error\": ").append(Json.quote(r.error)).append(", \"details\": {");int d=0;for(var e:r.details.entrySet()){if(d++>0)out.append(", ");out.append(Json.quote(e.getKey())).append(": ").append(Json.quote(e.getValue()));}out.append("}}");if(i+1<results.size())out.append(',');out.append('\n');} out.append("  ],\n  \"performance\": ").append(performanceJson(started, ended));
+        for(int i=0;i<results.size();i++){var r=results.get(i);out.append("    {\"number\": ").append(r.number).append(", \"line\": ").append(r.step.line()).append(", \"phase\": ").append(Json.quote(r.step.phase().value())).append(", \"action\": ").append(Json.quote(r.step.action())).append(FlowLabel.json(redact(r.step.label()))).append(", \"status\": ").append(Json.quote(r.status)).append(", \"durationMillis\": ").append(r.durationMillis).append(", \"uiDumps\": ").append(r.dumps).append(", \"uiDumpMillis\": ").append(r.dumpMillis).append(", \"error\": ").append(Json.quote(r.error)).append(", \"details\": {");int d=0;for(var e:r.details.entrySet()){if(d++>0)out.append(", ");out.append(Json.quote(e.getKey())).append(": ").append(Json.quote(e.getValue()));}out.append("}}");if(i+1<results.size())out.append(',');out.append('\n');} out.append("  ],\n  \"performance\": ").append(performanceJson(started, ended));
         out.append(",\n  \"agentEvents\": ").append(agentEventsJson(started));
         return out.append("\n}\n").toString();
     }
-    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(r.step.action())).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+status(passed)+"\">"+status(passed).toUpperCase(Locale.ROOT)+"</strong>"+verdictHtml()+"<p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p>"+teardownHtml()+"<table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>"+performanceHtml(started,ended)+agentEventsHtml(started);}
+    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(redact(r.step.displayName()))).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+status(passed)+"\">"+status(passed).toUpperCase(Locale.ROOT)+"</strong>"+verdictHtml()+"<p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p>"+teardownHtml()+"<table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>"+performanceHtml(started,ended)+agentEventsHtml(started);}
     private String junitXml(boolean passed, long millis) {
         boolean failed = primaryFailure() != null || !teardownFailures().isEmpty();
         boolean skipped = isCancelled() && !failed;

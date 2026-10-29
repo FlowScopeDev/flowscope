@@ -153,3 +153,16 @@ dotenv syntax and environment precedence are unchanged. A missing default means 
 or insecure default fails rather than silently ignoring it. No-project CLI runs still require an
 explicit file. IDE overrides are project-specific, with its legacy global choice used only without
 a project. The editable JSON view is an IDE interface, not a new secret-file format.
+
+## Optional display labels
+
+The v1 flow/suite grammars accept optional `label="..."` on actions (including setup/cleanup and
+conditional boundaries) and suite test entries. Existing unlabeled files retain their behavior.
+`name=` remains an action argument; it is never repurposed as display metadata. Labels are literal
+public text, not runtime expressions. New labeled suites require a host that supports this addition.
+
+Report schema 2 adds an optional `label` to step results, slow-step metrics, suite hooks and suite
+entries. Existing `action`, `name`, `reference` and artifact filenames retain their meanings. Readers
+fall back to action/test names when the field is absent. Internal progress and plans carry the same
+literal label; neither receives runtime argument values. HTML/CLI prefer labels for human-readable
+step descriptions, and JUnit failure details and suite case names use labels when supplied.

@@ -47,6 +47,9 @@ not exist.
   the assertion. Combine fields only when one is ambiguous; `index=N` is a last resort.
 - Never use raw coordinates and never add fixed sleeps. Mutating steps wait for the UI to settle;
   `wait-visible` and the assert steps poll until their timeout. Raise `timeout=` on slow steps.
+- Use optional `label="..."` for readable steps and suite scenarios when action names are ambiguous.
+  Keep labels literal and public (no secrets or expressions); retain screenshot/variable `name=`.
+  Existing unlabeled files need no changes.
 - One behaviour per test, short and independent. Start from a known state: `before clear-app-data`,
   `before grant-permission ...`, and end with `after force-stop`. Cleanup in `after` always runs,
   and a failed cleanup is reported as its own failure — read the phase before editing the test.
@@ -78,7 +81,7 @@ step tap id=com.example.debug:id/open_login
 step type id=com.example.debug:id/email value="not-an-email"
 step tap id=com.example.debug:id/sign_in
 step assert-visible text="Enter a valid email address"
-step screenshot name=bad-email
+step screenshot name=bad-email label="Capture invalid email error"
 after force-stop
 ```
 

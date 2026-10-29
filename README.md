@@ -268,6 +268,26 @@ previous and future steps. New runs save a metadata-only `run-plan.json` before 
 steps are visible immediately; older active runs can only name steps already observed.
 Use **Open HTML report** when available or **Reveal run folder** from the pane.
 
+Give steps optional display labels when action names alone are too terse:
+
+```text
+step screenshot name=home label="Screenshot of Home Taken"
+step tap id=view_more label="Tapped View More"
+after force-stop label="Close the app"
+```
+
+Suite hooks support the same `label=` argument. Suite entries can label repeated scenarios:
+
+```text
+test tests/login.flow label="Returning customer login"
+```
+
+Labels appear in live progress, Timeline, step details, evidence, timing and reports. Without a label,
+the existing action or test name is used. `name=home` still controls the screenshot filename; variable
+`name=` arguments and top-level test/suite `name` directives keep their existing meanings. Labels are
+public display metadata: use 1–200 characters of literal text without secrets, `${...}` expressions,
+or control characters. Labels do not affect execution, selectors, conditions, or output filenames.
+
 Each of the three phases is reported distinctly, because a leaked fixture and a failed assertion
 need different fixes. `report.json` separates `primaryFailure` (setup or test) from
 `teardownFailures`; `report.html` gives cleanup its own **Cleanup failures** heading; `junit.xml`

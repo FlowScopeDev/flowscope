@@ -161,8 +161,21 @@ public final class FlowTestParser {
             String previous = arguments.put(token.substring(0, equals), token.substring(equals + 1));
             if (previous != null) throw error(line, "duplicate argument: " + token.substring(0, equals));
         }
+        String label = FlowLabel.parse(arguments.remove("label"), line);
         validateAction(action, arguments, line);
-        return new FlowTest.Step(line, phase, action, Map.copyOf(arguments));
+        return new FlowTest.Step(line, phase, action, Map.copyOf(arguments), label);
+    }
+
+    /** Reads display metadata for an editor card using the format's own quoting rules. */
+    public static String stepLabel(String sourceLine) {
+        List<String> tokens = tokenize(sourceLine.strip(), 1);
+        String label = null;
+        for (int index = 2; index < tokens.size(); index++) {
+            if (!tokens.get(index).startsWith("label=")) continue;
+            if (label != null) throw error(1, "duplicate argument: label");
+            label = tokens.get(index).substring(6);
+        }
+        return FlowLabel.parse(label, 1);
     }
 
     static FlowTest.Requirement parseRequirement(List<String> tokens, int line) {

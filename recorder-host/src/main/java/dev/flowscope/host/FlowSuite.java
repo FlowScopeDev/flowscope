@@ -13,5 +13,8 @@ public record FlowSuite(String name, boolean continueOnFailure,
         this(name, continueOnFailure, List.of(), List.of(), entries);
     }
     /** {@code line} is the suite line that requested the test, so a CI log can point back at it. */
-    public record Entry(int line, String reference) {}
+    public record Entry(int line, String reference, String label) {
+        public Entry(int line, String reference) { this(line, reference, ""); }
+        public String displayName(String fallback) { return label == null || label.isBlank() ? fallback : label; }
+    }
 }

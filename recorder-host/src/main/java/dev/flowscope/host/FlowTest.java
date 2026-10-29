@@ -33,7 +33,11 @@ public record FlowTest(
         public String value() { return value; }
     }
 
-    public record Step(int line, Phase phase, String action, Map<String, String> arguments) {
+    public record Step(int line, Phase phase, String action, Map<String, String> arguments, String label) {
+        public Step(int line, Phase phase, String action, Map<String, String> arguments) {
+            this(line, phase, action, arguments, "");
+        }
+        public String displayName() { return label == null || label.isBlank() ? action : label; }
         public Step(int line, String action, Map<String, String> arguments) {
             this(line, Phase.TEST, action, arguments);
         }

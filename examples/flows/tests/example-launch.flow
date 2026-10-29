@@ -4,5 +4,5 @@ package com.example.app
 mode zero-code
 timeout 15000
 
-step launch
-step screenshot name=launched
+step launch label="Open the example app"
+step screenshot name=launched label="Screenshot of launched app"

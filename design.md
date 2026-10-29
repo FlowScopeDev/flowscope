@@ -299,7 +299,9 @@ the icon-only refresh control has a hover hint and accessibility label.
 
 Timeline's Selected run view uses existing plans, progress and reports. Runner actions are labelled
 separately from observed app events; suite hooks and child tests retain their grouping. Progress
-refreshes replace stable rows, not append duplicates. Missing timestamps remain unknown. Completed
+refreshes replace stable rows, not append duplicates. Missing timestamps remain unknown. Optional literal labels provide the primary step text in cards,
+progress, Timeline, details, evidence and timing, with the action retained for classification and
+technical detail. Suite entry labels distinguish repeated scenarios without changing their paths. Completed
 child reports supply sanitized agent summaries. Empty states explain zero-code limitations and that
 ordinary runs do not collect Logcat. Recording follows exact package UID across app restarts and
 surfaces unavailable channels and unexpected stream exits.

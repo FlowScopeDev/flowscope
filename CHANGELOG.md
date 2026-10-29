@@ -12,6 +12,10 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Added
 
+- Optional literal `label="..."` display names for flow steps, suite hooks and suite test entries,
+  shown in live progress, inspection tabs and reports; unlabeled tests and existing `name=` arguments
+  keep their behavior.
+
 - IDE Stop cancels tests and suites, skips remaining work, runs cleanup, and reports Cancelled.
 - Settings supports masked project secrets with an editable JSON view; IDE/CLI project runs
   automatically load `<flowsDir>/.secrets`, with explicit file overrides.

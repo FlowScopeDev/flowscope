@@ -3210,7 +3210,7 @@ private fun stepProgressStatus(progress: FlowTestRunner.StepProgress): String {
         else -> progress.status().replaceFirstChar { it.uppercase() }
     }
     return "$verb · step ${progress.number()}/${progress.total()} · " +
-        "${progress.phase()} ${progress.action()} (line ${progress.line()})"
+        "${progress.phase()} ${progress.displayName()} (line ${progress.line()})"
 }
 
 /** The same shape as [stepProgressStatus], one test-granularity level up, for a suite run. */
@@ -3221,7 +3221,7 @@ private fun suiteProgressStatus(progress: FlowSuiteRunner.Progress): String {
         "failed" -> "Failed"
         else -> progress.status().replaceFirstChar { it.uppercase() }
     }
-    return "$verb · test ${progress.number()}/${progress.total()} · ${progress.reference()}"
+    return "$verb · test ${progress.number()}/${progress.total()} · ${progress.displayName()}"
 }
 
 /** The rail's label for a file: its path relative to the section's directory. */
