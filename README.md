@@ -245,7 +245,10 @@ flowscope suite run flows/suites/sample.suite --project examples --serial <adb-s
 `before` prepares and verifies the initial state, `step` is the test body, and `after` always runs
 cleanup even when setup or the test fails. Replay uses selector conditions and UI stability checks
 rather than recorded delays. Every run writes `report.json`, an offline `report.html`, and
-`junit.xml`; failures also save a screenshot and UI hierarchy. At an interactive terminal,
+`junit.xml`; failures also save a screenshot and UI hierarchy. `report.html` opens as a single
+self-contained page — no network, no scripts, and it follows the reader's light or dark system
+theme: a verdict banner, a pass/fail/skip/duration summary, a **Screenshots** gallery, the step
+table, and the performance and agent sections below it. At an interactive terminal,
 `flowscope test run` also prints a line before each step starts — `RUN  TEST 07/40  tap` — so a long
 flow is not a blank wait; it stays off when stdout is piped, such as in CI. The IDE's run bar shows
 the same step-by-step progress live, as worded text rather than colour.
@@ -290,12 +293,12 @@ or control characters. Labels do not affect execution, selectors, conditions, or
 
 Each of the three phases is reported distinctly, because a leaked fixture and a failed assertion
 need different fixes. `report.json` separates `primaryFailure` (setup or test) from
-`teardownFailures`; `report.html` gives cleanup its own **Cleanup failures** heading; `junit.xml`
+`teardownFailures`; `report.html` gives cleanup its own **Cleanup failures** banner; `junit.xml`
 names the phase in the failure message and lists every cleanup failure in the failure body; and the
 CLI prints one `FAILED: …` line naming the phase. A failed cleanup still fails the run (exit `1`) —
 a dirty device or an undeleted fixture would poison the next one. Every report includes a
 **Performance** section (total time, UI hierarchy dumps and their share of the run, slowest steps),
-and `instrumented` runs add an **Agent events** section: the app's own semantic actions, network
+a **Screenshots** section, and `instrumented` runs add an **Agent events** section: the app's own semantic actions, network
 calls (route templates and status only), and background work, each attributed to the step during which
 it arrived. Event bodies, headers, and arguments are never captured.
 
@@ -600,7 +603,9 @@ flowscope suite run --serial <adb-serial>           # uses "suite" from flowscop
 A suite run writes `suite-report.json`, `suite-report.html`, and `junit.xml`, plus numbered
 JSON/HTML/JUnit reports per test. Each test's `step screenshot`/`web-screenshot` evidence is also
 embedded as a thumbnail gallery under that test's row in `suite-report.html`, linked to the full-size
-file, so a reviewer can scan what happened without opening every per-test report. With
+file, so a reviewer can scan what happened without opening every per-test report. The same page
+opens with a **Screenshots** section collecting every capture across the whole suite, each labelled
+with the test that took it. With
 `continue-on-failure false` (the default) it stops at the first failure and records the rest as
 skipped.
 

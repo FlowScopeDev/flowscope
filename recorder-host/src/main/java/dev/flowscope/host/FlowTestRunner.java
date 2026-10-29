@@ -14,8 +14,12 @@ import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import dev.flowscope.host.ReportHtml.Shot;
+
 public final class FlowTestRunner {
     private static final long POLL_MILLIS = 200;
+    private static final int DUMP_ATTEMPTS = 5;
+    private static final long DUMP_RETRY_MILLIS = 400;
     /**
      * Steps that look an element up before (or instead of) changing anything, so they may start from
      * the hierarchy settle() recorded. Their own input goes through command(), which drops the cache.
@@ -28,6 +32,10 @@ public final class FlowTestRunner {
     /** The dump taken at the end of settle() may answer the next lookup for this long. */
     private static final long SETTLED_DUMP_MAX_AGE_NANOS = 3_000_000_000L;
     private static final Pattern GRANTED = Pattern.compile("^\\s*([A-Za-z][A-Za-z0-9_.]+): granted=true(?:,.*)?$");
+    /** Detail keys whose value is a file beside the report rather than a value to read. */
+    private static final Set<String> LINKED_DETAILS = Set.of("evidence", "hierarchy", "screenshot");
+    /** `failure-NN` names the step that failed, so its screenshot can be labelled with that step. */
+    private static final Pattern FAILURE_SHOT = Pattern.compile("failure-(\\d+)");
     private final AdbClient adb;
     private final Device device;
     private final FlowTest test;
@@ -1051,12 +1059,32 @@ public final class FlowTestRunner {
         return dumpHierarchy();
     }
 
+    /**
+     * Dumps the hierarchy into a cleared file. `uiautomator dump` can exit 0 without writing it
+     * ("null root node", "could not get idle state") while a window is starting or animating, so a
+     * missing or non-XML file is retried a few times before it fails.
+     */
     private byte[] readHierarchy() throws Exception {
-        var removed = adb.run(List.of("-s", device.serial(), "shell", "rm", "-f", "/data/local/tmp/flowscope-test-window.xml"));
-        if (removed.exitCode() != 0) throw new IOException("Could not clear previous UI hierarchy");
-        var dump = adb.run(List.of("-s", device.serial(), "shell", "uiautomator", "dump", "/data/local/tmp/flowscope-test-window.xml"), AdbClient.DUMP_TIMEOUT_MILLIS);
-        if (dump.exitCode() != 0) throw new IOException("UI hierarchy failed: " + (dump.stdout() + dump.stderr()).strip());
-        return adb.execOut(device.serial(), "cat", "/data/local/tmp/flowscope-test-window.xml");
+        String detail = "";
+        for (int attempt = 1; attempt <= DUMP_ATTEMPTS; attempt++) {
+            var removed = adb.run(List.of("-s", device.serial(), "shell", "rm", "-f", "/data/local/tmp/flowscope-test-window.xml"));
+            if (removed.exitCode() != 0) throw new IOException("Could not clear previous UI hierarchy");
+            var dump = adb.run(List.of("-s", device.serial(), "shell", "uiautomator", "dump", "/data/local/tmp/flowscope-test-window.xml"), AdbClient.DUMP_TIMEOUT_MILLIS);
+            if (dump.exitCode() != 0) throw new IOException("UI hierarchy failed: " + (dump.stdout() + dump.stderr()).strip());
+            byte[] xml = adb.execOut(device.serial(), "cat", "/data/local/tmp/flowscope-test-window.xml");
+            if (looksLikeXml(xml)) return xml;
+            detail = (dump.stdout() + dump.stderr()).strip();
+            if (attempt < DUMP_ATTEMPTS) Thread.sleep(DUMP_RETRY_MILLIS);
+        }
+        throw new IOException("UI hierarchy was not written after " + DUMP_ATTEMPTS + " attempts: " + detail);
+    }
+
+    private static boolean looksLikeXml(byte[] bytes) {
+        for (byte b : bytes) {
+            if (b == '<') return true;
+            if (!Character.isWhitespace(b) && b != (byte) 0xEF && b != (byte) 0xBB && b != (byte) 0xBF) return false;
+        }
+        return false;
     }
     /**
      * Waits for the UI to stop changing after a mutation and remembers the final hierarchy so the next
@@ -1341,17 +1369,21 @@ public final class FlowTestRunner {
     private String performanceHtml(Instant started, Instant ended) {
         long total = Duration.between(started, ended).toMillis();
         long dumpMillis = Duration.ofNanos(dumpNanos).toMillis();
-        StringBuilder out = new StringBuilder("<h2>Performance</h2><p>")
-            .append(total).append(" ms total · ").append(dumpCount).append(" UI hierarchy dumps taking ")
-            .append(dumpMillis).append(" ms");
-        if (total > 0) out.append(" (").append(Math.round(100.0 * dumpMillis / total)).append("% of the run)");
-        out.append("</p><table><tr><th>Slowest steps</th><th>Action</th><th>Duration</th><th>UI dumps</th></tr>");
+        StringBuilder rows = new StringBuilder();
         for (StepResult r : slowestSteps()) {
-            out.append("<tr><td>#").append(r.number).append("</td><td>").append(html(redact(r.step.displayName())))
-                .append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(r.dumps)
-                .append(" (").append(r.dumpMillis).append(" ms)</td></tr>");
+            rows.append("<tr><td class=\"num\">#").append(r.number).append("</td><td class=\"name\">")
+                .append(html(redact(r.step.displayName()))).append("</td><td class=\"dur\">")
+                .append(formatMillis(r.durationMillis)).append(ReportHtml.bar(r.durationMillis, total))
+                .append("</td><td class=\"dur\">").append(r.dumps).append(" · ")
+                .append(formatMillis(r.dumpMillis)).append("</td></tr>");
         }
-        return out.append("</table>").toString();
+        String share = total > 0 ? Math.round(100.0 * dumpMillis / total) + "% of the run" : "";
+        String note = dumpCount + " UI hierarchy dump" + (dumpCount == 1 ? "" : "s") + " took "
+            + formatMillis(dumpMillis) + (share.isEmpty() ? "" : " · " + share)
+            + ". Dumps are the dominant cost of a run, so the slowest steps are usually the ones that looked hardest for an element.";
+        String body = "<div class=\"body\"><p>" + html(note) + "</p></div>" + (rows.isEmpty() ? ""
+            : ReportHtml.table("<th>#</th><th>Slowest steps</th><th>Duration</th><th>UI dumps</th>", rows.toString()));
+        return ReportHtml.card("performance", "Performance", null, formatMillis(total) + " total", body);
     }
 
     /** The step whose window contains the event, else the latest step that had started by then. */
@@ -1398,29 +1430,35 @@ public final class FlowTestRunner {
     private String agentEventsHtml(Instant started) {
         if (agentEvents == null) return "";
         if (!agentEvents.captured()) {
-            return "<h2>Agent events</h2><p>Not captured: " + html(agentEvents.unavailableReason()) + ".</p>";
+            return ReportHtml.card("agent", "Agent events", null, "not captured",
+                ReportHtml.empty("Not captured: " + agentEvents.unavailableReason() + "."));
         }
-        StringBuilder out = new StringBuilder("<h2>Agent events</h2><p>");
-        int c = 0;
+        StringBuilder summary = new StringBuilder();
+        int kinds = 0;
         for (var entry : agentEvents.counts().entrySet()) {
-            if (c++ > 0) out.append(" · ");
-            out.append(html(entry.getKey())).append(" ").append(entry.getValue());
+            if (kinds++ > 0) summary.append(" · ");
+            summary.append(entry.getKey()).append(' ').append(entry.getValue());
         }
-        if (c == 0) out.append("No events arrived. Is the debug agent in this build?");
-        out.append("</p>");
         List<AgentEventCapture.Event> events = agentEvents.events();
-        if (!events.isEmpty()) {
-            out.append("<table><tr><th>Time</th><th>Step</th><th>Kind</th><th>Event</th></tr>");
-            for (var event : events) {
-                Integer step = stepAt(event.arrivedAt());
-                out.append("<tr><td>+").append(Duration.between(started, event.arrivedAt()).toMillis())
-                    .append(" ms</td><td>").append(step == null ? "" : "#" + step).append("</td><td>")
-                    .append(html(event.kind())).append("</td><td>").append(html(event.summary()))
-                    .append("</td></tr>");
-            }
-            out.append("</table>");
+        if (kinds == 0) {
+            return ReportHtml.card("agent", "Agent events", null, "0 events",
+                ReportHtml.empty("No events arrived. Is the debug agent in this build?"));
         }
-        return out.toString();
+        StringBuilder rows = new StringBuilder();
+        for (var event : events) {
+            Integer step = stepAt(event.arrivedAt());
+            rows.append("<tr><td class=\"num\">+")
+                .append(formatMillis(Duration.between(started, event.arrivedAt()).toMillis()))
+                .append("</td><td class=\"num\">").append(step == null ? "" : "#" + step)
+                .append("</td><td class=\"name\">").append(html(event.kind()))
+                .append("</td><td class=\"sub\">").append(html(event.summary())).append("</td></tr>");
+        }
+        String body = "<div class=\"body\"><p>" + html(summary.toString()) + "</p></div>"
+            + (rows.isEmpty() ? "" : ReportHtml.table(
+                "<th>Time</th><th>Step</th><th>Kind</th><th>Event</th>", rows.toString()));
+        return ReportHtml.card("agent", "Agent events",
+            "Instrumented events the debug agent streamed while the run executed.",
+            events.size() + (events.size() == 1 ? " event" : " events"), body);
     }
 
     private void writeReports(boolean passed, Instant started, Instant ended) throws IOException {
@@ -1438,7 +1476,130 @@ public final class FlowTestRunner {
         out.append(",\n  \"agentEvents\": ").append(agentEventsJson(started));
         return out.append("\n}\n").toString();
     }
-    private String reportHtml(boolean passed,Instant started,Instant ended){StringBuilder rows=new StringBuilder();for(var r:results){String details=htmlDetails(r.details);rows.append("<tr><td>").append(r.number).append("</td><td>").append(html(r.step.phase().value().toUpperCase())).append("</td><td>").append(html(redact(r.step.displayName()))).append("</td><td class=\"").append(r.status).append("\">").append(r.status).append("</td><td>").append(r.durationMillis).append(" ms</td><td>").append(details).append("</td><td>").append(html(r.error==null?"":r.error)).append("</td></tr>");}return "<!doctype html><meta charset=\"utf-8\"><title>"+html(test.name())+" · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}.passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;border-bottom:1px solid #dae0e8;text-align:left}a{color:#315fb5}</style><h1>"+html(test.name())+"</h1><strong class=\""+status(passed)+"\">"+status(passed).toUpperCase(Locale.ROOT)+"</strong>"+verdictHtml()+"<p>"+html(test.packageName())+" · "+html(device.serial())+"</p><p>"+started+" — "+ended+"</p>"+teardownHtml()+"<table><tr><th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th><th>Details</th><th>Error</th></tr>"+rows+"</table>"+performanceHtml(started,ended)+agentEventsHtml(started);}
+    private String reportHtml(boolean passed, Instant started, Instant ended) {
+        String status = status(passed);
+        long total = Duration.between(started, ended).toMillis();
+        List<Shot> shots = screenshots();
+        return ReportHtml.document(test.name(), ReportHtml.hero("Flow test", test.name(), status,
+            failureMessage(), ReportHtml.meta(
+                "package=" + test.packageName(),
+                "mode=" + test.mode().cliName(),
+                "device=" + device.serial(),
+                "started=" + ReportHtml.time(started),
+                "ended=" + ReportHtml.time(ended)))
+            + ReportHtml.stats(List.of(
+                new ReportHtml.Stat("" + count("passed"), "Passed", "passed"),
+                new ReportHtml.Stat("" + count("failed"), "Failed", count("failed") > 0 ? "failed" : ""),
+                new ReportHtml.Stat("" + (count("skipped") + count("cancelled")), "Skipped",
+                    count("skipped") + count("cancelled") > 0 ? "skipped" : ""),
+                new ReportHtml.Stat(formatMillis(total), "Duration", ""),
+                new ReportHtml.Stat("" + shots.size(), "Screenshots", "")))
+            + screenshotsHtml(shots)
+            + stepsHtml()
+            + performanceHtml(started, ended)
+            + agentEventsHtml(started));
+    }
+
+    /** The at-a-glance gallery. The same files stay linked from the step that captured them. */
+    private String screenshotsHtml(List<Shot> shots) {
+        return ReportHtml.card("screenshots", "Screenshots",
+            "Every screenshot this run captured, in the order the steps took them.",
+            shots.size() + (shots.size() == 1 ? " capture" : " captures"),
+            ReportHtml.gallery("screenshots", shots));
+    }
+
+    private String stepsHtml() {
+        // A failing step's screenshot is written straight to disk, so the row that failed would
+        // otherwise be the one row with no evidence to click. This is a link, not a report field:
+        // `report.json` still records only what the step itself returned.
+        Map<Integer, String> failureShots = new HashMap<>();
+        for (String path : evidenceScreenshots()) {
+            Matcher failure = FAILURE_SHOT.matcher(shotName(path));
+            if (failure.matches()) failureShots.put(Integer.parseInt(failure.group(1)), path);
+        }
+        StringBuilder rows = new StringBuilder();
+        for (var r : results) {
+            Map<String, String> details = new LinkedHashMap<>(r.details);
+            String shot = failureShots.get(r.number);
+            if (shot != null) details.putIfAbsent("screenshot", shot);
+            rows.append("<tr><td class=\"num\">").append(r.number)
+                .append("</td><td><span class=\"phase\">")
+                .append(html(r.step.phase().value().toUpperCase(Locale.ROOT)))
+                .append("</span></td><td class=\"name\">").append(html(redact(r.step.displayName())))
+                .append("</td><td>").append(ReportHtml.pill(r.status))
+                .append("</td><td class=\"dur\">").append(formatMillis(r.durationMillis))
+                .append("</td><td>").append(htmlDetails(details))
+                .append("</td><td class=\"err\">").append(html(r.error == null ? "" : r.error))
+                .append("</td></tr>");
+        }
+        String body = teardownHtml() + ReportHtml.table(
+            "<th>#</th><th>Phase</th><th>Action</th><th>Status</th><th>Duration</th>"
+                + "<th>Evidence &amp; details</th><th>Error</th>", rows.toString());
+        return ReportHtml.card("steps", "Steps",
+            "Setup, test and cleanup instructions in execution order; cleanup failures mean a dirty device, not a broken assertion.",
+            results.size() + (results.size() == 1 ? " step" : " steps"), body);
+    }
+
+    private long count(String status) {
+        return results.stream().filter(r -> r.status.equals(status)).count();
+    }
+
+    /**
+     * Every screenshot the run wrote, labelled by the step that took it. Step order comes first
+     * because that is the order a reader follows; a failing step's screenshot is written straight
+     * to the evidence directory rather than recorded as a step detail, so the directory is swept
+     * afterwards for anything the step details did not already name.
+     */
+    private List<Shot> screenshots() {
+        List<Shot> shots = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (var r : results) {
+            for (var entry : r.details.entrySet()) {
+                String path = entry.getValue();
+                if (path == null || !path.endsWith(".png") || !seen.add(path)) continue;
+                shots.add(new Shot(path, shotName(path),
+                    "Step " + r.number + " · " + redact(r.step.displayName()), r.status));
+            }
+        }
+        for (String path : evidenceScreenshots()) {
+            if (!seen.add(path)) continue;
+            Matcher failure = FAILURE_SHOT.matcher(shotName(path));
+            StepResult step = failure.matches() ? resultNumbered(Integer.parseInt(failure.group(1))) : null;
+            shots.add(new Shot(path, shotName(path),
+                step == null ? "Captured during the run"
+                    : "Step " + step.number + " failed · " + redact(step.step.displayName()),
+                step == null ? "" : step.status));
+        }
+        return shots;
+    }
+
+    private StepResult resultNumbered(int number) {
+        return results.stream().filter(r -> r.number == number).findFirst().orElse(null);
+    }
+
+    /** Best effort: a run that failed before its evidence directory existed simply has none. */
+    private List<String> evidenceScreenshots() {
+        Path directory = root.resolve("evidence");
+        if (!Files.isDirectory(directory)) return List.of();
+        try (var files = Files.list(directory)) {
+            return files.map(path -> path.getFileName().toString()).filter(name -> name.endsWith(".png"))
+                .sorted().map(name -> "evidence/" + name).toList();
+        } catch (IOException unreadable) {
+            return List.of();
+        }
+    }
+
+    private static String shotName(String path) {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        return name.endsWith(".png") ? name.substring(0, name.length() - 4) : name;
+    }
+
+    /** Durations read as time, not as a six-digit millisecond count. */
+    static String formatMillis(long millis) {
+        if (millis < 1_000) return millis + " ms";
+        if (millis < 60_000) return String.format(Locale.ROOT, "%.1f s", millis / 1000.0);
+        return String.format(Locale.ROOT, "%d m %02d s", millis / 60_000, millis % 60_000 / 1000);
+    }
     private String junitXml(boolean passed, long millis) {
         boolean failed = primaryFailure() != null || !teardownFailures().isEmpty();
         boolean skipped = isCancelled() && !failed;
@@ -1470,24 +1631,18 @@ public final class FlowTestRunner {
         return detail.isEmpty() ? "failed" : detail.toString();
     }
 
-    /** The one-line verdict, so a reader never has to scan the step table to find the broken phase. */
-    private String verdictHtml() {
-        String verdict = failureMessage();
-        return verdict == null ? "" : "<p class=\"failed\">" + html(verdict) + "</p>";
-    }
-
-    /** Cleanup failures get their own heading: they are easy to miss as two rows in a long table. */
+    /** Cleanup failures get their own banner: they are easy to miss as two rows in a long table. */
     private String teardownHtml() {
         List<String> teardown = teardownFailures();
         if (teardown.isEmpty()) return "";
-        StringBuilder out = new StringBuilder("<h2>Cleanup failures</h2><ul>");
-        for (String cleanup : teardown) out.append("<li class=\"failed\">").append(html(cleanup)).append("</li>");
-        return out.append("</ul>").toString();
+        StringBuilder out = new StringBuilder("Cleanup failures · the device or its fixtures may be dirty<ul>");
+        for (String cleanup : teardown) out.append("<li>").append(html(cleanup)).append("</li>");
+        return ReportHtml.note("", out.append("</ul>").toString());
     }
 
     private static long elapsed(long n){return Duration.ofNanos(System.nanoTime()-n).toMillis();} private static String message(Exception e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();} private static String safeFile(String n){return n.replaceAll("[^a-zA-Z0-9._-]","_");}
     private String safeUrl(URI uri){return values.redact(HostRuntime.safeUrl(uri));}
     String redact(String value){return values.redact(value);}
-    private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")||e.getKey().equals("within-id")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){return details.entrySet().stream().map(e->(e.getKey().equals("evidence")||e.getKey().equals("hierarchy"))?"<a href=\""+html(e.getValue())+"\">"+html(e.getKey())+"</a>":html(e.getKey()+"="+e.getValue())).collect(java.util.stream.Collectors.joining(" · "));} private static String html(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
+    private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")||e.getKey().equals("within-id")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){if(details.isEmpty())return "";return details.entrySet().stream().map(e->LINKED_DETAILS.contains(e.getKey())?"<a href=\""+html(e.getValue())+"\"><code>"+html(e.getKey())+"</code></a>":"<code>"+html(e.getKey()+"="+e.getValue())+"</code>").collect(java.util.stream.Collectors.joining("","<div class=\"detail\">","</div>"));} private static String html(String s){return ReportHtml.escape(s);} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
     private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details,int dumps,long dumpMillis){}
 }

@@ -482,52 +482,104 @@ public final class FlowSuiteRunner {
 
     static String reportHtml(SuiteReport report) {
         Totals totals = totals(report.tests());
+        long millis = Duration.between(report.startedAt(), report.endedAt()).toMillis();
+        List<ReportHtml.Shot> shots = suiteShots(report);
+        String status = report.cancelled() ? "cancelled"
+            : totals.failed() > 0 || totals.skipped() > 0 || report.hooks().stream()
+                .anyMatch(hook -> hook.status().equals("failed")) ? "failed" : "passed";
+        return ReportHtml.document(report.name(),
+            ReportHtml.hero("Test suite", report.name(), status, suiteVerdict(report),
+                ReportHtml.meta(
+                    "suite=" + report.suiteFile(),
+                    "project=" + report.projectRoot(),
+                    "device=" + report.deviceSerial(),
+                    report.continueOnFailure() ? "on failure=continue" : "on failure=stop",
+                    "started=" + ReportHtml.time(report.startedAt()),
+                    "ended=" + ReportHtml.time(report.endedAt())))
+            + ReportHtml.stats(List.of(
+                new ReportHtml.Stat("" + totals.passed(), "Passed", "passed"),
+                new ReportHtml.Stat("" + totals.failed(), "Failed", totals.failed() > 0 ? "failed" : ""),
+                new ReportHtml.Stat("" + totals.skipped(), "Skipped", totals.skipped() > 0 ? "skipped" : ""),
+                new ReportHtml.Stat(FlowTestRunner.formatMillis(millis), "Duration", ""),
+                new ReportHtml.Stat("" + shots.size(), "Screenshots", "")))
+            + ReportHtml.card("screenshots", "Screenshots",
+                "Every screenshot each test in this suite captured, in run order.",
+                shots.size() + (shots.size() == 1 ? " capture" : " captures"),
+                ReportHtml.gallery("screenshots", shots))
+            + testsHtml(report)
+            + hooksHtml(report));
+    }
+
+    /** The failed hook, named: a suite can fail without any test in its table having failed. */
+    private static String suiteVerdict(SuiteReport report) {
+        if (report.cancelled()) return "Cancelled by user · remaining tests were skipped";
+        return report.hooks().stream().filter(hook -> hook.status().equals("failed")).findFirst()
+            .map(hook -> "suite " + hook.phase() + " hook failed · " + hook.displayName()
+                + (hook.error() == null ? "" : ": " + hook.error()))
+            .orElse(null);
+    }
+
+    /** One flat, labelled list across the suite, so the gallery reads as the whole run. */
+    private static List<ReportHtml.Shot> suiteShots(SuiteReport report) {
+        List<ReportHtml.Shot> shots = new ArrayList<>();
+        for (TestOutcome test : report.tests()) {
+            for (String screenshot : test.screenshots()) {
+                shots.add(new ReportHtml.Shot(screenshot, screenshotLabel(screenshot),
+                    "Test " + test.number() + " · " + test.displayName(), test.status()));
+            }
+        }
+        return shots;
+    }
+
+    private static String testsHtml(SuiteReport report) {
         StringBuilder rows = new StringBuilder();
         for (TestOutcome test : report.tests()) {
-            rows.append("<tr><td>").append(test.number()).append("</td><td>")
-                .append(html(test.displayName())).append("</td><td class=\"").append(test.status())
-                .append("\">").append(test.status()).append("</td><td>")
-                .append(test.durationMillis()).append(" ms</td><td>");
+            rows.append("<tr><td class=\"num\">").append(test.number())
+                .append("</td><td class=\"name\">").append(html(test.displayName()))
+                .append("<br><span class=\"mono\" style=\"color:var(--low)\">")
+                .append(html(test.reference())).append("</span></td><td>")
+                .append(ReportHtml.pill(test.status())).append("</td><td class=\"dur\">")
+                .append(FlowTestRunner.formatMillis(test.durationMillis())).append("</td><td>");
             if (test.report() != null) {
                 rows.append("<a href=\"").append(html(test.report().replace("report.json", "report.html")))
                     .append("\">Open report</a>");
             }
-            rows.append("</td><td>").append(html(test.error() == null ? "" : test.error()))
+            rows.append("</td><td class=\"err\">").append(html(test.error() == null ? "" : test.error()))
                 .append("</td></tr>");
             if (!test.screenshots().isEmpty()) {
-                rows.append("<tr><td></td><td colspan=\"5\" class=\"screenshots\">");
-                for (String screenshot : test.screenshots()) {
-                    rows.append("<a href=\"").append(html(screenshot)).append("\"><img src=\"")
-                        .append(html(screenshot)).append("\" alt=\"")
-                        .append(html(screenshotLabel(screenshot))).append("\" loading=\"lazy\">"
-                            + "<span>").append(html(screenshotLabel(screenshot)))
-                        .append("</span></a>");
-                }
-                rows.append("</td></tr>");
+                rows.append("<tr><td></td><td colspan=\"5\" class=\"screenshots\">")
+                    .append(ReportHtml.strip(test.screenshots().stream()
+                        .map(path -> new ReportHtml.Shot(path, screenshotLabel(path), null, null)).toList()))
+                    .append("</td></tr>");
             }
         }
-        StringBuilder hookRows = new StringBuilder();
-        for (HookOutcome hook : report.hooks()) hookRows.append("<tr><td>")
-            .append(html(hook.phase())).append("</td><td>").append(html(hook.displayName()))
-            .append("</td><td class=\"").append(hook.status()).append("\">")
-            .append(hook.status()).append("</td><td>")
-            .append(html(hook.error() == null ? "" : hook.error())).append("</td></tr>");
-        String hooks = report.hooks().isEmpty() ? "" : "<h2>Suite lifecycle</h2><table><tr>"
-            + "<th>Phase</th><th>Action</th><th>Status</th><th>Error</th></tr>" + hookRows + "</table>";
-        return "<!doctype html><meta charset=\"utf-8\"><title>" + html(report.name())
-            + " · FlowScope</title><style>body{font:14px system-ui;margin:32px;color:#171b22}"
-            + ".passed{color:#147a50}.failed{color:#c9323c}.skipped{color:#687382}"
-            + "table{border-collapse:collapse;width:100%;margin-top:24px}th,td{padding:9px;"
-            + "border-bottom:1px solid #dae0e8;text-align:left}"
-            + "td.screenshots{padding-top:0}"
-            + "td.screenshots a{display:inline-block;margin:0 10px 10px 0;text-align:center;"
-            + "font-size:11px;color:#687382}"
-            + "td.screenshots img{display:block;height:120px;border:1px solid #dae0e8;"
-            + "border-radius:4px;margin-bottom:4px}</style><h1>"
-            + html(report.name()) + "</h1>" + (report.cancelled() ? "<strong>Cancelled</strong>" : "") + "<p>" + totals.passed() + " passed · "
-            + totals.failed() + " failed · " + totals.skipped() + " skipped</p><table><tr>"
-            + "<th>#</th><th>Test</th><th>Status</th><th>Duration</th><th>Report</th>"
-            + "<th>Error</th></tr>" + rows + "</table>" + hooks;
+        Totals totals = totals(report.tests());
+        return ReportHtml.card("tests", "Tests",
+            "Each test in suite order, with its own report and the screenshots it captured.",
+            totals.total() + (totals.total() == 1 ? " test" : " tests"),
+            rows.isEmpty() ? ReportHtml.empty("This suite ran no tests.")
+                : ReportHtml.table("<th>#</th><th>Test</th><th>Status</th><th>Duration</th>"
+                    + "<th>Report</th><th>Error</th>", rows.toString()));
+    }
+
+    private static String hooksHtml(SuiteReport report) {
+        if (report.hooks().isEmpty()) return "";
+        StringBuilder rows = new StringBuilder();
+        for (HookOutcome hook : report.hooks()) {
+            rows.append("<tr><td><span class=\"phase\">")
+                .append(html(hook.phase().toUpperCase(java.util.Locale.ROOT)))
+                .append("</span></td><td class=\"name\">").append(html(hook.displayName()))
+                .append("</td><td>").append(ReportHtml.pill(hook.status()))
+                .append("</td><td class=\"dur\">")
+                .append(FlowTestRunner.formatMillis(hook.durationMillis()))
+                .append("</td><td class=\"err\">").append(html(hook.error() == null ? "" : hook.error()))
+                .append("</td></tr>");
+        }
+        return ReportHtml.card("lifecycle", "Suite lifecycle",
+            "Host-only setup and cleanup hooks; device state belongs to each test.",
+            report.hooks().size() + (report.hooks().size() == 1 ? " hook" : " hooks"),
+            ReportHtml.table("<th>Phase</th><th>Action</th><th>Status</th><th>Duration</th>"
+                + "<th>Error</th>", rows.toString()));
     }
 
     static String junitXml(SuiteReport report) {
@@ -595,8 +647,7 @@ public final class FlowSuiteRunner {
     }
 
     private static String html(String value) {
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            .replace("\"", "&quot;");
+        return ReportHtml.escape(value);
     }
 
     private static String xml(String value) {

@@ -215,6 +215,14 @@ Lifecycle instructions are grouped as `BEFORE`, `TEST`, and `AFTER` in card view
 their offline HTML report from the rail and retain a separate reveal-folder action. JSON remains the
 machine-readable source for the IDE, while JUnit output supports CI.
 
+The HTML report is the one surface read outside the app — from a CI artifact, usually with no
+network — so it carries its own stylesheet and no script, font or image host, and follows the
+reader's system theme using the IDE palette. It leads with the verdict, then a summary, then a
+**Screenshots** section holding every capture the run made, each labelled with the step or test that
+took it; the step table keeps its own evidence links, because the gallery answers "what happened"
+and the table answers "where". Its layout is presentation, not API: `COMPATIBILITY.md` promises
+`report.json`, not this page.
+
 The rail's runs are whatever the reports directory holds, wherever they were started. Every runner —
 CLI or IDE — appends `progress.jsonl` to its run directory while in flight (a start line with the
 writer's pid and process start time, then one line per step, and per test for a suite; never an

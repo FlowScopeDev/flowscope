@@ -164,6 +164,52 @@ class FlowSuiteReportTest {
         assertEquals(false, FlowSuiteRunner.reportHtml(report).contains("class=\"screenshots\""));
     }
 
+    @Test
+    void theSuiteGalleryCollectsEveryTestsScreenshotsAndNamesTheTestThatTookThem() {
+        FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
+            "Smoke", "flows/suites/smoke.suite", "/app", "ABC", false, STARTED, ENDED,
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
+                    "01-A/report.json", null, List.of(), List.of("01-A/evidence/step-01.png")),
+                new FlowSuiteRunner.TestOutcome(2, 4, "tests/b.flow", "B", "failed", 10,
+                    "02-B/report.json", "tap: no element matched", List.of(),
+                    List.of("02-B/evidence/failure-02.png"))));
+
+        String html = FlowSuiteRunner.reportHtml(report);
+        assertEquals(true, html.contains("<h2>Screenshots</h2>"));
+        assertEquals(true, html.contains("2 captures"));
+        assertEquals(true, html.contains("Test 1 · A"));
+        assertEquals(true, html.contains("Test 2 · B"));
+        // The per-test strip stays beside each row; the gallery is an addition, not a replacement.
+        assertEquals(true, html.contains("class=\"screenshots\""));
+    }
+
+    @Test
+    void aSuiteThatCapturedNothingStillCarriesTheLabelledSection() {
+        FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
+            "Smoke", "flows/suites/smoke.suite", "/app", "ABC", false, STARTED, ENDED,
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
+                "01-A/report.json", null)));
+
+        String html = FlowSuiteRunner.reportHtml(report);
+        assertEquals(true, html.contains("<h2>Screenshots</h2>"));
+        assertEquals(true, html.contains("This run captured no screenshots."));
+        assertEquals(false, html.contains("<img"));
+    }
+
+    @Test
+    void aFailedSuiteHookIsNamedInTheVerdictRatherThanOnlyInItsOwnTable() {
+        FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
+            "Smoke", "flows/suites/smoke.suite", "/app", "ABC", false, STARTED, ENDED,
+            List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
+                "01-A/report.json", null)),
+            List.of(new FlowSuiteRunner.HookOutcome("after", 9, "api-request", "failed", 12,
+                "expected 204, got 500", java.util.Map.of())));
+
+        String html = FlowSuiteRunner.reportHtml(report);
+        assertEquals(true, html.contains("suite after hook failed · api-request: expected 204, got 500"));
+        assertEquals(true, html.contains("hero failed"));
+    }
+
     private static FlowSuiteRunner.TestOutcome outcome(String status) {
         return new FlowSuiteRunner.TestOutcome(1, 1, "tests/a.flow", "A", status, 0, null, null);
     }
