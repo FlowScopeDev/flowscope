@@ -166,3 +166,12 @@ entries. Existing `action`, `name`, `reference` and artifact filenames retain th
 fall back to action/test names when the field is absent. Internal progress and plans carry the same
 literal label; neither receives runtime argument values. HTML/CLI prefer labels for human-readable
 step descriptions, and JUnit failure details and suite case names use labels when supplied.
+
+Transient malformed hierarchy dumps now retry within their observation budget. Per-step `uiDumps`
+counts successfully parsed dumps; additive `uiDumpErrors` and `uiDumpLastError` distinguish discarded
+captures and their last error. Schema version 2 is unchanged. Optional detail keys
+`discardedHierarchy`, `swipeHierarchy<N>` (and `-confirm` variants), `coveringNode`, and `targetBounds`
+provide redacted evidence links and coverage diagnostics; evidence failures use corresponding
+`Error` details. No `.flow` syntax or exit-code changes. `scroll-to` now requires full-area clearance
+and stops when a previously covered target leaves the viewport. Pure layouts cover only through
+children unless they have id/text/description/clickable/focusable semantics.

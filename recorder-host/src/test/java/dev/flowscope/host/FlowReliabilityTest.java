@@ -99,7 +99,7 @@ class FlowReliabilityTest {
         var nodes = hierarchy("<node bounds=\"[0,0][100,100]\">"
             + "<node resource-id=\"content\" drawing-order=\"1\" bounds=\"[0,0][100,100]\">"
             + node("target", "drawing-order=\"1\"") + "</node>"
-            + "<node resource-id=\"decor\" drawing-order=\"3\" bounds=\"[0,0][100,100]\">"
+            + "<node drawing-order=\"3\" bounds=\"[0,0][100,100]\">"
             + "<node resource-id=\"status_bar\" drawing-order=\"1\" bounds=\"[0,0][100,10]\"/>"
             + "<node resource-id=\"nav_bar\" drawing-order=\"2\" bounds=\"[0,90][100,100]\"/></node>"
             + "<node resource-id=\"scrim\" clickable=\"true\" drawing-order=\"4\" bounds=\"[0,60][100,100]\">"
@@ -108,6 +108,16 @@ class FlowReliabilityTest {
         assertNull(UiHierarchy.covering(nodes, target, 50, 50));
         assertEquals("status_bar", UiHierarchy.covering(nodes, target, 50, 5).id());
         assertEquals("scrim", UiHierarchy.covering(nodes, target, 50, 70).id());
+    }
+
+    @Test void meaningfulContainersCanCoverEvenWhenTheirChildrenDoNot() throws Exception {
+        for (String semantics : List.of("clickable=\"true\"", "focusable=\"true\"", "text=\"Overlay\"",
+            "content-desc=\"Overlay\"", "resource-id=\"overlay\"")) {
+            var nodes = hierarchy(node("target", "drawing-order=\"1\"")
+                + "<node " + semantics + " drawing-order=\"2\" bounds=\"[0,0][100,100]\">"
+                + "<node bounds=\"[0,0][10,10]\"/></node>");
+            assertNotNull(UiHierarchy.covering(nodes, nodes.getFirst(), 50, 50), semantics);
+        }
     }
 
     @Test void coveredTapFailsBeforeSendingInput() throws Exception {

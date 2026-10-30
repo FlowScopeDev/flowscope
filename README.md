@@ -398,7 +398,19 @@ another branch covers the tap point. Ancestors and the target's own children are
 accessibility drawing metadata cannot establish coverage. `clear-of-id` remains available for that
 case. `scroll-to` defaults to a slower 1000 ms swipe, avoids covered targets, and detects the end from
 scrollable-container children confirmed by a fresh dump. With no identifiable scrollable container,
-it stops at `max-swipes` rather than using unrelated screen content.
+it stops at `max-swipes` rather than using unrelated screen content. Scroll targets must clear the
+whole area of later coverers, including system-bar strips. Pure layouts without id, text, description,
+or clickable/focusable semantics cover only through their children. A previously covered target that
+leaves the viewport stops the search with its last covering node and bounds instead of more swipes.
+
+Malformed, empty, and truncated UI dumps are discarded and retried every 400 ms within the polling
+budget. For example, `step wait-visible id=com.example.debug:id/total timeout=60000` tolerates
+transient dump errors while a sheet animates. Absence assertions never treat an invalid dump as
+absence. Optional checks without `timeout` take one valid observation, using the test timeout to retry
+malformed dumps; scroll-to applies that budget to each fresh observation while `max-swipes` bounds
+the search. Stability waits use their 1500 ms window. If no valid dump arrives, the failure names the
+budget, attempt count, parser error, and a redacted 120-character preview. An in-flight ADB command
+remains subject to its own timeout.
 
 Before setup, runs check whether the device is locked or its screen is off. Foreground is checked
 before UI work; flows containing an initial launch/deep-link may start from another app and are checked
@@ -408,6 +420,10 @@ as `foreground is <package>`. Android versions that omit these state fields get 
 Use `flowscope test run login --keep-hierarchy` (also supported by `suite run`) to retain
 `evidence/step-NN.xml` for every executed step. JSON/HTML report details link each hierarchy;
 skipped steps have none, and capture failures appear as `hierarchyError` without changing the verdict.
+Steps report valid `uiDumps`, discarded `uiDumpErrors`, and `uiDumpLastError`. With this flag, the first
+discarded dump per step is saved as redacted `evidence/step-NN-discarded.txt`, and every scroll
+observation as `evidence/step-NN-swipe-MM.xml` (fresh end confirmations add `-confirm`). Details link
+these files and name `coveringNode` and `targetBounds` when coverage is observed.
 
 Shared request payloads live in `flowsDir/fixtures`:
 

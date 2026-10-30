@@ -99,3 +99,8 @@ blocks for loan/state-dependent UI; keep each block within one phase. Shared pay
 `body-file=@fixtures/name.json` under `flowsDir/fixtures`. Validate on disk before expensive setup
 so missing files and path escapes fail early. A covered tap or device-readiness error should be
 fixed at its source; do not work around it with guessed coordinates or sleeps.
+
+For flaky hierarchy captures, inspect `uiDumpErrors` and `uiDumpLastError` before changing selectors.
+`--keep-hierarchy` retains the first discarded dump and every scroll observation. A covered-target
+failure includes `coveringNode` and `targetBounds`; fix the overlay or scroll scope rather than raising
+`max-swipes` after the target has already left the viewport.

@@ -379,3 +379,13 @@ Runs check lock/power before setup and focused package before UI work, allowing 
 and falls back to max-swipes if no container is identifiable. Clear the prior remote dump before
 capture. `--keep-hierarchy` retains XML for executed steps via details.hierarchy; capture failures
 use details.hierarchyError and never replace the run verdict.
+
+Polling validates XML before counting or caching dumps. Discard malformed observations with a
+400 ms retry backoff; fail explicitly when a polling window obtained no valid dump. Optional checks
+without an explicit timeout take one valid observation using the test budget for retries; scroll-to
+uses that budget per observation and max-swipes for the search. Settle uses its 1500 ms window.
+Keep uiDumps (valid), uiDumpErrors, and uiDumpLastError per step. With keep-hierarchy, retain the
+first discarded text and every swipe/confirmation dump, redacting runtime values including XML
+references. Pure layout containers cover only through descendants unless they have id/text/desc or
+clickable/focusable semantics. Scroll targets clear full overlapping bounds; stop if a previously
+covered target leaves the viewport and report the coverer's metadata and last target bounds.

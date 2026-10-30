@@ -18,7 +18,10 @@ public final class UiHierarchy {
     private UiHierarchy() {}
 
     public static List<UiNode> parse(byte[] xml) throws Exception {
-        NodeList nodes = document(xml).getElementsByTagName("node");
+        var document = document(xml);
+        if (!document.getDocumentElement().getTagName().equals("hierarchy"))
+            throw new org.xml.sax.SAXException("Expected UI hierarchy root element");
+        NodeList nodes = document.getElementsByTagName("node");
         List<UiNode> result = new ArrayList<>();
         Map<Node, UiNode> parsed = new java.util.IdentityHashMap<>();
         Map<Node, Integer> windows = new java.util.IdentityHashMap<>();
@@ -49,7 +52,8 @@ public final class UiHierarchy {
                 element.getAttribute("clickable").equals("true"),
                 element.getAttribute("selected").equals("true"), parent,
                 integerAttribute(element, "drawing-order"), window, index,
-                element.getAttribute("scrollable").equals("true"));
+                element.getAttribute("scrollable").equals("true"),
+                element.getAttribute("focusable").equals("true"));
             result.add(item);
             parsed.put(element, item);
         }
@@ -63,7 +67,13 @@ public final class UiHierarchy {
         factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-        return factory.newDocumentBuilder().parse(new ByteArrayInputStream(xml));
+        var builder = factory.newDocumentBuilder();
+        // Parser diagnostics belong in the redacted report, never on raw stderr.
+        builder.setErrorHandler(new org.xml.sax.helpers.DefaultHandler() {
+            @Override public void error(org.xml.sax.SAXParseException error) throws org.xml.sax.SAXException { throw error; }
+            @Override public void fatalError(org.xml.sax.SAXParseException error) throws org.xml.sax.SAXException { throw error; }
+        });
+        return builder.parse(new ByteArrayInputStream(xml));
     }
 
     /** Redact decoded attributes, then escape them again so secrets containing XML syntax stay hidden. */
@@ -109,20 +119,45 @@ public final class UiHierarchy {
 
     /**
      * Only unrelated branches can cover a target; a label inside its button is not an overlay. A
-     * non-clickable container is judged by its children alone: the system decor is a full-screen
+     * layout with no identity, text or input semantics is judged by its children alone: the system decor is a full-screen
      * layout holding only the status and navigation bar strips, and covers nothing between them.
      */
     static UiNode covering(List<UiNode> nodes, UiNode target, int x, int y) {
+        return covering(nodes, target, x, y, false);
+    }
+
+    /** Scroll targets must clear the whole overlapping area, not only their tap centre. */
+    static UiNode overlappingCover(List<UiNode> nodes, UiNode target) {
+        return covering(nodes, target, 0, 0, true);
+    }
+
+    private static UiNode covering(List<UiNode> nodes, UiNode target, int x, int y, boolean wholeArea) {
         var containers = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<UiNode, Boolean>());
         for (UiNode node : nodes) if (node.parent != null) containers.add(node.parent);
         UiNode cover = null;
         for (UiNode node : nodes) {
-            if (node == target || !node.hasArea() || !node.contains(x, y)
-                || (containers.contains(node) && !node.clickable)
+            if (node == target || !node.hasArea() || !(wholeArea ? overlaps(node, target) : node.contains(x, y))
+                || (containers.contains(node) && !node.clickable && !node.focusable
+                    && node.id.isBlank() && node.text.isBlank() && node.description.isBlank())
                 || descendant(node, target) || descendant(target, node)) continue;
             if (drawnAfter(node, target) && (cover == null || drawnAfter(node, cover))) cover = node;
         }
         return cover;
+    }
+
+    static boolean overlaps(UiNode a, UiNode b) {
+        return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    }
+
+    static String bounds(UiNode node) {
+        return "[" + node.left + "," + node.top + "][" + node.right + "," + node.bottom + "]";
+    }
+
+    static String describe(UiNode node) {
+        return (node.id.isBlank() ? node.className : node.id) + " (class=" + node.className
+            + ", id=" + node.id + ", bounds=" + bounds(node) + ", drawing-order path="
+            + branch(node).stream().map(n -> n.drawingOrder + "@" + n.documentOrder).toList()
+            + ", window=" + node.window + ")";
     }
 
     static boolean descendant(UiNode node, UiNode ancestor) {
@@ -166,12 +201,12 @@ public final class UiHierarchy {
                          int left, int top, int right, int bottom,
                          boolean enabled, boolean checked, boolean focused,
                          boolean clickable, boolean selected, UiNode parent, int drawingOrder,
-                         int window, int documentOrder, boolean scrollable) {
+                         int window, int documentOrder, boolean scrollable, boolean focusable) {
         public UiNode(String id, String text, String description, String className,
                       int left, int top, int right, int bottom,
                       boolean enabled, boolean checked, boolean focused, boolean clickable, boolean selected) {
             this(id, text, description, className, left, top, right, bottom,
-                enabled, checked, focused, clickable, selected, null, -1, 0, -1, false);
+                enabled, checked, focused, clickable, selected, null, -1, 0, -1, false, false);
         }
         /** A node with no accessibility state, for callers that only care about identity and bounds. */
         public UiNode(String id, String text, String description, String className,

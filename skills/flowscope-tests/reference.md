@@ -202,3 +202,13 @@ only name observed steps. Skipped/not-run/interrupted steps remain distinct from
 IDE Stop cancels only its own run, interrupts the active step, skips future work, and runs test/suite
 `after` cleanup. Reports use `cancelled` for the run and interrupted step, `skipped` for unstarted
 work, and retain cleanup failures. JUnit cancellation is skipped unless real failures need preserving.
+
+Malformed UI dumps are transient: polling retries at 400 ms intervals within its timeout. Optional
+checks without a timeout use the test budget to obtain one valid observation. `scroll-to` uses the
+timeout per observation and `max-swipes` for the search; settle uses 1500 ms. In-flight ADB commands
+have their own bounds. No valid observation is an error, never an absent match. Reports expose
+valid `uiDumps`, discarded `uiDumpErrors`, and `uiDumpLastError`. `--keep-hierarchy` retains the first
+discarded raw text (redacted) and each scroll observation/confirmation. Read `coveringNode` and
+`targetBounds` on a covered failure. Scroll targets must clear the full overlap; a previously covered
+target leaving the viewport fails immediately. Pure layouts without identity/text/input semantics
+cover only through their children; system-bar strips cover only their own area.

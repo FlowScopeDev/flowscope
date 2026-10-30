@@ -450,3 +450,22 @@ Settings shows masked names until Reveal and edit JSON; hiding, saving or changi
 the visible buffer. Saves validate the complete string map, reject concurrent file changes, write
 owner-only dotenv atomically, and add project Git exclusions. Environment overrides apply at run
 time; the editor displays the stored file, not the process environment.
+
+### Transient hierarchy observations and scroll coverage
+
+Runner hierarchy acquisition validates the complete XML before counting or caching it. Polling
+windows discard malformed observations, back off 400 ms, and retain the last parser diagnostic.
+A deadline with no valid observation fails explicitly; invalid XML is never proof of absence or
+stability. Optional checks take one valid observation with the test timeout for malformed retries.
+Scroll-to retains its max-swipes search bound and applies the selector timeout per observation;
+settle uses its 1500 ms window. Blocking ADB calls retain their own existing timeout bounds.
+Per-step report fields distinguish valid uiDumps from uiDumpErrors and uiDumpLastError.
+With keep-hierarchy, the first discarded dump and each swipe/confirmation observation are retained
+as redacted evidence. XML references in malformed text are decoded for runtime-value redaction
+when necessary; parser diagnostics never print directly to stderr.
+
+Coverage excludes pure layout bounds unless the node has identity, text, description, or input
+semantics. Descendant leaves still cover only their actual overlapping area. Taps check their input
+point; scroll targets check full overlapping bounds. A covered target leaving the viewport ends the
+search immediately. Reports preserve the last covering node's class, id, bounds, window and drawing
+order path plus the target's last bounds.

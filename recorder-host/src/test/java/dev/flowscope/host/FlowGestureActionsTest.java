@@ -254,6 +254,143 @@ class FlowGestureActionsTest {
             .replace("step assert-visible", "step assert-visible timeout=300")));
     }
 
+    @Test
+    void transientMalformedDumpsAreDiscardedUntilAValidObservation() throws Exception {
+        for (String invalid : List.of("", "ERROR: null root node", "<hierarchy><node", "<not-a-hierarchy/>")) {
+            ScriptedAdb adb = new ScriptedAdb(screen(node("Home", 0, 0, 1000, 100, "")));
+            adb.invalidDumps = 1;
+            adb.invalidXml = invalid;
+            FlowTestRunner runner = runner(adb, "step wait-visible text=Home timeout=1000").keepHierarchy(true);
+            assertTrue(runner.run(), runner.failureMessage());
+            String report = Files.readString(runner.root().resolve("report.json"));
+            assertTrue(report.contains("\"uiDumpErrors\": 1"), report);
+            assertTrue(report.contains("uiDumpLastError"), report);
+            assertEquals(invalid, Files.readString(runner.root().resolve("evidence/step-01-discarded.txt")));
+        }
+    }
+
+    @Test
+    void malformedDumpsFailAtThePollingDeadline() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb("<hierarchy>");
+        FlowTestRunner runner = runner(adb, "step wait-visible text=Home timeout=450");
+        long start = System.nanoTime();
+        assertFalse(runner.run());
+        assertTrue((System.nanoTime() - start) / 1_000_000 >= 450);
+        assertTrue(runner.failureMessage().contains("No valid UI dump in 450 ms"), runner.failureMessage());
+        assertTrue(runner.failureMessage().contains("attempts; last error:"), runner.failureMessage());
+        assertTrue(runner.failureMessage().contains("raw output starts:"), runner.failureMessage());
+    }
+
+    @Test
+    void scrollToClearsNavBarAfterOneSwipe() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(decorScreen(1073, 1545, false), decorScreen(913, 1385, false));
+        FlowTestRunner runner = runner(adb,
+            "step scroll-to id=target from-id=list within-id=list distance=10 max-swipes=40").keepHierarchy(true);
+        assertTrue(runner.run(), runner.failureMessage());
+        assertEquals(1, adb.swipes);
+        assertTrue(Files.exists(runner.root().resolve("evidence/step-01-swipe-00.xml")));
+        assertTrue(Files.exists(runner.root().resolve("evidence/step-01-swipe-01.xml")));
+    }
+
+    @Test
+    void scrollToStopsWhenACoveredTargetLeavesTheViewport() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(decorScreen(800, 1200, true),
+            decorScreen(300, 700, true), decorScreen(0, 150, true));
+        FlowTestRunner runner = runner(adb,
+            "step scroll-to id=target from-id=list within-id=list max-swipes=40").keepHierarchy(true);
+        assertFalse(runner.run());
+        assertEquals(2, adb.swipes);
+        assertTrue(runner.failureMessage().contains("covered by overlay"), runner.failureMessage());
+        assertTrue(runner.failureMessage().contains("left the viewport after swipe 2"), runner.failureMessage());
+        String report = Files.readString(runner.root().resolve("report.json"));
+        assertTrue(report.contains("coveringNode"), report);
+        assertTrue(report.contains("targetBounds"), report);
+        assertTrue(report.contains("drawing-order path"), report);
+    }
+
+    @Test
+    void everyPollingActionDiscardsMalformedObservations() throws Exception {
+        for (String action : List.of("assert-visible text=Home", "assert-not-visible text=Missing",
+            "tap-if-visible text=Home", "if-visible text=Home", "scroll-to text=Home")) {
+            ScriptedAdb adb = new ScriptedAdb(screen(node("Home", 0, 0, 1000, 100, "")));
+            adb.invalidDumps = 1;
+            adb.invalidXml = "<hierarchy>";
+            FlowTestRunner runner = runner(adb, "step " + action + " timeout=1000"
+                + (action.startsWith("if-visible") ? "\nstep end" : ""));
+            assertTrue(runner.run(), action + ": " + runner.failureMessage());
+        }
+    }
+
+    @Test
+    void optionalCheckDoesNotTreatAnInvalidObservationAsAbsence() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(screen(node("Home", 0, 0, 1000, 100, "")));
+        adb.invalidDumps = 1;
+        adb.invalidXml = "broken";
+        FlowTestRunner runner = runner(adb, "step if-visible text=Home\nstep screenshot name=found\nstep end");
+        assertTrue(runner.run(), runner.failureMessage());
+        assertTrue(Files.exists(runner.root().resolve("evidence/found.png")));
+        FlowTestRunner invalid = runner(new ScriptedAdb("broken"),
+            "step assert-not-visible text=Missing timeout=100");
+        assertFalse(invalid.run());
+        assertTrue(invalid.failureMessage().contains("No valid UI dump"));
+    }
+
+    @Test
+    void settleRetriesMalformedDumpsAndDoesNotCacheThem() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(screen(node("Home", 0, 0, 1000, 100, "")));
+        adb.invalidDumps = 1;
+        adb.invalidXml = "<hierarchy>";
+        FlowTestRunner runner = runner(adb, "step press-key key=enter\nstep wait-visible text=Home");
+        assertTrue(runner.run(), runner.failureMessage());
+        String report = Files.readString(runner.root().resolve("report.json"));
+        assertTrue(report.contains("\"uiDumpErrors\": 1"));
+        FlowTestRunner invalid = runner(new ScriptedAdb("broken"), "step press-key key=enter");
+        assertFalse(invalid.run());
+        assertTrue(invalid.failureMessage().contains("No valid UI dump in 1500 ms"));
+    }
+
+    @Test
+    void rawMalformedEvidenceRedactsXmlEncodedRuntimeValues() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb("<hierarchy><node text=\"a&#38;b\"");
+        FlowTestRunner runner = runner(adb,
+            "step set-value name=token value=\"a&b\"\nstep wait-visible text=${var.token} timeout=100").keepHierarchy(true);
+        assertFalse(runner.run());
+        String raw = Files.readString(runner.root().resolve("evidence/step-02-discarded.txt"));
+        assertFalse(raw.contains("a&#38;b"));
+        assertFalse(raw.contains("a&b"));
+        assertTrue(raw.contains("{runtime}"), raw);
+        assertFalse(Files.readString(runner.root().resolve("report.json")).contains("a&b"));
+    }
+
+    @Test
+    void aPermanentlyCoveredTargetReportsTheOverlayAtTheSwipeLimit() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(decorScreen(900, 1200, true), decorScreen(500, 800, true));
+        FlowTestRunner runner = runner(adb, "step scroll-to id=target max-swipes=1");
+        assertFalse(runner.run());
+        assertTrue(runner.failureMessage().contains("covered by overlay"), runner.failureMessage());
+        assertFalse(runner.failureMessage().contains("Element not found"));
+    }
+
+    private static String decorScreen(int top, int bottom, boolean overlay) {
+        return """
+            <hierarchy><node class="android.widget.FrameLayout" bounds="[0,0][720,1600]">
+              <node drawing-order="1" class="android.view.View" bounds="[0,0][720,1600]"/>
+              <node drawing-order="2" class="android.widget.LinearLayout" bounds="[0,0][720,1600]">
+                <node resource-id="list" scrollable="true" bounds="[0,170][720,1510]">
+                  <node resource-id="target" bounds="[30,%d][660,%d]"/>
+                </node>
+              </node>
+              <node drawing-order="3" class="android.widget.FrameLayout" bounds="[0,0][720,1600]">
+                <node class="android.view.View" bounds="[0,0][720,64]"/>
+                <node class="android.view.View" bounds="[0,1510][720,1600]"/>
+              </node>
+              <node drawing-order="4" resource-id="android:id/navigationBarBackground" bounds="[0,1510][720,1600]"/>
+              %s
+            </node></hierarchy>
+            """.formatted(top, bottom, overlay
+                ? "<node resource-id=\"overlay\" class=\"android.widget.FrameLayout\" clickable=\"true\" drawing-order=\"5\" bounds=\"[0,0][720,1600]\"><node bounds=\"[0,0][10,10]\"/></node>" : "");
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private Path lastReport;
@@ -297,6 +434,8 @@ class FlowGestureActionsTest {
         private final List<String> screens;
         int swipes;
         int unwrittenDumps;
+        int invalidDumps;
+        String invalidXml;
         String inputMethod = "";
 
         ScriptedAdb(String... screens) {
@@ -318,6 +457,7 @@ class FlowGestureActionsTest {
 
         @Override
         public byte[] execOut(String serial, String... command) {
+            if (List.of(command).contains("cat") && invalidDumps-- > 0) return invalidXml.getBytes(StandardCharsets.UTF_8);
             if (List.of(command).contains("cat") && unwrittenDumps > 0) {
                 unwrittenDumps--;
                 return "cat: /data/local/tmp/flowscope-test-window.xml: No such file or directory".getBytes(StandardCharsets.UTF_8);

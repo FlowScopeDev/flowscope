@@ -628,12 +628,17 @@ public final class Main {
             visible and fails at the end of the content or at max-swipes; from-id starts every swipe at
             that element instead of the screen centre, and clear-of-id keeps swiping while the element
             overlaps any of those (a panel or floating button drawn over the content).
-            scroll-to also avoids covered tap points. End detection compares a scrollable container's
+            scroll-to requires full-area clearance and stops if a covered target leaves the viewport.
+            Pure layouts without identity/text/input semantics cover only through their children. End detection compares a scrollable container's
             children and confirms with a fresh dump; without a container it uses max-swipes only.
             Input: press-key key=enter|search|delete|tab|home|app-switch|volume-up|volume-down,
             clear-text <selector> (deletes the field's text), and hide-keyboard (Back only while the
             keyboard is showing).
             Mutating actions wait for UI stability; assertions poll until timeout.
+            Malformed UI dumps retry every 400 ms within the observation timeout (settle: 1500 ms).
+            Optional checks take one valid observation; scroll-to uses timeout per observation.
+            Reports include valid uiDumps, uiDumpErrors, and uiDumpLastError. --keep-hierarchy also
+            retains the first discarded dump and each scroll observation, with runtime values redacted.
             before runs setup in order; step is the test; after always runs every cleanup action.
             A failed cleanup is reported separately from the test failure and still fails the run.
             Device actions: clear-app-data, force-stop, grant-permission permission=...,

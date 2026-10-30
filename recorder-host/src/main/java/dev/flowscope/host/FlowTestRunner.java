@@ -18,7 +18,6 @@ import dev.flowscope.host.ReportHtml.Shot;
 
 public final class FlowTestRunner {
     private static final long POLL_MILLIS = 200;
-    private static final int DUMP_ATTEMPTS = 5;
     private static final long DUMP_RETRY_MILLIS = 400;
     /**
      * Steps that look an element up before (or instead of) changing anything, so they may start from
@@ -33,7 +32,7 @@ public final class FlowTestRunner {
     private static final long SETTLED_DUMP_MAX_AGE_NANOS = 3_000_000_000L;
     private static final Pattern GRANTED = Pattern.compile("^\\s*([A-Za-z][A-Za-z0-9_.]+): granted=true(?:,.*)?$");
     /** Detail keys whose value is a file beside the report rather than a value to read. */
-    private static final Set<String> LINKED_DETAILS = Set.of("evidence", "hierarchy", "screenshot");
+    private static final Set<String> LINKED_DETAILS = Set.of("evidence", "hierarchy", "screenshot", "discardedHierarchy");
     /** `failure-NN` names the step that failed, so its screenshot can be labelled with that step. */
     private static final Pattern FAILURE_SHOT = Pattern.compile("failure-(\\d+)");
     private final AdbClient adb;
@@ -308,6 +307,10 @@ public final class FlowTestRunner {
     // `uiautomator dump` starts a new process each time (about 2 s on a real device), so dumps are the
     // dominant cost of a run. These counters feed the per-step report; the cache removes redundant dumps.
     private int dumpCount;
+    private int stepDumpErrors;
+    private String stepDumpLastError;
+    private int activeStep;
+    private final Map<String, String> stepDiagnostics = new LinkedHashMap<>();
     private AgentEventCapture agentEvents;
     private final Map<Integer, Instant[]> stepWindows = new HashMap<>();
     private long dumpNanos;
@@ -336,6 +339,10 @@ public final class FlowTestRunner {
             Instant stepStarted = Instant.now();
             // Any other step can change the UI before it looks, so it must not see a remembered dump.
             if (!REUSES_SETTLED_DUMP.contains(step.action())) settledDump = null;
+            activeStep = i + 1;
+            stepDumpErrors = 0;
+            stepDumpLastError = null;
+            stepDiagnostics.clear();
             int dumpsBefore = dumpCount;
             long dumpNanosBefore = dumpNanos;
             try {
@@ -348,15 +355,16 @@ public final class FlowTestRunner {
                     ? work.run() : cancellation.execute(work));
                 if (step.action().equals("if-visible")) visibleBlocks.push(Boolean.parseBoolean(details.get("matched")));
                 retainHierarchy(i, details);
+                details.putAll(stepDiagnostics);
                 results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details,
-                    dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
+                    dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis(), stepDumpErrors, stepDumpLastError));
                 System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.displayName());
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed", step.label()));
             } catch (RunCancellation.Cancelled cancelled) {
                 passed = false;
                 results.add(new StepResult(i + 1, step, "cancelled", elapsed(started),
                     "Cancelled by user", Map.of(), dumpCount - dumpsBefore,
-                    Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
+                    Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis(), stepDumpErrors, stepDumpLastError));
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "cancelled", step.label()));
             } catch (Exception failure) {
                 passed = false;
@@ -364,9 +372,10 @@ public final class FlowTestRunner {
                 String message = redact(message(failure));
                 Map<String, String> details = new LinkedHashMap<>();
                 retainHierarchy(i, details);
+                details.putAll(stepDiagnostics);
                 if (step.action().equals("if-visible")) visibleBlocks.push(false);
                 results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, details,
-                    dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis()));
+                    dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis(), stepDumpErrors, stepDumpLastError));
                 System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.displayName(), message);
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed", step.label()));
                 if (stopOnFailure) stopped = true;
@@ -378,7 +387,7 @@ public final class FlowTestRunner {
     }
 
     private void addSkipped(int i, FlowTest.Step step, String reason) {
-        results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of(), 0, 0));
+        results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of(), 0, 0, 0, null));
         System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.displayName());
         progress(new StepProgress(i + 1, test.steps().size(), step.phase().value(), step.action(),
             step.line(), "skipped", step.label()));
@@ -400,7 +409,7 @@ public final class FlowTestRunner {
             case "scroll" -> { scroll(args.get("direction")); settle(); yield Map.of(); }
             case "long-press" -> longPress(args, timeout);
             case "swipe" -> swipeStep(args, timeout);
-            case "scroll-to" -> scrollTo(args);
+            case "scroll-to" -> scrollTo(args, timeout);
             case "press-key" -> { String key = args.get("key"); shell("input", "keyevent", pressKeycode(key)); settle(); yield Map.of("key", key); }
             case "clear-text" -> clearText(args, timeout);
             case "hide-keyboard" -> hideKeyboard();
@@ -1015,99 +1024,164 @@ public final class FlowTestRunner {
             return hasWebView && semantic == 0;
         } catch (Exception ignored) { return false; }
     }
+    /** One polling window; malformed observations never mean absent or stable. */
+    private final class HierarchyPoll {
+        final long timeout;
+        final long deadline;
+        int attempts;
+        boolean valid;
+        InvalidDump last;
+
+        HierarchyPoll(long timeout) {
+            this.timeout = timeout;
+            deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        }
+
+        byte[] next(boolean cached) throws Exception {
+            do {
+                RunCancellation.checkCurrent();
+                attempts++;
+                try {
+                    byte[] xml = cached ? currentHierarchy() : dumpHierarchy();
+                    valid = true;
+                    return xml;
+                } catch (InvalidDump invalid) {
+                    last = invalid;
+                    cached = false;
+                    if (!pending()) break;
+                    pause(DUMP_RETRY_MILLIS);
+                }
+            } while (pending());
+            if (!valid) throw new IOException("No valid UI dump in " + timeout + " ms (" + attempts
+                + " attempts; last error: " + last.getMessage() + "; raw output starts: "
+                + Json.quote(last.preview) + ")");
+            return null;
+        }
+
+        boolean pending() { return System.nanoTime() < deadline; }
+        void pause(long millis) throws InterruptedException {
+            long remaining = deadline - System.nanoTime();
+            if (remaining > 0) java.util.concurrent.TimeUnit.NANOSECONDS.sleep(
+                Math.min(remaining, Duration.ofMillis(millis).toNanos()));
+        }
+    }
+
     private UiHierarchy.UiNode findNode(Map<String, String> args, long timeout) throws Exception {
-        long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        // Optional checks still take one valid observation, with the test budget for malformed dumps.
+        var poll = new HierarchyPoll(timeout == 0 ? test.timeoutMillis() : timeout);
         boolean first = true;
         do {
-            RunCancellation.checkCurrent();
-            // Only the first look may reuse the dump settle() just took; later polls must see live UI.
-            byte[] dump = first ? currentHierarchy() : dumpHierarchy();
+            byte[] dump = poll.next(first);
             first = false;
+            if (dump == null) break;
             lookupNodes = UiHierarchy.parse(dump);
             var found = UiHierarchy.find(lookupNodes, args);
             if (found != null) return found;
-            if (timeout > 0) Thread.sleep(POLL_MILLIS);
-        } while (System.nanoTime() < deadline);
+            if (timeout == 0) break;
+            poll.pause(POLL_MILLIS);
+        } while (poll.pending());
         return null;
     }
+
     private void requireAbsent(Map<String, String> args, long timeout) throws Exception {
-        long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        var poll = new HierarchyPoll(timeout);
         boolean first = true;
         do {
-            RunCancellation.checkCurrent();
-            byte[] dump = first ? currentHierarchy() : dumpHierarchy();
+            byte[] dump = poll.next(first);
             first = false;
+            if (dump == null) break;
             if (UiHierarchy.find(UiHierarchy.parse(dump), args) == null) return;
-            Thread.sleep(POLL_MILLIS);
-        } while (System.nanoTime() < deadline);
+            poll.pause(POLL_MILLIS);
+        } while (poll.pending());
         throw new IllegalStateException("Element remained visible: " + selectorDescription(args));
     }
+
+    private static final class InvalidDump extends IOException {
+        final String preview;
+        InvalidDump(String message, String preview) { super(message); this.preview = preview; }
+    }
+
     private byte[] dumpHierarchy() throws Exception {
         long begin = System.nanoTime();
         try {
-            return readHierarchy();
-        } finally {
+            byte[] xml = readHierarchy();
+            try {
+                UiHierarchy.parse(xml);
+            } catch (org.xml.sax.SAXException malformed) {
+                stepDumpErrors++;
+                stepDumpLastError = redact(message(malformed));
+                String raw = redactRawDump(xml);
+                if (keepHierarchy && stepDumpErrors == 1) {
+                    retainDump("discardedHierarchy", "step-%02d-discarded.txt".formatted(activeStep),
+                        raw.getBytes(StandardCharsets.UTF_8));
+                }
+                throw new InvalidDump(stepDumpLastError, raw.substring(0, Math.min(120, raw.length())));
+            }
             dumpCount++;
+            return xml;
+        } finally {
             dumpNanos += System.nanoTime() - begin;
         }
     }
 
-    /** The hierarchy settle() last observed if it is still fresh, otherwise a new dump. */
+    private String redactRawDump(byte[] xml) {
+        // Decode XML references even in truncated documents before applying runtime-value redaction.
+        String raw = new String(xml, StandardCharsets.UTF_8);
+        var numeric = Pattern.compile("&#(x[0-9a-fA-F]+|[0-9]+);").matcher(raw);
+        StringBuilder decoded = new StringBuilder();
+        while (numeric.find()) {
+            String ref = numeric.group(1);
+            String replacement = numeric.group();
+            try { replacement = Character.toString(Integer.parseInt(ref.startsWith("x") ? ref.substring(1) : ref,
+                ref.startsWith("x") ? 16 : 10)); } catch (IllegalArgumentException ignored) { }
+            numeric.appendReplacement(decoded, Matcher.quoteReplacement(replacement));
+        }
+        numeric.appendTail(decoded);
+        String plain = decoded.toString().replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+            .replace("&apos;", "'").replace("&amp;", "&");
+        String safe = redact(plain);
+        return safe.equals(plain) ? redact(raw) : safe;
+    }
+
+    private void retainDump(String key, String name, byte[] bytes) {
+        try {
+            String path = "evidence/" + name;
+            Files.write(root.resolve(path), bytes);
+            stepDiagnostics.put(key, path);
+        } catch (IOException failure) {
+            stepDiagnostics.put(key + "Error", redact(message(failure)));
+        }
+    }
+
+    /** Only validated, settled observations are eligible for reuse. */
     private byte[] currentHierarchy() throws Exception {
         byte[] cached = settledDump;
         if (cached != null && System.nanoTime() - settledAtNanos < SETTLED_DUMP_MAX_AGE_NANOS) return cached;
         return dumpHierarchy();
     }
 
-    /**
-     * Dumps the hierarchy into a cleared file. `uiautomator dump` can exit 0 without writing it
-     * ("null root node", "could not get idle state") while a window is starting or animating, so a
-     * missing or non-XML file is retried a few times before it fails.
-     */
     private byte[] readHierarchy() throws Exception {
-        String detail = "";
-        for (int attempt = 1; attempt <= DUMP_ATTEMPTS; attempt++) {
-            var removed = adb.run(List.of("-s", device.serial(), "shell", "rm", "-f", "/data/local/tmp/flowscope-test-window.xml"));
-            if (removed.exitCode() != 0) throw new IOException("Could not clear previous UI hierarchy");
-            var dump = adb.run(List.of("-s", device.serial(), "shell", "uiautomator", "dump", "/data/local/tmp/flowscope-test-window.xml"), AdbClient.DUMP_TIMEOUT_MILLIS);
-            if (dump.exitCode() != 0) throw new IOException("UI hierarchy failed: " + (dump.stdout() + dump.stderr()).strip());
-            byte[] xml = adb.execOut(device.serial(), "cat", "/data/local/tmp/flowscope-test-window.xml");
-            if (looksLikeXml(xml)) return xml;
-            detail = (dump.stdout() + dump.stderr()).strip();
-            if (attempt < DUMP_ATTEMPTS) Thread.sleep(DUMP_RETRY_MILLIS);
-        }
-        throw new IOException("UI hierarchy was not written after " + DUMP_ATTEMPTS + " attempts: " + detail);
+        var removed = adb.run(List.of("-s", device.serial(), "shell", "rm", "-f", "/data/local/tmp/flowscope-test-window.xml"));
+        if (removed.exitCode() != 0) throw new IOException("Could not clear previous UI hierarchy");
+        var dump = adb.run(List.of("-s", device.serial(), "shell", "uiautomator", "dump", "/data/local/tmp/flowscope-test-window.xml"), AdbClient.DUMP_TIMEOUT_MILLIS);
+        if (dump.exitCode() != 0) return (dump.stdout() + dump.stderr()).getBytes(StandardCharsets.UTF_8);
+        return adb.execOut(device.serial(), "cat", "/data/local/tmp/flowscope-test-window.xml");
     }
 
-    private static boolean looksLikeXml(byte[] bytes) {
-        for (byte b : bytes) {
-            if (b == '<') return true;
-            if (!Character.isWhitespace(b) && b != (byte) 0xEF && b != (byte) 0xBB && b != (byte) 0xBF) return false;
-        }
-        return false;
-    }
-    /**
-     * Waits for the UI to stop changing after a mutation and remembers the final hierarchy so the next
-     * lookup need not dump again. Consecutive hierarchies are compared for up to 1.5 s; when one dump
-     * alone takes that long it has already watched the UI for the whole window, so a second dump would
-     * only add latency.
-     */
-    private void settle() {
+    /** Compare only valid observations; a slow valid dump alone can fill the stability window. */
+    private void settle() throws Exception {
         settledDump = null;
-        try {
-            long begin = System.nanoTime();
-            byte[] old = dumpHierarchy();
-            if (System.nanoTime() - begin >= SETTLE_WINDOW_NANOS) { rememberSettled(old); return; }
-            long end = begin + SETTLE_WINDOW_NANOS;
-            do {
-            RunCancellation.checkCurrent();
-                Thread.sleep(250);
-                byte[] now = dumpHierarchy();
-                if (Arrays.equals(old, now)) { rememberSettled(now); return; }
-                old = now;
-            } while (System.nanoTime() < end);
-            rememberSettled(old);
-        } catch (Exception ignored) {}
+        var poll = new HierarchyPoll(Duration.ofNanos(SETTLE_WINDOW_NANOS).toMillis());
+        byte[] old = poll.next(false);
+        while (poll.pending()) {
+            poll.pause(250);
+            if (!poll.pending()) break;
+            byte[] now = poll.next(false);
+            if (now == null) break;
+            if (Arrays.equals(old, now)) { rememberSettled(now); return; }
+            old = now;
+        }
+        rememberSettled(old);
     }
 
     private void rememberSettled(byte[] dump) { settledDump = dump; settledAtNanos = System.nanoTime(); }
@@ -1198,54 +1272,120 @@ public final class FlowTestRunner {
      * overlaps none of them (panels or floating buttons drawn over the content), so a later tap reaches it.
      * {@code distance} and {@code duration} are as for `swipe`; shorter, slower swipes fling less.
      */
-    private Map<String, String> scrollTo(Map<String, String> args) throws Exception {
+    private Map<String, String> scrollTo(Map<String, String> args, long timeout) throws Exception {
         String direction = args.getOrDefault("direction", "up");
         int maxSwipes = (int) boundedArg(args, "max-swipes", 10, 1, FlowTestParser.SCROLL_TO_MAX_SWIPES_LIMIT);
         String fromId = args.get("from-id");
-        String clearOfId = args.get("clear-of-id");
         int percent = (int) boundedArg(args, "distance", 50,
             FlowTestParser.SWIPE_MIN_PERCENT, FlowTestParser.SWIPE_MAX_PERCENT);
         long millis = boundedArg(args, "duration", 1000, FlowTestParser.SWIPE_MIN_MILLIS, FlowTestParser.SWIPE_MAX_MILLIS);
         String previous = null;
+        int firstSeen = -1, lastSeen = -1;
+        String lastCover = null;
+        if (screenSize == null) screenSize = adb.displaySize(device.serial());
+        if (screenSize == null) throw new IOException("Could not determine device size");
+        int[] size = screenSize;
         for (int swipes = 0; ; swipes++) {
-            byte[] dump = dumpHierarchy();
+            // max-swipes bounds scrolling; timeout bounds obtaining each fresh observation.
+            byte[] dump = new HierarchyPoll(timeout).next(false);
             var nodes = UiHierarchy.parse(dump);
+            var anchor = fromId == null ? null : UiHierarchy.find(nodes, Map.of("id", fromId));
+            var container = scrollContainer(nodes, anchor, args.get("within-id"));
             var target = UiHierarchy.find(nodes, args);
-            if (target != null && !covered(target, nodes, clearOfId)
-                && UiHierarchy.covering(nodes, target, target.tapX(args), target.centerY()) == null) {
-                rememberSettled(dump);
-                return Map.of("swipes", "" + swipes);
+            if (target != null) stepDiagnostics.put("targetBounds", UiHierarchy.bounds(target));
+            retainSwipe(dump, swipes, false);
+            boolean inView = target != null && inViewport(target, container, size);
+            if (inView) {
+                var cover = scrollCover(target, nodes, args.get("clear-of-id"));
+                if (cover == null) {
+                    rememberSettled(dump);
+                    return Map.of("swipes", "" + swipes);
+                }
+                if (firstSeen < 0) firstSeen = swipes;
+                lastSeen = swipes;
+                lastCover = UiHierarchy.describe(cover);
+                recordCover(target, cover);
+            } else if (firstSeen >= 0) {
+                throw new IllegalStateException("Target seen on swipes " + firstSeen + "–" + lastSeen
+                    + " but covered by " + lastCover + "; it left the viewport after swipe " + swipes);
             }
             if (swipes >= maxSwipes) {
+                if (lastCover != null) throw new IllegalStateException("Target seen on swipes " + firstSeen
+                    + "–" + lastSeen + " but covered by " + lastCover + " after " + swipes + " swipes");
                 throw new IllegalStateException("Element not found after " + swipes + " swipes: " + selectorDescription(args));
             }
-            var anchor = fromId == null ? null : UiHierarchy.find(nodes, Map.of("id", fromId));
             if (fromId != null && anchor == null) {
                 throw new IllegalStateException("scroll-to start element not found: id=" + fromId);
             }
-            var container = scrollContainer(nodes, anchor, args.get("within-id"));
             String signature = container == null ? null : UiHierarchy.contentSignature(nodes, container);
             if (signature != null && !signature.isEmpty() && signature.equals(previous)) {
-                // A cached/transient dump is not proof of the end: confirm with another fresh dump.
                 Thread.sleep(POLL_MILLIS);
-                var confirmedNodes = UiHierarchy.parse(dumpHierarchy());
+                byte[] confirmation = new HierarchyPoll(timeout).next(false);
+                retainSwipe(confirmation, swipes, true);
+                var confirmedNodes = UiHierarchy.parse(confirmation);
                 var confirmedAnchor = fromId == null ? null : UiHierarchy.find(confirmedNodes, Map.of("id", fromId));
                 var confirmedContainer = scrollContainer(confirmedNodes, confirmedAnchor, args.get("within-id"));
                 var confirmedTarget = UiHierarchy.find(confirmedNodes, args);
-                if (confirmedTarget == null && confirmedContainer != null
+                if (confirmedTarget != null && inViewport(confirmedTarget, confirmedContainer, size)) {
+                    var cover = scrollCover(confirmedTarget, confirmedNodes, args.get("clear-of-id"));
+                    if (cover == null) {
+                        rememberSettled(confirmation);
+                        return Map.of("swipes", "" + swipes);
+                    }
+                    if (firstSeen < 0) firstSeen = swipes;
+                    lastSeen = swipes;
+                    lastCover = UiHierarchy.describe(cover);
+                    recordCover(confirmedTarget, cover);
+                } else if (firstSeen >= 0) {
+                    throw new IllegalStateException("Target seen on swipes " + firstSeen + "–" + lastSeen
+                        + " but covered by " + lastCover + "; it left the viewport after swipe " + swipes);
+                }
+                if (confirmedContainer != null
                     && signature.equals(UiHierarchy.contentSignature(confirmedNodes, confirmedContainer))) {
                     throw new IllegalStateException("Reached the end of the content after " + swipes
-                        + " swipes without finding: " + selectorDescription(args));
+                        + (lastCover == null ? " swipes without finding: " + selectorDescription(args)
+                            : " swipes; target covered by " + lastCover));
                 }
-                if (confirmedTarget != null && !covered(confirmedTarget, confirmedNodes, clearOfId)
-                    && UiHierarchy.covering(confirmedNodes, confirmedTarget, confirmedTarget.tapX(args), confirmedTarget.centerY()) == null) {
-                    return Map.of("swipes", "" + swipes);
-                }
+                // A changed confirmation is the freshest source for the next gesture.
+                anchor = confirmedAnchor;
+                if (fromId != null && anchor == null)
+                    throw new IllegalStateException("scroll-to start element not found: id=" + fromId);
             }
             previous = signature;
             swipe(direction, anchor == null ? null : anchor.centerX(), anchor == null ? null : anchor.centerY(), percent, millis);
             settle();
         }
+    }
+
+    private static boolean inViewport(UiHierarchy.UiNode target, UiHierarchy.UiNode container, int[] size) {
+        int left = 0, top = 0, right = size[0], bottom = size[1];
+        for (var parent = target.parent(); parent != null; parent = parent.parent()) {
+            left = Math.max(left, parent.left()); top = Math.max(top, parent.top());
+            right = Math.min(right, parent.right()); bottom = Math.min(bottom, parent.bottom());
+        }
+        if (container != null) {
+            left = Math.max(left, container.left()); top = Math.max(top, container.top());
+            right = Math.min(right, container.right()); bottom = Math.min(bottom, container.bottom());
+        }
+        return right > left && bottom > top && target.right() > left && target.left() < right
+            && target.bottom() > top && target.top() < bottom;
+    }
+
+    private void retainSwipe(byte[] dump, int swipes, boolean confirmation) {
+        if (!keepHierarchy) return;
+        String suffix = confirmation ? "-confirm" : "";
+        try {
+            retainDump("swipeHierarchy" + swipes + suffix,
+                "step-%02d-swipe-%02d%s.xml".formatted(activeStep, swipes, suffix),
+                UiHierarchy.redact(dump, this::redact));
+        } catch (Exception failure) {
+            stepDiagnostics.put("swipeHierarchyError", redact(message(failure)));
+        }
+    }
+
+    private void recordCover(UiHierarchy.UiNode target, UiHierarchy.UiNode cover) {
+        stepDiagnostics.put("coveringNode", redact(UiHierarchy.describe(cover)));
+        stepDiagnostics.put("targetBounds", UiHierarchy.bounds(target));
     }
 
     private static UiHierarchy.UiNode scrollContainer(List<UiHierarchy.UiNode> nodes,
@@ -1263,18 +1403,16 @@ public final class FlowTestRunner {
             .max(Comparator.comparingLong(UiHierarchy.UiNode::area)).orElse(null);
     }
 
-    /** Whether any element named in the comma-separated {@code clearOfIds} overlaps {@code target}. */
-    private static boolean covered(UiHierarchy.UiNode target, List<UiHierarchy.UiNode> nodes, String clearOfIds) {
-        if (clearOfIds == null) return false;
-        for (String id : clearOfIds.split(",")) {
-            var cover = UiHierarchy.find(nodes, Map.of("id", id.trim()));
-            if (cover != null && overlaps(target, cover)) return true;
+    private static UiHierarchy.UiNode scrollCover(UiHierarchy.UiNode target,
+        List<UiHierarchy.UiNode> nodes, String clearOfIds) {
+        if (clearOfIds != null) {
+            for (String id : clearOfIds.split(",")) {
+                // An explicit clear-of-id can intentionally name a layout; honour every match.
+                for (var node : nodes) if (node.id().equals(id.trim()) && node != target
+                    && node.hasArea() && UiHierarchy.overlaps(target, node)) return node;
+            }
         }
-        return false;
-    }
-
-    private static boolean overlaps(UiHierarchy.UiNode a, UiHierarchy.UiNode b) {
-        return a.left() < b.right() && b.left() < a.right() && a.top() < b.bottom() && b.top() < a.bottom();
+        return UiHierarchy.overlappingCover(nodes, target);
     }
 
     /** Taps the field, moves to the end of its text, and deletes as many characters as it holds. */
@@ -1308,8 +1446,10 @@ public final class FlowTestRunner {
 
     private void ensureUncovered(UiHierarchy.UiNode node, int x) {
         var cover = UiHierarchy.covering(lookupNodes, node, x, node.centerY());
-        if (cover != null) throw new IllegalStateException("Target is covered by "
-            + (cover.id().isBlank() ? cover.className() : cover.id()));
+        if (cover != null) {
+            recordCover(node, cover);
+            throw new IllegalStateException("Target is covered by " + UiHierarchy.describe(cover));
+        }
     }
 
     static boolean uiStep(FlowTest.Step step) {
@@ -1472,7 +1612,7 @@ public final class FlowTestRunner {
         String primary=primaryFailure(); List<String> teardown=teardownFailures();
         StringBuilder out=new StringBuilder("{\n  \"schemaVersion\": 2,\n  \"kind\": \"test\",\n").append("  \"name\": ").append(Json.quote(test.name())).append(",\n  \"packageName\": ").append(Json.quote(test.packageName())).append(",\n  \"mode\": ").append(Json.quote(test.mode().cliName())).append(",\n  \"deviceSerial\": ").append(Json.quote(device.serial())).append(",\n  \"startedAt\": ").append(Json.quote(started.toString())).append(",\n  \"endedAt\": ").append(Json.quote(ended.toString())).append(",\n  \"status\": ").append(Json.quote(status(passed))).append(",\n  \"primaryFailure\": ").append(Json.quote(primary)).append(",\n  \"teardownFailures\": [");
         for(int i=0;i<teardown.size();i++){if(i>0)out.append(", ");out.append(Json.quote(teardown.get(i)));} out.append("],\n  \"webView\": ").append(previousWebState == null ? "null" : WebViewInspector.json(previousWebState.sanitized())).append(",\n  \"steps\": [\n");
-        for(int i=0;i<results.size();i++){var r=results.get(i);out.append("    {\"number\": ").append(r.number).append(", \"line\": ").append(r.step.line()).append(", \"phase\": ").append(Json.quote(r.step.phase().value())).append(", \"action\": ").append(Json.quote(r.step.action())).append(FlowLabel.json(redact(r.step.label()))).append(", \"status\": ").append(Json.quote(r.status)).append(", \"durationMillis\": ").append(r.durationMillis).append(", \"uiDumps\": ").append(r.dumps).append(", \"uiDumpMillis\": ").append(r.dumpMillis).append(", \"error\": ").append(Json.quote(r.error)).append(", \"details\": {");int d=0;for(var e:r.details.entrySet()){if(d++>0)out.append(", ");out.append(Json.quote(e.getKey())).append(": ").append(Json.quote(e.getValue()));}out.append("}}");if(i+1<results.size())out.append(',');out.append('\n');} out.append("  ],\n  \"performance\": ").append(performanceJson(started, ended));
+        for(int i=0;i<results.size();i++){var r=results.get(i);out.append("    {\"number\": ").append(r.number).append(", \"line\": ").append(r.step.line()).append(", \"phase\": ").append(Json.quote(r.step.phase().value())).append(", \"action\": ").append(Json.quote(r.step.action())).append(FlowLabel.json(redact(r.step.label()))).append(", \"status\": ").append(Json.quote(r.status)).append(", \"durationMillis\": ").append(r.durationMillis).append(", \"uiDumps\": ").append(r.dumps).append(", \"uiDumpErrors\": ").append(r.dumpErrors).append(", \"uiDumpLastError\": ").append(Json.quote(redact(r.dumpLastError))).append(", \"uiDumpMillis\": ").append(r.dumpMillis).append(", \"error\": ").append(Json.quote(r.error)).append(", \"details\": {");int d=0;for(var e:r.details.entrySet()){if(d++>0)out.append(", ");out.append(Json.quote(e.getKey())).append(": ").append(Json.quote(e.getValue()));}out.append("}}");if(i+1<results.size())out.append(',');out.append('\n');} out.append("  ],\n  \"performance\": ").append(performanceJson(started, ended));
         out.append(",\n  \"agentEvents\": ").append(agentEventsJson(started));
         return out.append("\n}\n").toString();
     }
@@ -1643,6 +1783,6 @@ public final class FlowTestRunner {
     private static long elapsed(long n){return Duration.ofNanos(System.nanoTime()-n).toMillis();} private static String message(Exception e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();} private static String safeFile(String n){return n.replaceAll("[^a-zA-Z0-9._-]","_");}
     private String safeUrl(URI uri){return values.redact(HostRuntime.safeUrl(uri));}
     String redact(String value){return values.redact(value);}
-    private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")||e.getKey().equals("within-id")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){if(details.isEmpty())return "";return details.entrySet().stream().map(e->LINKED_DETAILS.contains(e.getKey())?"<a href=\""+html(e.getValue())+"\"><code>"+html(e.getKey())+"</code></a>":"<code>"+html(e.getKey()+"="+e.getValue())+"</code>").collect(java.util.stream.Collectors.joining("","<div class=\"detail\">","</div>"));} private static String html(String s){return ReportHtml.escape(s);} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
-    private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details,int dumps,long dumpMillis){}
+    private Map<String,String> packageDetails(){return Map.of("package",test.packageName());} private Map<String,String> permissionDetails(Map<String,String>a){return Map.of("package",test.packageName(),"permission",a.get("permission"));} private static boolean hasSelector(Map<String,String>a){return a.keySet().stream().anyMatch(UiHierarchy.SELECTOR_KEYS::contains);} private static String selectorDescription(Map<String,String>a){return a.entrySet().stream().filter(e->UiHierarchy.SELECTOR_KEYS.contains(e.getKey())||UiHierarchy.STATE_KEYS.contains(e.getKey())||e.getKey().equals("index")||e.getKey().equals("within-id")).map(e->e.getKey()+"="+e.getValue()).toList().toString();} private static String htmlDetails(Map<String,String> details){if(details.isEmpty())return "";return details.entrySet().stream().map(e->(LINKED_DETAILS.contains(e.getKey()) || e.getKey().matches("swipeHierarchy[0-9]+(-confirm)?"))?"<a href=\""+html(e.getValue())+"\"><code>"+html(e.getKey())+"</code></a>":"<code>"+html(e.getKey()+"="+e.getValue())+"</code>").collect(java.util.stream.Collectors.joining("","<div class=\"detail\">","</div>"));} private static String html(String s){return ReportHtml.escape(s);} private static String xml(String s){return html(s==null?"":s).replace("'","&apos;");}
+    private record StepResult(int number,FlowTest.Step step,String status,long durationMillis,String error,Map<String,String>details,int dumps,long dumpMillis,int dumpErrors,String dumpLastError){}
 }
