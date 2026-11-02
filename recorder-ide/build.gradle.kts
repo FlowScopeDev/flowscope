@@ -1,3 +1,7 @@
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
+
 plugins {
     kotlin("jvm")
     id("org.jetbrains.compose")
@@ -87,31 +91,60 @@ compose.desktop {
     }
 }
 
-// Files copied from a quarantined/provenance-marked JDK can make an otherwise valid local
-// development bundle appear "damaged" to macOS. Distribution builds signed with a real Developer
-// ID are handled by the signing block above; this cleanup only prepares the unsigned app, local or
-// released — the release DMG we actually ship is built from createReleaseDistributable's output,
-// so it needs the same treatment as the local createDistributable one.
-tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
+// jpackage/Compose patch and re-sign executables while assembling the app. macOS can retain
+// signature/provenance state for those files even when codesign --verify succeeds. Publish the
+// completed, verified bytes on fresh inodes, without inherited extended attributes, at the normal
+// output path. Both Finder/runDistributable and packageDmg must consume this final bundle.
+// https://developer.apple.com/documentation/security/updating-mac-software
+tasks.withType<AbstractJPackageTask>().matching {
+    it.name == "createDistributable" || it.name == "createReleaseDistributable"
+}.configureEach {
     // Apple Development certificates work for local installs, but Compose's distribution signer
     // only accepts Developer ID/App Store identities. Keep this opt-in local path separate.
     val localSigningIdentity = providers.gradleProperty("flowscope.mac.localSigningIdentity")
     inputs.property("flowscope.mac.localSigningIdentity", localSigningIdentity.orElse("-"))
     doLast {
         if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true)) return@doLast
-        if (providers.gradleProperty("flowscope.mac.signingIdentity").isPresent) return@doLast
 
-        val variant = if (name == "createReleaseDistributable") "main-release" else "main"
-        val app = layout.buildDirectory.dir("compose/binaries/$variant/app/Flow Scope.app").get().asFile
+        val app = destinationDir.get().asFile.resolve("${packageName.get()}.app")
         fun runTool(vararg command: String) {
             val exit = ProcessBuilder(*command).inheritIO().start().waitFor()
             check(exit == 0) { "Command failed ($exit): ${command.joinToString(" ")}" }
         }
-        runTool("xattr", "-cr", app.absolutePath)
-        val identity = localSigningIdentity.orNull?.trim() ?: "-"
-        check(identity.isNotEmpty()) { "flowscope.mac.localSigningIdentity must not be blank" }
-        runTool("codesign", "--force", "--deep", "--sign", identity,
-            "--timestamp=none", "--preserve-metadata=entitlements", app.absolutePath)
-        runTool("codesign", "--verify", "--deep", "--strict", app.absolutePath)
+        if (!providers.gradleProperty("flowscope.mac.signingIdentity").isPresent) {
+            runTool("/usr/bin/xattr", "-cr", app.absolutePath)
+            val identity = localSigningIdentity.orNull?.trim() ?: "-"
+            check(identity.isNotEmpty()) { "flowscope.mac.localSigningIdentity must not be blank" }
+            runTool("/usr/bin/codesign", "--force", "--deep", "--sign", identity,
+                "--timestamp=none", "--preserve-metadata=entitlements", app.absolutePath)
+        }
+        // Developer ID signatures from Compose remain intact; never re-sign them as local/ad-hoc.
+        runTool("/usr/bin/codesign", "--verify", "--deep", "--strict", app.absolutePath)
+        val staging = Files.createTempDirectory(app.parentFile.toPath(), ".flowscope-package-").toFile()
+        var keepRecoveryCopy = false
+        try {
+            val ready = staging.resolve(app.name)
+            val previous = staging.resolve("previous.app")
+            runTool("/usr/bin/ditto", "--noextattr", "--norsrc", app.absolutePath, ready.absolutePath)
+            runTool("/usr/bin/codesign", "--verify", "--deep", "--strict", ready.absolutePath)
+            // Rename on the same filesystem: do not copy back over the files macOS has observed.
+            Files.move(app.toPath(), previous.toPath(), ATOMIC_MOVE)
+            try {
+                Files.move(ready.toPath(), app.toPath(), ATOMIC_MOVE)
+            } catch (failure: Exception) {
+                try {
+                    Files.move(previous.toPath(), app.toPath(), ATOMIC_MOVE)
+                } catch (restoreFailure: Exception) {
+                    keepRecoveryCopy = true
+                    failure.addSuppressed(restoreFailure)
+                    logger.error("Could not restore app; recovery copy retained at $previous")
+                }
+                throw failure
+            }
+        } finally {
+            if (!keepRecoveryCopy) {
+                check(staging.deleteRecursively()) { "Could not remove packaging staging directory: $staging" }
+            }
+        }
     }
 }

@@ -469,3 +469,13 @@ semantics. Descendant leaves still cover only their actual overlapping area. Tap
 point; scroll targets check full overlapping bounds. A covered target leaving the viewport ends the
 search immediately. Reports preserve the last covering node's class, id, bounds, window and drawing
 order path plus the target's last bounds.
+
+### macOS packaging completion
+
+The debug and release distributable tasks finish local signing (or preserve Compose's configured
+Developer ID signature), verify the bundle, and materialize its finished bytes on fresh files without
+inherited extended attributes. They verify that staged bundle and rename it into the normal app
+output path, restoring the previous bundle if promotion fails. This prevents stale macOS signature
+state from the assembly/signing process from rejecting an otherwise valid local app. The DMG and
+run-distributable tasks use the same final app; no separate launch copy is required. This does not
+replace Developer ID signing/notarization for downloaded distribution.

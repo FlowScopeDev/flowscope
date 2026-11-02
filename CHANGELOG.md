@@ -42,6 +42,10 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Fixed
 
+- macOS debug/release packaging publishes the verified, signed app on fresh files at its normal
+  output path, preventing stale signature state from producing a “damaged” launch error. Release
+  DMGs use the same completed bundle; local builds no longer need a manual clean-copy workaround.
+
 - Timeline, Evidence and Tree follow selected tests/suites, including live steps and saved artifacts;
   Perf separates run timing from device snapshots and reports unavailable/partial collection.
 - Recording Logcat and agent streams survive app restarts through exact package UID matching,

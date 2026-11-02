@@ -93,8 +93,10 @@ explicit `--output` directory, falling back to the project's `reports/` and then
 working-directory default.
 
 On macOS, `run-flowscope.command` launches the development build. A Finder-distributed `.app` still
-requires Developer ID signing and notarization. Local `createDistributable` builds are stripped of
-inherited quarantine/provenance metadata and ad-hoc signed so Finder can open them on the build Mac.
+requires Developer ID signing and notarization. Local `createDistributable` and `createReleaseDistributable` builds sign and verify the app, then
+publish the finished bundle on fresh files at the standard output path. This avoids stale macOS
+signature state from packaging; no manual clean-copy workaround is needed. Local signing defaults
+to ad-hoc, and DMGs consume the same verified bundle.
 For a stable local identity across rebuilds, set `flowscope.mac.localSigningIdentity` to an existing
 Apple Development certificate; see [folder permission troubleshooting](INSTALL.md#repeated-documents-folder-permission-prompts).
 Compose Desktop produces Windows packages from a Windows host and macOS packages from a Mac host.

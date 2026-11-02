@@ -330,6 +330,12 @@ using `flowscope.mac.localSigningIdentity` in user-local Gradle properties. Trac
 input and fail on signing errors; never silently downgrade to ad-hoc signing. The separate
 `flowscope.mac.signingIdentity` distribution setting takes precedence. Keep personal identities out
 of the repository. Stable certificate signing avoids changing the app's privacy identity on each build.
+Both macOS distributable tasks must publish completed signed bytes on fresh files without inherited
+extended attributes, then rename the verified bundle into the standard output path. Do not rewrite
+those final executables in place: macOS can retain stale signature state even when disk verification
+passes. Preserve Developer ID signatures; do not substitute local signing. DMG/run tasks consume
+this final bundle. Verify packaging with a normal launch at that path, a rebuild/relaunch, and
+signature verification of the app inside a mounted release DMG. Quit the app before rebuilding it.
 
 macOS desktop releases are tagged `v<flowscope.version>`, which triggers
 `.github/workflows/release-macos-dmg.yml` to build `packageReleaseDmg` and `:recorder-host:distZip`,

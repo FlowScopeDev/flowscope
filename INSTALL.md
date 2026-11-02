@@ -135,9 +135,20 @@ into a bug report.
 ./gradlew :recorder-ide:run
 ```
 
-On macOS a local `createDistributable` build is stripped of inherited quarantine metadata and
-ad-hoc signed, so Finder will open it on the machine that built it. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
+To build the release IDE on macOS:
+
+```bash
+./gradlew :recorder-ide:createReleaseDistributable
+open "recorder-ide/build/compose/binaries/main-release/app/Flow Scope.app"
+```
+
+Both `createDistributable` and `createReleaseDistributable` finish signing and verification before
+publishing the bundle on fresh files at the normal output path. This avoids stale macOS signature
+state after jpackage/Compose modifies executables, even when the old bundle passed `codesign
+--verify`. No separate clean copy or manual attribute removal is needed for these local builds.
+`packageReleaseDmg` packages that same verified app. Quit the IDE before rebuilding its bundle.
+The downloaded-release Gatekeeper guidance above still applies: a local build is not notarization.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Repeated Documents-folder permission prompts
 
