@@ -1,5 +1,6 @@
 package dev.flowscope.ide
 
+import dev.flowscope.host.RunActivity
 import dev.flowscope.host.RunProgress
 import java.nio.file.Files
 import java.nio.file.Path
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -118,6 +120,62 @@ class RunDetailsTest {
         assertEquals(listOf("passed", "running", "pending"), steps.map { it.status() })
         assertEquals(listOf("set-value", "tap", "force-stop"), steps.map { it.action() })
         assertEquals(listOf(3, 4, 5), steps.map { it.line() })
+    }
+
+    @Test
+    fun `a ticking elapsed value is a new RunDetails, so the panel keeps redrawing`() {
+        // The watcher polls into a mutableStateOf and Compose compares structurally, so an
+        // equal-but-new value would not recompose and the counter would appear frozen. Elapsed
+        // changing on every frame is what keeps it alive — rather than a UI-side ticker, which
+        // would keep counting after the writer died.
+        planned()
+        activity(elapsed = 1200)
+        val first = RunDetails.read(directory)
+        activity(elapsed = 2200)
+        val second = RunDetails.read(directory)
+
+        assertNotNull(first.activity)
+        assertNotEquals(first, second)
+        assertEquals("awaiting response · 1.2s of 30s", first.activity?.describe())
+        assertEquals("awaiting response · 2.2s of 30s", second.activity?.describe())
+    }
+
+    @Test
+    fun `a frame for a step that is no longer running is dropped`() {
+        // The heartbeat sleeps through a step boundary, so a frame can outlive its step by a tick.
+        planned()
+        activity(number = 1, phase = "before", elapsed = 900)
+        assertNull(RunDetails.read(directory).activity)
+    }
+
+    @Test
+    fun `a frame left behind by a dead writer is not shown as live`() {
+        Files.writeString(directory.resolve(RunProgress.FILE),
+            """{"event":"start","kind":"test","name":"Example","total":3,"pid":2,"processStartedAt":"1999-01-01T00:00:00Z","startedAt":"2026-10-27T10:00:00Z"}""" + "\n")
+        append("""{"event":"step","number":2,"total":3,"phase":"test","action":"tap","line":4,"status":"running"}""")
+        activity(elapsed = 9000)
+        val details = RunDetails.read(directory)
+        assertTrue(details.report?.isInterrupted == true)
+        assertNull(details.activity)
+    }
+
+    /** A run stopped on step 2, which is the step a frame has to name to count. */
+    private fun planned() {
+        start("test", 3)
+        Files.writeString(directory.resolve("run-plan.json"), """
+            {"groups":[{"id":"test","name":"Example","report":"report.json","steps":[
+            {"number":1,"line":3,"phase":"before","action":"api-request"},
+            {"number":2,"line":4,"phase":"test","action":"api-request"},
+            {"number":3,"line":5,"phase":"after","action":"force-stop"}]}]}
+        """.trimIndent())
+        append("""{"event":"step","number":2,"total":3,"phase":"test","action":"api-request","line":4,"status":"running"}""")
+    }
+
+    private fun activity(number: Int = 2, phase: String = "test", elapsed: Long) {
+        Files.writeString(directory.resolve(RunActivity.FILE),
+            """{"schemaVersion":1,"phase":"$phase","number":$number,"total":3,""" +
+                """"stage":"awaiting-response","elapsedMillis":$elapsed,"budgetMillis":30000,""" +
+                """"attempt":1,"attemptLimit":0,"updatedAt":"2026-10-27T10:00:01Z"}""")
     }
 
     private fun start(kind: String, total: Int) {

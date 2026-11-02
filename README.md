@@ -336,6 +336,11 @@ after api-request method=DELETE url="${env.API_BASE_URL}/fixtures/${var.fixtureI
   expect-status=200,204,404 if-var=fixtureId
 ```
 
+A step's `timeout` is the whole budget for its `api-request`, connecting included, and
+`retry-interval` retries within it until the budget runs out. So `timeout=30000` against a host that
+never answers waits the full thirty seconds — while it waits, the CLI row and the IDE report how long
+it has been going and which attempt it is on.
+
 `set-date` supports ISO/epoch presets, Java date patterns, IANA timezones, offsets, and
 day/week/month boundaries. `offset=` takes `±Nd/h/m/s` shorthand or an ISO-8601 Period/Duration —
 including a negative one, such as `-P6M` for six months back — and a `set-date`'s formatted output

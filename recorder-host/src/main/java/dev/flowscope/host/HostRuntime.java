@@ -41,6 +41,8 @@ final class HostRuntime {
     private final Path sourceDirectory;
     private final Clock clock;
     private final SecureRandom random;
+    /** What the running step is doing, so a blocked request is not silence. Never null. */
+    private RunActivity activity = RunActivity.NONE;
 
     HostRuntime(RuntimeValues values, FlowHttpClient http, Path sourceDirectory) {
         this(values, http, sourceDirectory, Clock.systemUTC(), new SecureRandom());
@@ -51,6 +53,11 @@ final class HostRuntime {
         this.values = values; this.http = http;
         this.sourceDirectory = sourceDirectory.toAbsolutePath().normalize();
         this.clock = clock; this.random = random;
+    }
+
+    /** Set rather than injected: this is a per-run observer, not one of the runtime's values. */
+    void activity(RunActivity monitor) {
+        this.activity = monitor == null ? RunActivity.NONE : monitor;
     }
 
     Map<String, String> execute(String action, Map<String, String> raw, long timeout) throws Exception {
@@ -245,11 +252,20 @@ final class HostRuntime {
             resolveRelativeFile(args.get("body-file")), StandardCharsets.UTF_8));
         long interval = args.containsKey("retry-interval") ? Long.parseLong(args.get("retry-interval")) : 0;
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        // This is the deadline the step actually works to, so this is what a reader is shown.
+        activity.budget(timeout);
         Exception last = null;
+        int attempt = 0;
         do {
             try {
+                attempt++;
                 long remaining = Math.max(1, Duration.ofNanos(deadline - System.nanoTime()).toMillis());
-                FlowHttpClient.Response response = http.send(method, uri, headers, body, remaining);
+                activity.stage(RunActivity.Stage.AWAITING_RESPONSE, attempt, 0);
+                int reported = attempt;
+                FlowHttpClient.Response response = http.send(method, uri, headers, body, remaining,
+                    stage -> activity.stage(stage == FlowHttpClient.HttpStage.RECEIVING_BODY
+                        ? RunActivity.Stage.RECEIVING_BODY : RunActivity.Stage.AWAITING_RESPONSE,
+                        reported, 0));
                 assertResponse(response, args);
                 List<String> captured = capture(response, args);
                 Map<String, String> details = new LinkedHashMap<>();
@@ -267,6 +283,7 @@ final class HostRuntime {
             } catch (Exception failure) {
                 last = failure;
                 if (interval <= 0 || System.nanoTime() >= deadline) break;
+                activity.stage(RunActivity.Stage.RETRYING, attempt + 1, 0);
                 Thread.sleep(Math.min(interval,
                     Math.max(1, Duration.ofNanos(deadline - System.nanoTime()).toMillis())));
             }

@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.flowscope.host.RunActivity
 import dev.flowscope.host.RunReport
 import dev.flowscope.host.RunSteps
 import java.nio.file.Files
@@ -42,6 +43,7 @@ internal data class RunDetails(
     val htmlReport: Path?,
     val pdfReport: Path?,
     val steps: RunSteps.Snapshot,
+    val activity: RunActivity.Snapshot?,
 ) {
     companion object {
         fun read(directory: Path): RunDetails {
@@ -50,7 +52,26 @@ internal data class RunDetails(
                 .map(directory::resolve).firstOrNull(Files::isRegularFile)
             val pdf = listOf("suite-report.pdf", "report.pdf")
                 .map(directory::resolve).firstOrNull(Files::isRegularFile)
-            return RunDetails(report, html, pdf, RunSteps.read(directory, report))
+            val steps = RunSteps.read(directory, report)
+            return RunDetails(report, html, pdf, steps, liveActivity(directory, report, steps))
+        }
+
+        /**
+         * A frame counts only while the run is still running and it names the step the run says is
+         * running. That drops a frame left behind by a killed writer and one the heartbeat wrote
+         * just before a step boundary, so a counter never climbs for work that has already ended.
+         */
+        private fun liveActivity(
+            directory: Path,
+            report: RunReport?,
+            steps: RunSteps.Snapshot,
+        ): RunActivity.Snapshot? {
+            if (report?.isRunning != true) return null
+            val frame = RunActivity.read(directory).orElse(null) ?: return null
+            val running = steps.groups().asSequence()
+                .flatMap { it.steps().asSequence() }
+                .firstOrNull { it.status() == "running" } ?: return null
+            return frame.takeIf { it.number() == running.number() && it.phase() == running.phase() }
         }
     }
 }
@@ -86,14 +107,17 @@ internal fun RunDetailContent(directory: Path) {
             report.isPassed -> "Passed"
             else -> "Failed"
         })
-        report.activity()?.let { DrawerField("CURRENT ACTIVITY", it) }
+        val described = details?.activity?.describe().orEmpty()
+        report.activity()?.let {
+            DrawerField("CURRENT ACTIVITY", if (described.isEmpty()) it else "$it · $described")
+        }
         if (report.isRunning && report.activity() == null) {
             DrawerField("CURRENT ACTIVITY", "Waiting for the next progress update…")
         }
         val unit = if (report.isSuite) "tests" else "steps"
         DrawerField("PROGRESS", "${report.passed()} of ${report.total()} $unit passed")
         details?.steps?.let { snapshot ->
-            RunStepList(snapshot)
+            RunStepList(snapshot, details?.activity)
             Spacer(Modifier.height(12.dp))
         }
         report.startedAt()?.let { DrawerField("STARTED", it) }
@@ -133,7 +157,7 @@ internal fun RunDetailContent(directory: Path) {
 
 /** The plan gives future steps their names; outcomes only change each row's status. */
 @Composable
-private fun RunStepList(snapshot: RunSteps.Snapshot) {
+private fun RunStepList(snapshot: RunSteps.Snapshot, activity: RunActivity.Snapshot? = null) {
     val groups = snapshot.groups()
     if (groups.isEmpty()) {
         Text("Waiting for step details…", color = TextLow, fontSize = 12.sp)
@@ -196,6 +220,12 @@ private fun RunStepList(snapshot: RunSteps.Snapshot) {
                         }, color = color, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                     }
                     Text(step.displayName().ifBlank { "Step details unavailable" }, color = TextHi, fontSize = 12.sp)
+                    if (current && activity != null && activity.number() == step.number()) {
+                        val described = activity.describe()
+                        if (described.isNotEmpty()) {
+                            Text(described, color = SignalAmber, fontSize = 10.sp)
+                        }
+                    }
                     if (!step.label().isNullOrBlank()) Text(step.action(), color = TextMid, fontSize = 10.sp)
                     if (step.phase().isNotBlank() || step.line() > 0) {
                         Text(listOfNotNull(step.phase().takeIf { it.isNotBlank() }?.uppercase(),

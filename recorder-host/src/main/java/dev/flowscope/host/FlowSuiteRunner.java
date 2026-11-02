@@ -48,6 +48,15 @@ public final class FlowSuiteRunner {
     public FlowSuiteRunner keepHierarchy(boolean keep) { this.keepHierarchy = keep; return this; }
 
     private Consumer<Progress> listener = progress -> {};
+    /** A suite reported tests only; a CLI or IDE that wants its children's steps asks for them. */
+    private Consumer<FlowTestRunner.StepProgress> stepListener = step -> {};
+    private Consumer<RunActivity.Snapshot> activityListener = frame -> {};
+    /** One monitor for the suite and every child it runs. */
+    private final RunActivity activity = new RunActivity();
+    /** What is in flight, so a frame arriving across a boundary is not shown against the wrong one. */
+    private volatile int runningHook;
+    private volatile String runningHookPhase;
+    private volatile FlowTestRunner.StepProgress runningChildStep;
 
     /** Progress for a UI: one event when a test starts and one when it finishes. */
     public record Progress(int number, int total, String reference, String status, String label) {
@@ -187,6 +196,38 @@ public final class FlowSuiteRunner {
         return candidate;
     }
 
+    /** Step-granularity events from the suite's children, which `observe` does not carry. */
+    public FlowSuiteRunner observeSteps(Consumer<FlowTestRunner.StepProgress> listener) {
+        this.stepListener = listener == null ? step -> {} : listener;
+        return this;
+    }
+
+    /** Frames for whatever is running now — a child's step or one of the suite's own hooks. */
+    public FlowSuiteRunner onActivity(Consumer<RunActivity.Snapshot> listener) {
+        this.activityListener = listener == null ? frame -> {} : listener;
+        return this;
+    }
+
+    /**
+     * The suite runs one heartbeat for itself and every child, so a frame here is either a hook's or
+     * the step of whichever child is running. Both are matched before forwarding: the heartbeat
+     * sleeps through a boundary, and an unmatched frame would be rendered against the wrong name.
+     */
+    private void publishActivity(RunActivity.Snapshot frame) {
+        String hookPhase = runningHookPhase;
+        if (hookPhase != null) {
+            if (runningHook == frame.number() && hookPhase.equals(frame.phase())) {
+                activityListener.accept(frame);
+            }
+            return;
+        }
+        FlowTestRunner.StepProgress step = runningChildStep;
+        if (step != null && step.number() == frame.number()
+            && step.phase().equals(frame.phase())) {
+            activityListener.accept(frame);
+        }
+    }
+
     public FlowSuiteRunner observe(Consumer<Progress> listener) {
         this.listener = listener == null ? progress -> {} : listener;
         return this;
@@ -232,12 +273,20 @@ public final class FlowSuiteRunner {
         plan.add(RunSteps.hookGroup(FlowTest.Phase.AFTER, suite.hooks()));
         RunSteps.write(root, plan);
         RunProgress progressFile = RunProgress.start(root, "suite", suite.name(), resolved.size());
+        // One monitor for the whole suite: the children post into it, so a suite needs one
+        // heartbeat rather than one per test.
+        hostRuntime.activity(activity);
+        RunActivity.Heartbeat beating = RunActivity.heartbeat(activity, root, this::publishActivity);
         try {
             boolean passed = runWithProgress(started, suiteBuiltins, runtimeValues, hostRuntime,
                 progressFile);
+            beating.close();
+            RunActivity.clear(root);
             progressFile.finish();
             return passed;
         } finally {
+            beating.close();
+            RunActivity.clear(root);
             cancellation.finish();
             progressFile.interrupt();
         }
@@ -273,9 +322,16 @@ public final class FlowSuiteRunner {
             FlowTestRunner runner =
                 new FlowTestRunner(adb, device, current.test(), root, current.directoryName(), http,
                     environment, secretSources, runtimeValues, suiteBuiltins)
-                    .withoutProgressFile().cancellation(cancellation).keepHierarchy(keepHierarchy).observe(progressFile::step);
+                    .withoutProgressFile().cancellation(cancellation).keepHierarchy(keepHierarchy)
+                    .activity(activity)
+                    .observe(event -> {
+                        progressFile.step(event);
+                        runningChildStep = event.status().equals("running") ? event : null;
+                        stepListener.accept(event);
+                    });
             try {
                 passed = runner.run();
+                runningChildStep = null;
                 // A failed step assertion returns false rather than throwing, so the reason has to
                 // be read back from the runner or the aggregate report would say only "failed".
                 if (!passed) error = runner.failureMessage();
@@ -424,6 +480,9 @@ public final class FlowSuiteRunner {
                 continue;
             }
             progressFile.hook(number, suite.hooks().size(), hook, "running");
+            activity.begin(phase.value(), number, suite.hooks().size());
+            runningHook = number;
+            runningHookPhase = phase.value();
             long started = System.nanoTime();
             try {
                 boolean checkReadiness = phase == FlowTest.Phase.BEFORE && !readinessChecked && !resolved.isEmpty();
@@ -455,6 +514,10 @@ public final class FlowSuiteRunner {
                 outcomes.add(new HookOutcome(phase.value(), hook.line(), hook.action(), "failed",
                     Duration.ofNanos(System.nanoTime() - started).toMillis(), message, Map.of(), hook.label()));
                 if (stopOnFailure) stopped = true;
+            } finally {
+                activity.end();
+                runningHook = 0;
+                runningHookPhase = null;
             }
         }
         return passed;

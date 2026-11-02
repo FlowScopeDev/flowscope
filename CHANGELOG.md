@@ -41,6 +41,19 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
   view. The HTML layout is presentation only; `report.json`, `suite-report.json` and `junit.xml` are
   untouched.
 
+- **A running step now reports what it is doing.** A step used to announce itself and then go
+  silent until it finished, so a 30-second `api-request` and a hang looked identical. Every
+  in-flight step now publishes how long it has been running, the budget it is working to, and a
+  stage: `awaiting response` / `receiving response` for an `api-request` (with its retry attempt),
+  `looking up · attempt 9` for a selector, `swipe 3 of 10` for a `scroll-to`, `waiting for the UI to
+  settle` after a tap, `polling the WebView` for a `web-*` action. At an interactive terminal the
+  CLI rewrites one `RUN` row in place with it; the IDE shows it in the run bar and under the current
+  step, both for a run it started and one it is only watching. Piped and CI output is unchanged.
+  It is carried by a new transient `activity.json` beside `progress.jsonl`, deleted with it when the
+  report is written and, like it, not public surface; frames carry counters and a fixed stage word
+  only, never an argument value. A frame that cannot be written never changes a run's verdict.
+- A CLI suite run now reports its children's steps, not just `TEST nn/NN` and `DONE nn/NN`.
+
 - Optional literal `label="..."` display names for flow steps, suite hooks and suite test entries,
   shown in live progress, inspection tabs and reports; unlabeled tests and existing `name=` arguments
   keep their behavior.
@@ -60,6 +73,11 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Changed
 
+- **`api-request` now honours its own `timeout` for connecting too.** The shared HTTP client had a
+  fixed 20-second connect timeout independent of the step budget, so `timeout=30000` against an
+  unreachable host gave up at about 20 seconds. The step's timeout is now the single bound. An
+  unreachable host therefore waits the full budget rather than failing early — which is what the
+  step asked for, and the new elapsed counter makes the wait visible.
 - **The reports are light only; the **Dark**/**Light** toggle is gone.** A report is a document that
   is read, printed and pasted into tickets, and with no script there was nothing to remember a
   choice with between reports.

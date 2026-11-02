@@ -260,6 +260,29 @@ progress and completed child reports for the detail pane. Suite hooks emit progr
 steps must never be inferred as passed; distinguish skipped, not run and interrupted. Reads of child
 report references stay inside the run directory, including through symlinks.
 
+A second transient file, `activity.json` (`RunActivity`), says what the step that is running right
+now is doing: elapsed, the step's budget, a stage word and a counter. It is **overwritten, not
+appended** — activity is state, only the newest value is read, and appending would size the file by
+a run's duration while both readers re-parse theirs on every poll — and it is deleted with the
+report. It is **published by one daemon heartbeat thread**, not by the loops: the case it exists for,
+an `api-request` with no `retry-interval`, blocks inside one HTTP call with no loop iterating and no
+callback firing, so a post from a loop body would never be reached. Loop sites only write memory.
+Cadence is 500 ms with per-second change detection, so holding one stage steady costs one frame a
+second and a stage change still lands within a cadence; the heartbeat is joined before the report is
+written. Frames are redaction-free **by construction**: every mutator takes an enum or an int, so
+there is no parameter a URL, selector or interpolated value could arrive through. Elapsed is
+monotonic and computed by the writer. A budget is published only by code that builds a deadline out
+of a timeout (`HierarchyPoll`, `apiRequest`, the `web-*` loops), so an action with no real bound
+reports elapsed alone rather than borrowing a number nothing is working to. Stage words are a closed
+vocabulary; readers render an unknown one rather than breaking. A frame counts only while the run is
+running and it names the step the run reports as running. Like `progress.jsonl` it is not public
+surface, and a frame that cannot be written must never change a verdict.
+
+At an interactive terminal the CLI rewrites its `RUN` row in place with that detail rather than
+reprinting it; the `System.console()` gate keeps piped and CI stdout byte-identical. The runner
+reports a step's terminal status *before* printing its own `PASS`/`FAIL`/`SKIP` line, which is the
+only moment that row can be cleared — keep that order.
+
 IDE inspection has a shared Session / Selected run source independent of detail selection. Read live
 steps from RunSteps and existing progress, then completed reports; never invent timestamps or pair
 unrelated evidence. RunArtifacts bounds metadata and artifact reads inside their owning run folder,

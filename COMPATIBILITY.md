@@ -42,7 +42,9 @@ and PDF reports (`report.html`, `report.pdf`, `suite-report.html`, `suite-report
 presentation, and `report.json` is the artifact to read from a script —
 timing and the dump-count instrumentation in reports, the on-disk shape of `~/.flowscope/`, the
 recording session format, which is an internal capture artifact rather than a durable input, and
-`progress.jsonl`, the transient file a run keeps while in flight so the IDE can show it live. It is
+`progress.jsonl` and `activity.json`, the transient files a run keeps while in flight so the IDE can
+show it live — the second holding only what the running step is doing right now (elapsed, budget, a
+stage word, a counter). They are
 deleted once the report is written; read the report instead.
 
 ## Exit codes

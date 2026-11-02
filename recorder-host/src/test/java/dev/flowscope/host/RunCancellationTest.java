@@ -80,8 +80,35 @@ class RunCancellationTest {
         assertEquals(List.of("/cleanup", "/cleanup2"), http.calls);
         assertTrue(runner.isCancelled()); assertEquals(1, runner.teardownFailures().size());
         assertTrue(Files.readString(runner.root().resolve("junit.xml")).contains("<failure"));
-        assertTrue(runner.failureMessage().contains("cleanup also failed"));
+        assertTrue(runner.failureMessage().contains("Cleanup also failed"));
     }
+    @Test void cancellingAReportedStepStillUnwindsAndLeavesNoInterruptBehind() throws Exception {
+        // The heartbeat is a second thread and must not take the interrupt meant for the worker,
+        // nor keep reporting a step that has already been cancelled.
+        Http http = new Http();
+        var signal = new RunCancellation();
+        var runner = runner("step api-request url=https://x.test/wait\nafter api-request url=https://x.test/cleanup\n", http, signal);
+        List<RunActivity.Snapshot> frames = new CopyOnWriteArrayList<>();
+        runner.onActivity(frames::add);
+        var worker = Executors.newSingleThreadExecutor();
+        var running = worker.submit(() -> runner.run());
+        assertTrue(http.entered.await(5, TimeUnit.SECONDS));
+        // Wait until the blocked step is actually being reported, then stop it.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (frames.isEmpty() && System.nanoTime() < deadline) Thread.sleep(20);
+        assertFalse(frames.isEmpty(), "the blocked step reported nothing to cancel during");
+        assertTrue(signal.request());
+
+        assertFalse(running.get(10, TimeUnit.SECONDS));
+        worker.shutdown();
+        assertTrue(runner.isCancelled());
+        // Cleanup still ran, and it ran without inheriting an interrupt.
+        assertEquals(List.of("/wait", "/cleanup"), http.calls);
+        assertFalse(Files.exists(runner.root().resolve(RunActivity.FILE)));
+        assertTrue(Thread.getAllStackTraces().keySet().stream()
+            .noneMatch(t -> t.getName().equals("flowscope-activity") && t.isAlive()));
+    }
+
     @Test void firstStopDuringCleanupDoesNotInterruptIt() throws Exception {
         Http http = new Http(); http.holdCleanup = true;
         RunCancellation signal = new RunCancellation();

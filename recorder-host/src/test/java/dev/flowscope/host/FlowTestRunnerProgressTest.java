@@ -18,6 +18,30 @@ class FlowTestRunnerProgressTest {
     private static final Device DEVICE = new Device("TEST", "device", Map.of());
 
     @Test
+    void activityFramesStayOffTheStepProgressChannel() throws Exception {
+        // In-flight reporting is a separate channel and a separate file on purpose, so this
+        // stream keeps its shape: exactly one `running` and one terminal event per executed step,
+        // however many frames the step published while it ran.
+        FlowTest test = FlowTestParser.parseSource("""
+            flowscope 1
+            package com.example.debug
+            step wait-visible text=Missing timeout=1200
+            """, "channels.flow");
+        List<FlowTestRunner.StepProgress> events = new ArrayList<>();
+        List<RunActivity.Snapshot> frames = new java.util.concurrent.CopyOnWriteArrayList<>();
+        FlowTestRunner runner = new FlowTestRunner(new FakeAdb(), DEVICE, test, temp, "channels",
+            new RecordingHttp(), Map.of()).observe(events::add).onActivity(frames::add);
+
+        assertFalse(runner.run());
+
+        assertFalse(frames.isEmpty(), "the step published no frames, so this proves nothing");
+        assertEquals(2, events.size(), events.toString());
+        assertEquals("running", events.get(0).status());
+        assertEquals("failed", events.get(1).status());
+        assertEquals(1, events.stream().filter(e -> e.status().equals("running")).count());
+    }
+
+    @Test
     void firesRunningThenAFinalStatusForEveryExecutedStepInOrder() throws Exception {
         FlowTest test = FlowTestParser.parseSource("""
             flowscope 1

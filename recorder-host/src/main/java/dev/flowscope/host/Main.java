@@ -429,7 +429,7 @@ public final class Main {
         FlowTestRunner runner = new FlowTestRunner(
             new AdbClient(), selected, flowTest, outputFor(options, project, Path.of("test-runs")),
             ProjectSecrets.resolve(project.orElse(null), options.path("--secrets-file", null))).keepHierarchy(options.flag("--keep-hierarchy"));
-        if (progressEnabled()) runner.observe(Main::printStepProgress);
+        if (progressEnabled()) runner.observe(Main::printStepProgress).onActivity(Main::printActivity);
         boolean passed = runner.run();
         // Name the phase that broke on stderr: a cleanup failure and a failed assertion are very
         // different problems, and nobody should have to open report.json to tell them apart.
@@ -447,11 +447,95 @@ public final class Main {
         return System.console() != null;
     }
 
-    /** Announces a step before it runs; completion is already reported by the PASS/FAIL/SKIP lines. */
-    private static void printStepProgress(FlowTestRunner.StepProgress progress) {
-        if (!progress.status().equals("running")) return;
-        System.out.printf("RUN  %s %02d/%02d  %s (line %d)%n", progress.phase().toUpperCase(),
-            progress.number(), progress.total(), progress.displayName(), progress.line());
+    /**
+     * The width to rewrite within. {@link java.io.Console} does not report a terminal's width and
+     * `COLUMNS` is not exported to a child process, so this is a conservative fixed figure: a line
+     * that wrapped would leave the part above the last row behind when it is rewritten.
+     */
+    private static final int LINE_WIDTH = 78;
+
+    /** The step whose row is currently on screen, so a frame knows what to redraw it with. */
+    private static volatile FlowTestRunner.StepProgress onScreen;
+
+    /**
+     * Announces a step before it runs, and clears its row when it ends so the PASS/FAIL/SKIP line
+     * lands on a clean one. The row is rewritten in place rather than reprinted, so a long step
+     * reports for seconds without filling the scrollback.
+     */
+    static void printStepProgress(FlowTestRunner.StepProgress progress) {
+        if (progress.status().equals("running")) {
+            onScreen = progress;
+            draw(inPlaceLine(progress, null, LINE_WIDTH));
+            return;
+        }
+        // The runner reports the terminal status before printing its own line, so there is a moment
+        // here to take the row back.
+        onScreen = null;
+        erase();
+    }
+
+    static void printActivity(RunActivity.Snapshot frame) {
+        FlowTestRunner.StepProgress step = onScreen;
+        if (step != null) draw(inPlaceLine(step, frame, LINE_WIDTH));
+    }
+
+    /** Below this a step's name stops naming anything, so the tail gives way instead. */
+    private static final int MIN_NAME = 24;
+
+    /**
+     * Padded to the full width, so a shorter row fully covers the longer one it replaces.
+     *
+     * <p>Everything competes for one line, so the tail is tried from most to least informative and
+     * the first form leaving the name room wins. The clock is last to go: it is what a reader is
+     * waiting on, while the stage word and the attempt count are detail, and the source line is
+     * already in the file they are reading.
+     */
+    static String inPlaceLine(FlowTestRunner.StepProgress progress, RunActivity.Snapshot frame,
+                              int width) {
+        String head = String.format("RUN  %s %02d/%02d  ", progress.phase().toUpperCase(),
+            progress.number(), progress.total());
+        String name = progress.displayName();
+        String at = String.format(" (line %d)", progress.line());
+        String described = frame == null ? "" : frame.describe();
+        String timing = frame == null ? "" : frame.timing();
+        List<String> tails = new ArrayList<>();
+        if (!described.isEmpty()) {
+            tails.add(at + " · " + described);
+            tails.add(" · " + described);
+            if (!timing.equals(described)) tails.add(" · " + timing);
+        } else {
+            tails.add(at);
+        }
+        tails.add("");
+
+        String tail = tails.getLast();
+        for (String candidate : tails) {
+            if (width - head.length() - candidate.length() >= Math.min(MIN_NAME, name.length())) {
+                tail = candidate;
+                break;
+            }
+        }
+        int room = Math.max(0, width - head.length() - tail.length());
+        if (room < name.length()) {
+            name = room < 2 ? "" : name.substring(0, room - 1) + "…";
+        }
+        String line = head + name + tail;
+        if (line.length() > width) line = line.substring(0, Math.max(0, width - 1)) + "…";
+        return line + " ".repeat(Math.max(0, width - line.length()));
+    }
+
+    /**
+     * A PrintStream only flushes itself on a newline, and this writes none — without the explicit
+     * flush the row would never appear.
+     */
+    private static void draw(String line) {
+        System.out.print("\r" + line);
+        System.out.flush();
+    }
+
+    private static void erase() {
+        System.out.print("\r" + " ".repeat(LINE_WIDTH) + "\r");
+        System.out.flush();
     }
 
     /**
@@ -506,6 +590,9 @@ public final class Main {
         FlowSuiteRunner runner = new FlowSuiteRunner(new AdbClient(), selected, parsed, path,
             project.orElse(null), outputFor(options, project, Path.of("test-runs")),
             ProjectSecrets.resolve(project.orElse(null), options.path("--secrets-file", null))).keepHierarchy(options.flag("--keep-hierarchy"));
+        // A suite reported tests only, so a long step inside a child looked like a blank wait one
+        // level down from the one this fixes.
+        if (progressEnabled()) runner.observeSteps(Main::printStepProgress).onActivity(Main::printActivity);
         boolean passed = runner.run();
         System.out.println("Report: " + runner.root().resolve("suite-report.json"));
         return passed ? 0 : 1;

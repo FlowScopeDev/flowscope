@@ -47,6 +47,12 @@ public final class FlowTestRunner {
     private WebViewState previousWebState;
     private Set<String> sweepBefore;
     private Consumer<StepProgress> listener = progress -> {};
+    private Consumer<RunActivity.Snapshot> activityListener = frame -> {};
+    /** What the running step is doing. A suite hands its children one shared monitor. */
+    private RunActivity activity = new RunActivity();
+    private RunActivity.Heartbeat heartbeat;
+    /** The step the runner is on, so a frame arriving across a step boundary can be dropped. */
+    private volatile StepProgress runningStep;
     // A suite child reports through the suite's own progress file instead.
     private boolean writesProgressFile = true;
     private RunProgress progressFile;
@@ -154,6 +160,7 @@ public final class FlowTestRunner {
         this.values = new RuntimeValues(environment, secretSources, suiteVariables, test.name(),
             device.serial(), startedAt, UUID.randomUUID(), suiteBuiltins, redactor);
         this.hostRuntime = new HostRuntime(values, http, test.sourceDirectory());
+        this.hostRuntime.activity(activity);
         this.root = outputRoot.resolve(directoryName).toAbsolutePath();
         Files.createDirectories(root.resolve("evidence"));
     }
@@ -162,6 +169,20 @@ public final class FlowTestRunner {
 
     public FlowTestRunner observe(Consumer<StepProgress> listener) {
         this.listener = listener == null ? progress -> {} : listener;
+        return this;
+    }
+
+    /** Frames for the step that is running now. Separate from {@link #observe}: a step still
+     * reports exactly one `running` and one terminal event however many frames it publishes. */
+    public FlowTestRunner onActivity(Consumer<RunActivity.Snapshot> listener) {
+        this.activityListener = listener == null ? frame -> {} : listener;
+        return this;
+    }
+
+    /** A suite's children post into the suite's monitor, so the suite needs only one heartbeat. */
+    FlowTestRunner activity(RunActivity monitor) {
+        this.activity = monitor == null ? RunActivity.NONE : monitor;
+        this.hostRuntime.activity(this.activity);
         return this;
     }
 
@@ -175,6 +196,27 @@ public final class FlowTestRunner {
         // File first: a listener may be what reads it.
         if (progressFile != null) progressFile.step(event);
         listener.accept(event);
+    }
+
+    /**
+     * A frame reaches the listener only while it still describes the step the runner is on. The
+     * heartbeat sleeps through a step boundary, so without this a surface could render one frame
+     * of the step that just finished against the name of the one that just started.
+     */
+    private void publishActivity(RunActivity.Snapshot frame) {
+        StepProgress current = runningStep;
+        if (current != null && current.number() == frame.number()
+            && current.phase().equals(frame.phase())) {
+            activityListener.accept(frame);
+        }
+    }
+
+    private void stopHeartbeat() {
+        RunActivity.Heartbeat beating = heartbeat;
+        heartbeat = null;
+        if (beating == null) return;
+        beating.close();
+        RunActivity.clear(root);
     }
 
     /** Metadata-only cookie/storage changes observed at WebView action boundaries. */
@@ -248,7 +290,10 @@ public final class FlowTestRunner {
             Runtime.getRuntime().addShutdownHook(sweepHook);
             sweepBefore = uiautomatorBefore;
             RunSteps.write(root, List.of(RunSteps.testGroup(0, "", test, "report.json")));
-            if (writesProgressFile) progressFile = RunProgress.start(root, "test", test.name(), test.steps().size());
+            if (writesProgressFile) {
+                progressFile = RunProgress.start(root, "test", test.name(), test.steps().size());
+                heartbeat = RunActivity.heartbeat(activity, root, this::publishActivity);
+            }
             Instant started = Instant.now();
             if (test.mode() == CaptureMode.INSTRUMENTED) {
                 agentEvents = AgentEventCapture.start(adb, device.serial(), test.packageName());
@@ -262,10 +307,14 @@ public final class FlowTestRunner {
             if (writesProgressFile) cancellation.finish();
             boolean passed = before && main && after && !isCancelled();
             if (agentEvents != null) agentEvents.stop();
+            // Stopped and joined before the report, so a frame cannot land after the run is
+            // described by `report.json` and the transient files are meant to be gone.
+            stopHeartbeat();
             writeReports(passed, started, Instant.now());
             if (progressFile != null) progressFile.finish();
             return passed;
         } finally {
+            stopHeartbeat();
             if (writesProgressFile) cancellation.finish();
             if (progressFile != null) progressFile.interrupt();
             web.close();
@@ -334,7 +383,11 @@ public final class FlowTestRunner {
                 if (step.action().equals("if-visible")) visibleBlocks.push(false);
                 addSkipped(i, step, "condition not met"); continue;
             }
-            progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "running", step.label()));
+            StepProgress announced = new StepProgress(i + 1, total, phase.value(), step.action(),
+                step.line(), "running", step.label());
+            runningStep = announced;
+            progress(announced);
+            activity.begin(phase.value(), i + 1, total);
             long started = System.nanoTime();
             Instant stepStarted = Instant.now();
             // Any other step can change the UI before it looks, so it must not see a remembered dump.
@@ -358,8 +411,10 @@ public final class FlowTestRunner {
                 details.putAll(stepDiagnostics);
                 results.add(new StepResult(i + 1, step, "passed", elapsed(started), null, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis(), stepDumpErrors, stepDumpLastError));
-                System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.displayName());
+                // Progress before the printed line: a listener rendering an in-place `RUN` row has
+                // to be told the step is over so it can clear the row this line lands on.
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed", step.label()));
+                System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.displayName());
             } catch (RunCancellation.Cancelled cancelled) {
                 passed = false;
                 results.add(new StepResult(i + 1, step, "cancelled", elapsed(started),
@@ -376,10 +431,13 @@ public final class FlowTestRunner {
                 if (step.action().equals("if-visible")) visibleBlocks.push(false);
                 results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis(), stepDumpErrors, stepDumpLastError));
-                System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.displayName(), message);
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed", step.label()));
+                System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.displayName(), message);
                 if (stopOnFailure && !step.continueOnFailure()) stopped = true;
             } finally {
+                // Every exit path, Cancelled included: nothing is published between steps.
+                activity.end();
+                runningStep = null;
                 stepWindows.put(i + 1, new Instant[] {stepStarted, Instant.now()});
             }
         }
@@ -388,9 +446,9 @@ public final class FlowTestRunner {
 
     private void addSkipped(int i, FlowTest.Step step, String reason) {
         results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of(), 0, 0, 0, null));
-        System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.displayName());
         progress(new StepProgress(i + 1, test.steps().size(), step.phase().value(), step.action(),
             step.line(), "skipped", step.label()));
+        System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.displayName());
     }
 
     private void skipPhase(FlowTest.Phase phase, String reason) {
@@ -636,8 +694,11 @@ public final class FlowTestRunner {
 
     private Map<String, String> webAssertText(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        activity.budget(timeout);
+        int polls = 0;
         do {
             RunCancellation.checkCurrent();
+            activity.stage(RunActivity.Stage.WEB_POLLING, ++polls, 0);
             if (web.text(args, Math.max(1, remainingMillis(deadline))).equals(args.get("text"))) {
                 return webInspection(args, Math.max(1, remainingMillis(deadline)));
             }
@@ -648,8 +709,11 @@ public final class FlowTestRunner {
 
     private Map<String, String> webAssertUrl(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        activity.budget(timeout);
+        int polls = 0;
         do {
             RunCancellation.checkCurrent();
+            activity.stage(RunActivity.Stage.WEB_POLLING, ++polls, 0);
             String actual = web.url(args, Math.max(1, remainingMillis(deadline)));
             boolean matches = !args.containsKey("url") || actual.equals(args.get("url"));
             if (args.containsKey("path")) {
@@ -676,9 +740,12 @@ public final class FlowTestRunner {
 
     private Map<String, String> webAssertCookie(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        activity.budget(timeout);
+        int polls = 0;
         String failure = "Cookie assertion did not match";
         do {
             RunCancellation.checkCurrent();
+            activity.stage(RunActivity.Stage.WEB_POLLING, ++polls, 0);
             WebViewState state = web.inspect(args, Math.max(1, remainingMillis(deadline)));
             requireCapability(state, "Cookie inspection");
             List<WebViewState.Cookie> matches = state.cookies().stream()
@@ -722,8 +789,11 @@ public final class FlowTestRunner {
 
     private Map<String, String> webAssertStorage(Map<String, String> args, long timeout) throws Exception {
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        activity.budget(timeout);
+        int polls = 0;
         do {
             RunCancellation.checkCurrent();
+            activity.stage(RunActivity.Stage.WEB_POLLING, ++polls, 0);
             WebViewState state = web.inspect(args, Math.max(1, remainingMillis(deadline)));
             List<WebViewState.Storage> matches = state.storage().stream()
                 .filter(entry -> entry.area().equals(args.get("area")) && entry.key().equals(args.get("key")))
@@ -763,8 +833,11 @@ public final class FlowTestRunner {
         boolean expected = Boolean.parseBoolean(args.getOrDefault("exists", "true"));
         String source = args.getOrDefault("source", "any");
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        activity.budget(timeout);
+        int polls = 0;
         do {
             RunCancellation.checkCurrent();
+            activity.stage(RunActivity.Stage.WEB_POLLING, ++polls, 0);
             boolean present;
             WebViewState state = web.inspect(args, Math.max(1, remainingMillis(deadline)));
             if (source.equals("agent")) {
@@ -790,8 +863,11 @@ public final class FlowTestRunner {
     private Map<String, String> webAssertSecureContext(Map<String, String> args, long timeout) throws Exception {
         boolean expected = Boolean.parseBoolean(args.get("value"));
         long deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+        activity.budget(timeout);
+        int polls = 0;
         do {
             RunCancellation.checkCurrent();
+            activity.stage(RunActivity.Stage.WEB_POLLING, ++polls, 0);
             WebViewState state = web.inspect(args, Math.max(1, remainingMillis(deadline)));
             if (state.security().secureContext() == expected) return rememberWebState(state);
             Thread.sleep(POLL_MILLIS);
@@ -1031,16 +1107,29 @@ public final class FlowTestRunner {
         int attempts;
         boolean valid;
         InvalidDump last;
+        private final RunActivity.Stage stage;
 
         HierarchyPoll(long timeout) {
+            this(timeout, RunActivity.Stage.LOOKING_UP, true);
+        }
+
+        /**
+         * [publishBudget] is false for the settle window: a mutation's 1.5 s stability check runs
+         * inside a step whose real budget is its selector timeout, and overwriting the budget with
+         * 1500 would tell a reader the step is nearly out of time when it has seconds left.
+         */
+        HierarchyPoll(long timeout, RunActivity.Stage stage, boolean publishBudget) {
             this.timeout = timeout;
+            this.stage = stage;
             deadline = System.nanoTime() + Duration.ofMillis(timeout).toNanos();
+            if (publishBudget) activity.budget(timeout);
         }
 
         byte[] next(boolean cached) throws Exception {
             do {
                 RunCancellation.checkCurrent();
                 attempts++;
+                activity.stage(stage, attempts, 0);
                 try {
                     byte[] xml = cached ? currentHierarchy() : dumpHierarchy();
                     valid = true;
@@ -1049,6 +1138,7 @@ public final class FlowTestRunner {
                     last = invalid;
                     cached = false;
                     if (!pending()) break;
+                    activity.stage(RunActivity.Stage.RETRYING_DUMP, attempts, 0);
                     pause(DUMP_RETRY_MILLIS);
                 }
             } while (pending());
@@ -1084,7 +1174,7 @@ public final class FlowTestRunner {
     }
 
     private void requireAbsent(Map<String, String> args, long timeout) throws Exception {
-        var poll = new HierarchyPoll(timeout);
+        var poll = new HierarchyPoll(timeout, RunActivity.Stage.CHECKING_ABSENT, true);
         boolean first = true;
         do {
             byte[] dump = poll.next(first);
@@ -1171,7 +1261,8 @@ public final class FlowTestRunner {
     /** Compare only valid observations; a slow valid dump alone can fill the stability window. */
     private void settle() throws Exception {
         settledDump = null;
-        var poll = new HierarchyPoll(Duration.ofNanos(SETTLE_WINDOW_NANOS).toMillis());
+        var poll = new HierarchyPoll(Duration.ofNanos(SETTLE_WINDOW_NANOS).toMillis(),
+            RunActivity.Stage.SETTLING, false);
         byte[] old = poll.next(false);
         while (poll.pending()) {
             poll.pause(250);
@@ -1291,7 +1382,9 @@ public final class FlowTestRunner {
         if (screenSize == null) throw new IOException("Could not determine device size");
         for (int swipes = 0; ; swipes++) {
             // max-swipes bounds scrolling; timeout bounds obtaining each fresh observation.
-            byte[] dump = new HierarchyPoll(timeout).next(false);
+            activity.stage(RunActivity.Stage.SCROLLING, swipes + 1, maxSwipes);
+            byte[] dump = new HierarchyPoll(timeout, RunActivity.Stage.SCROLLING, true).next(false);
+            activity.stage(RunActivity.Stage.SCROLLING, swipes + 1, maxSwipes);
             retainSwipe(dump, swipes, false);
             var look = look(dump, args, fromId);
             if (look.accepted()) {
@@ -1318,7 +1411,9 @@ public final class FlowTestRunner {
                 : UiHierarchy.contentSignature(look.nodes(), look.container());
             if (signature != null && !signature.isEmpty() && signature.equals(previous)) {
                 Thread.sleep(POLL_MILLIS);
-                byte[] confirmation = new HierarchyPoll(timeout).next(false);
+                byte[] confirmation = new HierarchyPoll(timeout, RunActivity.Stage.SCROLLING, true)
+                    .next(false);
+                activity.stage(RunActivity.Stage.SCROLLING, swipes + 1, maxSwipes);
                 retainSwipe(confirmation, swipes, true);
                 var confirmed = look(confirmation, args, fromId);
                 if (confirmed.accepted()) {

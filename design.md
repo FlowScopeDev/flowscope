@@ -269,6 +269,30 @@ live and `Interrupted · no report` once its writer is gone (pid and start time 
 ended on an exception. Both are worded, not just coloured. Watching is display-only: the IDE never
 stops, controls, or notifies for a run it did not start.
 
+A step used to report one `running` event and then nothing until it finished, so a 30-second
+`api-request` and a hang looked identical — and the `step` line carried no timestamp, so a reader
+could not even time it. `activity.json` closes that: elapsed, the budget the step is working to, a
+stage word and a counter, for whatever is in flight.
+
+Two choices carry the design. It is **a separate file, overwritten**, because activity is state
+rather than an event log — only the newest value is ever read, and appending would have sized the
+file by a run's duration while `RunProgress.read` and `RunSteps.read` both re-parse theirs on every
+poll. Keeping it out also leaves `progress.jsonl` with exactly one `running` and one terminal event
+per step, so that contract did not have to move. And it is **published by a heartbeat thread rather
+than by the loops**: the motivating case blocks inside one HTTP call with no loop iterating and no
+body callback firing, so counters posted from a loop body would never have been reached. Loop sites
+write memory only; the heartbeat turns memory into a frame every 500 ms, publishing only when
+something changed or a second has passed. That makes throttling structural instead of a rate limiter
+repeated at ten call sites, and it keeps all I/O off the 200 ms poll loops.
+
+Frames cannot carry a value: every mutator takes an enum or an int, so there is no parameter a URL,
+selector or interpolated value could arrive through. A budget is published only by code that builds
+a deadline out of a timeout, so `force-stop` reports elapsed alone rather than borrowing the step
+`timeout` that does not govern it, and a tap keeps its selector budget through the settle window.
+A frame is rendered only while the run is running and it names the step the run says is running,
+which drops one left behind by a killed writer or written just before a step boundary — rather than
+a UI-side clock, which would keep counting for a crashed run.
+
 Tests and suites nested into subdirectories render as a collapsible tree rather than a flat list of
 full paths: a folder row carries a worded disclosure state (`Expand`/`Collapse`, never colour alone)
 and indents its contents one level, so the rail reads the same shape as the project's own

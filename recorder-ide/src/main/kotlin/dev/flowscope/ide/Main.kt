@@ -1055,6 +1055,8 @@ private fun FlowScopeApp(
                     else deriveTarget(authoring.source, kind).toAbsolutePath()
                 val contents = flowFileContents(authoring.source)
                 authoring.status = "Running…"
+                // Written by the runner thread, read by the activity heartbeat thread.
+                val runningStep = java.util.concurrent.atomic.AtomicReference<FlowTestRunner.StepProgress?>(null)
 
                 runCatching {
                     withContext(Dispatchers.IO) {
@@ -1068,6 +1070,12 @@ private fun FlowScopeApp(
                                 runReportsDirectory, runSecretsFile,
                             ).cancellation(cancellation).observe { progress ->
                                 scope.launch { if (!authoring.stopping) authoring.status = suiteProgressStatus(progress) }
+                            }.observeSteps { step ->
+                                if (step.status() == "running") runningStep.set(step) else runningStep.set(null)
+                                scope.launch { if (!authoring.stopping) authoring.status = stepProgressStatus(step) }
+                            }.onActivity { frame ->
+                                val step = runningStep.get()
+                                scope.launch { authoring.status = activityStatus(step, frame) }
                             }
                             scope.launch { shell.selectRun(runner.root()) }
                             val passed = runner.run()
@@ -1091,7 +1099,11 @@ private fun FlowScopeApp(
                             val runner = FlowTestRunner(
                                 adb, device, parsed, runReportsDirectory, runSecretsFile,
                             ).cancellation(cancellation).observe { progress ->
+                                if (progress.status() == "running") runningStep.set(progress) else runningStep.set(null)
                                 scope.launch { if (!authoring.stopping) authoring.status = stepProgressStatus(progress) }
+                            }.onActivity { frame ->
+                                val step = runningStep.get()
+                                scope.launch { authoring.status = activityStatus(step, frame) }
                             }
                             scope.launch { shell.selectRun(runner.root()) }
                             val passed = runner.run()
@@ -3211,6 +3223,21 @@ private fun stepProgressStatus(progress: FlowTestRunner.StepProgress): String {
     }
     return "$verb · step ${progress.number()}/${progress.total()} · " +
         "${progress.phase()} ${progress.displayName()} (line ${progress.line()})"
+}
+
+/**
+ * [stepProgressStatus] with what the step is doing now appended. Not suppressed while stopping: a
+ * cleanup step is never interrupted, so during a Stop this line is the only thing explaining why
+ * the run has not ended yet.
+ */
+private fun activityStatus(
+    step: FlowTestRunner.StepProgress?,
+    frame: dev.flowscope.host.RunActivity.Snapshot,
+): String {
+    val described = frame.describe()
+    val base = step?.let { stepProgressStatus(it) } ?: "Running · step ${frame.number()}/${frame.total()}"
+    val prefix = if (frame.phase() == "after") "Cleanup · " else ""
+    return if (described.isEmpty()) base else "$prefix$base · $described"
 }
 
 /** The same shape as [stepProgressStatus], one test-granularity level up, for a suite run. */
