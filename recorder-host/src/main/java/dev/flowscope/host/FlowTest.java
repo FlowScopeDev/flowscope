@@ -33,7 +33,15 @@ public record FlowTest(
         public String value() { return value; }
     }
 
-    public record Step(int line, Phase phase, String action, Map<String, String> arguments, String label) {
+    /**
+     * {@code continueOnFailure} marks a test step whose failure fails the test but does not stop it: the
+     * steps after it still run.
+     */
+    public record Step(int line, Phase phase, String action, Map<String, String> arguments, String label,
+                       boolean continueOnFailure) {
+        public Step(int line, Phase phase, String action, Map<String, String> arguments, String label) {
+            this(line, phase, action, arguments, label, false);
+        }
         public Step(int line, Phase phase, String action, Map<String, String> arguments) {
             this(line, phase, action, arguments, "");
         }

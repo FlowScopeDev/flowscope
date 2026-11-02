@@ -12,6 +12,9 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ### Added
 
+- **`continue-on-failure=true` on a step** fails the test when that step fails but keeps running
+  the steps after it, so one wrong label does not hide every check behind it. It is accepted on
+  `step` instructions only, not on `before`, `after`, `if-visible` or `end`.
 - `report.html` and `suite-report.html` are redesigned: one self-contained page with a verdict
   banner, a pass/fail/skip/duration summary, status pills and readable durations, built on the
   FlowScope palette. A report opens light and carries its own **Dark**/**Light** toggle. Both now

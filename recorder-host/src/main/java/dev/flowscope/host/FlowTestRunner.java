@@ -378,7 +378,7 @@ public final class FlowTestRunner {
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis(), stepDumpErrors, stepDumpLastError));
                 System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.displayName(), message);
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed", step.label()));
-                if (stopOnFailure) stopped = true;
+                if (stopOnFailure && !step.continueOnFailure()) stopped = true;
             } finally {
                 stepWindows.put(i + 1, new Instant[] {stepStarted, Instant.now()});
             }

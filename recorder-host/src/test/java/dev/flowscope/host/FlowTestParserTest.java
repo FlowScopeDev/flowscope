@@ -91,6 +91,35 @@ class FlowTestParserTest {
     }
 
     @Test
+    void readsContinueOnFailureOffTheStepArguments() {
+        FlowTest test = FlowTestParser.parseSource("""
+            flowscope 1
+            package com.example.debug
+            step assert-visible text="Monthly Payment Loan" continue-on-failure=true
+            step launch
+            """, "soft.flow");
+
+        assertEquals(true, test.steps().get(0).continueOnFailure());
+        assertEquals(false, test.steps().get(0).arguments().containsKey("continue-on-failure"));
+        assertEquals(false, test.steps().get(1).continueOnFailure());
+    }
+
+    @Test
+    void rejectsContinueOnFailureOutsideStepsOrWithABadValue() {
+        assertEquals("Line 3: continue-on-failure is only valid on step instructions", parseError(
+            "before force-stop continue-on-failure=true\nstep launch"));
+        assertEquals("Line 3: continue-on-failure must be true or false", parseError(
+            "step launch continue-on-failure=yes"));
+        assertEquals("Line 3: continue-on-failure is not valid on if-visible", parseError(
+            "step if-visible text=Banner continue-on-failure=true\nstep end"));
+    }
+
+    private static String parseError(String body) {
+        return assertThrows(IllegalArgumentException.class, () -> FlowTestParser.parseSource(
+            "flowscope 1\npackage com.example.debug\n" + body + "\n", "invalid.flow")).getMessage();
+    }
+
+    @Test
     void rejectsUnknownCaptureMode() throws Exception {
         Path testFile = directory.resolve("invalid-mode.flow");
         Files.writeString(testFile, """

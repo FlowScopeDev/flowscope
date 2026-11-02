@@ -162,8 +162,20 @@ public final class FlowTestParser {
             if (previous != null) throw error(line, "duplicate argument: " + token.substring(0, equals));
         }
         String label = FlowLabel.parse(arguments.remove("label"), line);
+        boolean continueOnFailure = continueOnFailure(arguments.remove("continue-on-failure"), action, phase, line);
         validateAction(action, arguments, line);
-        return new FlowTest.Step(line, phase, action, Map.copyOf(arguments), label);
+        return new FlowTest.Step(line, phase, action, Map.copyOf(arguments), label, continueOnFailure);
+    }
+
+    // Setup and cleanup already have fixed failure rules, and a block marker has nothing of its own to fail.
+    private static boolean continueOnFailure(String value, String action, FlowTest.Phase phase, int line) {
+        if (value == null) return false;
+        if (!value.equals("true") && !value.equals("false")) throw error(line, "continue-on-failure must be true or false");
+        if (phase != FlowTest.Phase.TEST) throw error(line, "continue-on-failure is only valid on step instructions");
+        if (action.equals("if-visible") || action.equals("end")) {
+            throw error(line, "continue-on-failure is not valid on " + action);
+        }
+        return value.equals("true");
     }
 
     /** Reads display metadata for an editor card using the format's own quoting rules. */

@@ -704,6 +704,9 @@ public final class Main {
             label= is supported on every before/step/after action and suite test entry.
             It changes display text only; action arguments, screenshot name= and variable name= keep
             their meanings. Omitted labels fall back to the action or original test name/reference.
+            continue-on-failure=true on a step instruction (not before/after, if-visible or end) fails
+            the test when that step fails but still runs the steps after it, for example:
+              step assert-visible text="Monthly Payment Loan" continue-on-failure=true
 
             Suite before/after hooks allow api-request, set-date, set-value, transform, and secret.
             Tests read suite setup values as ${suite.var.name}; suite cleanup always runs.

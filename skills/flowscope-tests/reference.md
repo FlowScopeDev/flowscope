@@ -66,6 +66,10 @@ is the only stopping limit. `from-id` helps identify the intended container.
 | `screenshot-if-visible` | selector, `name`, optional `timeout` (one check by default) |
 | `if-visible` / `end` | `step if-visible <selector> [timeout=ms]` opens a nested block; `step end` closes it in the same phase. One check by default; unmatched contents are skipped. |
 
+`continue-on-failure=true` on any `step` instruction except `if-visible` and `end` marks a check
+that fails the test without stopping it: the step is recorded as failed and the steps after it
+still run. It is not accepted on `before` or `after`, which keep their own failure rules.
+
 `direction` always means where the finger moves. There is no `double-tap` and no fixed `wait`.
 
 ## Device, install and deep-link actions
