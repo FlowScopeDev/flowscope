@@ -37,7 +37,9 @@ command disagree, the command is right and this page is a bug.
    version keeps being accepted for as long as the major version allows. Redefining a field in place
    is the one thing that is never done, because a checked-in test cannot be re-reviewed.
 
-What is explicitly *not* promised: the wording of human-readable messages, the HTML report's layout,
+What is explicitly *not* promised: the wording of human-readable messages, the layout of the HTML
+and PDF reports (`report.html`, `report.pdf`, `suite-report.html`, `suite-report.pdf`) — they are
+presentation, and `report.json` is the artifact to read from a script —
 timing and the dump-count instrumentation in reports, the on-disk shape of `~/.flowscope/`, the
 recording session format, which is an internal capture artifact rather than a durable input, and
 `progress.jsonl`, the transient file a run keeps while in flight so the IDE can show it live. It is

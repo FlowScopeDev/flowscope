@@ -246,19 +246,31 @@ flowscope suite run flows/suites/sample.suite --project examples --serial <adb-s
 
 `before` prepares and verifies the initial state, `step` is the test body, and `after` always runs
 cleanup even when setup or the test fails. Replay uses selector conditions and UI stability checks
-rather than recorded delays. Every run writes `report.json`, an offline `report.html`, and
-`junit.xml`; failures also save a screenshot and UI hierarchy. `report.html` opens as a single
-self-contained page — no network and no scripts: a verdict banner, a pass/fail/skip/duration
-summary, a **Screenshots** gallery, the step table, and the performance and agent sections below it.
-It opens light and carries a **Dark**/**Light** toggle in its top-right corner; the choice is a
-checkbox and CSS, so it applies to the open page and is not remembered between reports. At an interactive terminal,
-`flowscope test run` also prints a line before each step starts — `RUN  TEST 07/40  tap` — so a long
-flow is not a blank wait; it stays off when stdout is piped, such as in CI. The IDE's run bar shows
-the same step-by-step progress live, as worded text rather than colour.
+rather than recorded delays. Every run writes `report.json`, an offline `report.html`, a
+`report.pdf`, and `junit.xml`; failures also save a screenshot and UI hierarchy. `report.html` is a
+single self-contained page — no network and no scripts: a masthead with the verdict, a rail carrying
+the counts and the run's facts, a **Screenshots** gallery, the step table, and the performance and
+agent sections beside it. **Both the HTML and the PDF carry their screenshots inside the file**, so
+either one can be sent to someone on its own and still show the evidence; the per-step `evidence` and
+`hierarchy` links point into the run folder and need it. The page is light only, whatever the
+reader's system is set to, because a report is a document and a printed or pasted screenshot should
+look like one. At an interactive terminal, `flowscope test run` and `suite run` keep one row for the
+step that is running and rewrite it in place, so a long step reports instead of waiting silently:
+
+```text
+RUN  BEFORE 03/34  Check the QA token is valid (line 7) · awaiting response · 12s of 30s
+```
+
+The row carries how long the step has been running, the budget it is working to, and what it is
+doing — `awaiting response` or `receiving response` for an `api-request`, `looking up · attempt 9`
+for a selector, `swipe 3 of 10` for a `scroll-to`, `waiting for the UI to settle` after a tap. It
+stays off when stdout is piped, such as in CI, where the output is unchanged. The IDE's run bar and
+its step list show the same detail live, as worded text rather than colour.
 
 Runs started from the CLI show up in the IDE too. While a test or suite runs, its report directory
 holds a `progress.jsonl` (literal actions, phases, line numbers and suite references only — never
-argument values) that is replaced by the report when the run ends. The IDE checks its reports
+argument values) and an `activity.json` (what the running step is doing: elapsed, budget, a stage
+word and a counter — again never an argument value), both replaced by the report when the run ends. The IDE checks its reports
 directory every second, so a run started with `flowscope test run` or `suite run` against the open
 project appears in the **Runs** rail as `Running · step 4/12 · tap` and then as its result. A run whose
 process died before writing a report reads `Interrupted · no report`. The IDE only displays these
@@ -296,7 +308,7 @@ or control characters. Labels do not affect execution, selectors, conditions, or
 
 Each of the three phases is reported distinctly, because a leaked fixture and a failed assertion
 need different fixes. `report.json` separates `primaryFailure` (setup or test) from
-`teardownFailures`; `report.html` gives cleanup its own **Cleanup failures** banner; `junit.xml`
+`teardownFailures`; `report.html` and `report.pdf` give cleanup its own **Cleanup failures** banner; `junit.xml`
 names the phase in the failure message and lists every cleanup failure in the failure body; and the
 CLI prints one `FAILED: …` line naming the phase. A failed cleanup still fails the run (exit `1`) —
 a dirty device or an undeleted fixture would poison the next one. Every report includes a
@@ -629,13 +641,15 @@ flowscope suite validate flows/suites/nightly.suite
 flowscope suite run --serial <adb-serial>           # uses "suite" from flowscope.json
 ```
 
-A suite run writes `suite-report.json`, `suite-report.html`, and `junit.xml`, plus numbered
-JSON/HTML/JUnit reports per test. Each test's `step screenshot`/`web-screenshot` evidence is also
-embedded as a thumbnail gallery under that test's row in `suite-report.html`, linked to the full-size
-file, so a reviewer can scan what happened without opening every per-test report. The same page
+A suite run writes `suite-report.json`, `suite-report.html`, `suite-report.pdf`, and `junit.xml`,
+plus numbered JSON/HTML/PDF/JUnit reports per test. Each test's `step screenshot`/`web-screenshot`
+evidence is also embedded as a thumbnail gallery under that test's row in `suite-report.html`, so a
+reviewer can scan what happened without opening every per-test report. The same page
 opens with a **Screenshots** section collecting every capture across the whole suite, each labelled
-with the test that took it; a thumbnail in either place opens a full-size view with **‹**/**›**
-controls and a position counter, so the whole run can be stepped through one capture at a time. With
+with the test that took it; a thumbnail in either place opens a full-size view with previous and next
+controls and a position counter, so the whole run can be stepped through one capture at a time. A
+suite that captured more than one page can reasonably carry keeps every thumbnail and falls back to
+the evidence folder for the last full-size views, and says so in the section. With
 `continue-on-failure false` (the default) it stops at the first failure and records the rest as
 skipped.
 

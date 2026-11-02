@@ -2,11 +2,15 @@ package dev.flowscope.host;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class FlowSuiteReportTest {
+    /** These reports name evidence that was never written, which is the fallback path. */
+    @TempDir Path temp;
     private static final Instant STARTED = Instant.parse("2026-10-18T10:15:00.123Z");
     private static final Instant ENDED = Instant.parse("2026-10-18T10:19:42.004Z");
 
@@ -99,7 +103,7 @@ class FlowSuiteReportTest {
             STARTED, ENDED, List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow",
                 "A <test>", "failed", 10, "01-A/report.json", "bad <state>")));
 
-        String html = FlowSuiteRunner.reportHtml(report);
+        String html = FlowSuiteRunner.reportHtml(report, temp);
         String junit = FlowSuiteRunner.junitXml(report);
         assertEquals(true, html.contains("A &lt;test&gt;"));
         assertEquals(true, html.contains("01-A/report.html"));
@@ -114,7 +118,7 @@ class FlowSuiteReportTest {
             // `error` is what the runner stores: FlowTestRunner.failureMessage(), already composed.
             List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "failed", 10,
                 "01-A/report.json",
-                "tap: no element matched · cleanup also failed (1): api-request: expected 204, got 500",
+                "tap: no element matched. Cleanup also failed (1): api-request: expected 204, got 500",
                 List.of("api-request: expected 204, got 500"))));
 
         // The structured array is for a CI script, which should not have to parse a sentence.
@@ -123,11 +127,11 @@ class FlowSuiteReportTest {
         // The human-facing surfaces carry it inside the verdict, which already names the phase, and
         // link to the per-test report for the breakdown — so neither says it twice.
         String junit = FlowSuiteRunner.junitXml(report);
-        assertEquals(true, junit.contains("cleanup also failed (1)"));
+        assertEquals(true, junit.contains("Cleanup also failed (1)"));
         // The per-test report linked from this row holds the phase-by-phase breakdown. The aggregate
         // must not restate it, or every cell says the same thing twice.
         assertEquals(false, junit.contains("cleanup: api-request"));
-        assertEquals(true, FlowSuiteRunner.reportHtml(report).contains("cleanup also failed (1)"));
+        assertEquals(true, FlowSuiteRunner.reportHtml(report, temp).contains("Cleanup also failed (1)"));
     }
 
     @Test
@@ -142,16 +146,19 @@ class FlowSuiteReportTest {
     }
 
     @Test
-    void suiteReportHtmlEmbedsScreenshotThumbnailsLinkedToTheEvidenceFile() {
+    void aScreenshotThatCannotBeReadKeepsItsRelativeLinkRatherThanBreakingTheRun() {
         FlowSuiteRunner.SuiteReport report = new FlowSuiteRunner.SuiteReport(
             "Smoke", "flows/suites/smoke.suite", "/app", "ABC", false, STARTED, ENDED,
             List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
                 "01-A/report.json", null, List.of(), List.of("01-A/evidence/step-01.png"))));
 
-        String html = FlowSuiteRunner.reportHtml(report);
+        // Nothing was written under `temp`, so there is nothing to embed: the thumbnail falls back
+        // to the relative file, which still works for a reader who has the run folder.
+        String html = FlowSuiteRunner.reportHtml(report, temp);
         assertEquals(true, html.contains("<img src=\"01-A/evidence/step-01.png\""));
-        assertEquals(true, html.contains("<a href=\"01-A/evidence/step-01.png\">"));
         assertEquals(true, html.contains(">step-01<"));
+        // Its thumbnail opens the gallery overlay rather than dropping the reader on a bare file.
+        assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-1\">"));
     }
 
     @Test
@@ -161,7 +168,7 @@ class FlowSuiteReportTest {
             List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
                 "01-A/report.json", null)));
 
-        assertEquals(false, FlowSuiteRunner.reportHtml(report).contains("class=\"screenshots\""));
+        assertEquals(false, FlowSuiteRunner.reportHtml(report, temp).contains("class=\"screenshots\""));
     }
 
     @Test
@@ -174,11 +181,11 @@ class FlowSuiteReportTest {
                     "02-B/report.json", "tap: no element matched", List.of(),
                     List.of("02-B/evidence/failure-02.png"))));
 
-        String html = FlowSuiteRunner.reportHtml(report);
+        String html = FlowSuiteRunner.reportHtml(report, temp);
         assertEquals(true, html.contains("<h2>Screenshots</h2>"));
         assertEquals(true, html.contains("2 captures"));
-        assertEquals(true, html.contains("Test 1 · A"));
-        assertEquals(true, html.contains("Test 2 · B"));
+        assertEquals(true, html.contains("<b>Test 1</b> A"));
+        assertEquals(true, html.contains("<b>Test 2</b> B"));
         // The per-test strip stays beside each row; the gallery is an addition, not a replacement.
         assertEquals(true, html.contains("class=\"screenshots\""));
         // Its thumbnails open the gallery's overlay, so prev/next works from either entry point.
@@ -198,7 +205,7 @@ class FlowSuiteReportTest {
                 new FlowSuiteRunner.TestOutcome(3, 5, "tests/c.flow", "C", "passed", 10,
                     "03-C/report.json", null, List.of(), List.of("03-C/evidence/step-01.png"))));
 
-        String html = FlowSuiteRunner.reportHtml(report);
+        String html = FlowSuiteRunner.reportHtml(report, temp);
         int first = html.indexOf("01-A/evidence/step-01.png");
         assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-1\">"));
         assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-2\">"));
@@ -217,11 +224,11 @@ class FlowSuiteReportTest {
                     "02-B/report.json", "tap: no element matched", List.of(),
                     List.of("shared/evidence/cart.png"))));
 
-        String html = FlowSuiteRunner.reportHtml(report);
+        String html = FlowSuiteRunner.reportHtml(report, temp);
         // Positional, not keyed by path: the second row must not jump back to the first overlay.
         assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-1\">"));
         assertEquals(true, html.contains("<a class=\"frame\" href=\"#screenshots-2\">"));
-        assertEquals(true, html.contains("Test 2 · B"));
+        assertEquals(true, html.contains("<b>Test 2</b> B"));
     }
 
     @Test
@@ -231,7 +238,7 @@ class FlowSuiteReportTest {
             List.of(new FlowSuiteRunner.TestOutcome(1, 3, "tests/a.flow", "A", "passed", 10,
                 "01-A/report.json", null)));
 
-        String html = FlowSuiteRunner.reportHtml(report);
+        String html = FlowSuiteRunner.reportHtml(report, temp);
         assertEquals(true, html.contains("<h2>Screenshots</h2>"));
         assertEquals(true, html.contains("This run captured no screenshots."));
         assertEquals(false, html.contains("<img"));
@@ -246,9 +253,9 @@ class FlowSuiteReportTest {
             List.of(new FlowSuiteRunner.HookOutcome("after", 9, "api-request", "failed", 12,
                 "expected 204, got 500", java.util.Map.of())));
 
-        String html = FlowSuiteRunner.reportHtml(report);
-        assertEquals(true, html.contains("suite after hook failed · api-request: expected 204, got 500"));
-        assertEquals(true, html.contains("hero failed"));
+        String html = FlowSuiteRunner.reportHtml(report, temp);
+        assertEquals(true, html.contains("suite after hook failed: api-request: expected 204, got 500"));
+        assertEquals(true, html.contains("head failed"));
     }
 
     private static FlowSuiteRunner.TestOutcome outcome(String status) {

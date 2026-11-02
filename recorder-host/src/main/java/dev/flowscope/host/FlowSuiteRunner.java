@@ -312,9 +312,10 @@ public final class FlowSuiteRunner {
             List.copyOf(hooks), isCancelled());
         Files.writeString(root.resolve("suite-report.json"), reportJson(report),
             StandardCharsets.UTF_8);
-        Files.writeString(root.resolve("suite-report.html"), reportHtml(report),
+        Files.writeString(root.resolve("suite-report.html"), reportHtml(report, root),
             StandardCharsets.UTF_8);
         Files.writeString(root.resolve("junit.xml"), junitXml(report), StandardCharsets.UTF_8);
+        writePdf(report, root);
 
         Totals totals = totals(outcomes);
         boolean allPassed = !isCancelled() && setupPassed && cleanupPassed && totals.failed() == 0 && totals.skipped() == 0;
@@ -322,6 +323,80 @@ public final class FlowSuiteRunner {
             isCancelled() ? "cancelled" : allPassed ? "passed" : "failed",
             totals.passed(), totals.failed(), totals.skipped(), totals.total());
         return allPassed;
+    }
+
+    /**
+     * `suite-report.pdf`. Best effort for the same reason the test's own PDF is: the suite's verdict
+     * belongs to the tests that ran, not to whether a document could be typeset afterwards.
+     */
+    private static void writePdf(SuiteReport report, Path root) {
+        try {
+            Files.write(root.resolve("suite-report.pdf"),
+                ReportPdf.render(pdfDoc(report), new ReportImages(root)));
+        } catch (Exception unwritable) {
+            String cause = unwritable.getMessage() == null
+                ? unwritable.getClass().getSimpleName() : unwritable.getMessage();
+            System.err.println("WARN could not write suite-report.pdf: " + cause
+                + " (suite-report.json, suite-report.html and junit.xml were written)");
+        }
+    }
+
+    static ReportPdf.Doc pdfDoc(SuiteReport report) {
+        Totals totals = totals(report.tests());
+        long millis = Duration.between(report.startedAt(), report.endedAt()).toMillis();
+        List<ReportHtml.Shot> shots = suiteShots(report);
+
+        List<ReportPdf.Row> rows = new ArrayList<>();
+        for (TestOutcome test : report.tests()) {
+            StringBuilder error = new StringBuilder(test.error() == null ? "" : test.error());
+            for (String cleanup : test.teardownErrors()) {
+                if (!error.isEmpty()) error.append(' ');
+                error.append("Cleanup: ").append(cleanup);
+            }
+            rows.add(new ReportPdf.Row(String.valueOf(test.number()),
+                test.reference(), test.displayName(), test.status(),
+                FlowTestRunner.formatMillis(test.durationMillis()), "", error.toString(),
+                test.screenshots().isEmpty() ? null : test.screenshots().get(0)));
+        }
+
+        List<ReportPdf.Plate> plates = new ArrayList<>();
+        for (ReportHtml.Shot shot : shots) {
+            plates.add(new ReportPdf.Plate(shot.path(), shot.title(), shot.where(), shot.what(),
+                shot.status()));
+        }
+
+        List<ReportPdf.Row> hooks = new ArrayList<>();
+        for (HookOutcome hook : report.hooks()) {
+            hooks.add(new ReportPdf.Row("", ReportHtml.sentenceCase(hook.phase()),
+                hook.displayName(), hook.status(),
+                FlowTestRunner.formatMillis(hook.durationMillis()), "",
+                hook.error() == null ? "" : hook.error(), null));
+        }
+
+        String status = report.cancelled() ? "cancelled"
+            : totals.failed() > 0 || totals.skipped() > 0 || report.hooks().stream()
+                .anyMatch(hook -> hook.status().equals("failed")) ? "failed" : "passed";
+        return new ReportPdf.Doc(report.name(), "Test suite", status, suiteVerdict(report),
+            List.of(),
+            List.of(new ReportPdf.Count("Passed", "" + totals.passed(), "passed"),
+                new ReportPdf.Count("Failed", "" + totals.failed(),
+                    totals.failed() > 0 ? "failed" : ""),
+                new ReportPdf.Count("Skipped", "" + totals.skipped(),
+                    totals.skipped() > 0 ? "skipped" : ""),
+                new ReportPdf.Count("Duration", FlowTestRunner.formatMillis(millis), ""),
+                new ReportPdf.Count("Screenshots", "" + shots.size(), "")),
+            List.of(new ReportPdf.Fact("Suite", report.suiteFile()),
+                new ReportPdf.Fact("Project",
+                    report.projectRoot() == null ? "" : report.projectRoot()),
+                new ReportPdf.Fact("Device", report.deviceSerial()),
+                new ReportPdf.Fact("On failure",
+                    report.continueOnFailure() ? "Continue" : "Stop"),
+                new ReportPdf.Fact("Started", ReportHtml.time(report.startedAt())),
+                new ReportPdf.Fact("Ended", ReportHtml.time(report.endedAt()))),
+            "Tests", "Each test in suite order, with the screenshots it captured.", rows, plates,
+            null, List.of(),
+            hooks.isEmpty() ? null : "Suite lifecycle",
+            "Host-only setup and cleanup hooks; device state belongs to each test.", hooks);
     }
 
     private void reportProgress(RunProgress progressFile, Progress progress) {
@@ -480,41 +555,56 @@ public final class FlowSuiteRunner {
         return out.toString();
     }
 
-    static String reportHtml(SuiteReport report) {
+    static String reportHtml(SuiteReport report, Path root) {
         Totals totals = totals(report.tests());
         long millis = Duration.between(report.startedAt(), report.endedAt()).toMillis();
-        List<ReportHtml.Shot> shots = suiteShots(report);
+        ReportImages images = new ReportImages(root);
+        List<ReportHtml.Shot> shots = images.embed(suiteShots(report));
         String status = report.cancelled() ? "cancelled"
             : totals.failed() > 0 || totals.skipped() > 0 || report.hooks().stream()
                 .anyMatch(hook -> hook.status().equals("failed")) ? "failed" : "passed";
+        List<ReportHtml.Section> sections = new ArrayList<>(List.of(
+            new ReportHtml.Section("screenshots", "Screenshots"),
+            new ReportHtml.Section("tests", "Tests")));
+        if (!report.hooks().isEmpty()) {
+            sections.add(new ReportHtml.Section("lifecycle", "Suite lifecycle"));
+        }
+        String note = "Every screenshot each test in this suite captured, in run order."
+            + (images.plateBudgetSpent()
+                ? " This suite captured more than one page can carry, so the last full-size views open from each test's evidence folder rather than from the page."
+                : " They travel inside this page, so it can be shared on its own.");
         return ReportHtml.document(report.name(),
-            ReportHtml.hero("Test suite", report.name(), status, suiteVerdict(report),
+            ReportHtml.head(report.name(), status, suiteVerdict(report)),
+            ReportHtml.rail(
+                List.of(
+                    new ReportHtml.Stat("" + totals.passed(), "Passed", "passed"),
+                    new ReportHtml.Stat("" + totals.failed(), "Failed",
+                        totals.failed() > 0 ? "failed" : ""),
+                    new ReportHtml.Stat("" + totals.skipped(), "Skipped",
+                        totals.skipped() > 0 ? "skipped" : ""),
+                    new ReportHtml.Stat(FlowTestRunner.formatMillis(millis), "Duration", ""),
+                    new ReportHtml.Stat("" + shots.size(), "Screenshots", "")),
                 ReportHtml.meta(
-                    "suite=" + report.suiteFile(),
-                    "project=" + report.projectRoot(),
-                    "device=" + report.deviceSerial(),
-                    report.continueOnFailure() ? "on failure=continue" : "on failure=stop",
-                    "started=" + ReportHtml.time(report.startedAt()),
-                    "ended=" + ReportHtml.time(report.endedAt())))
-            + ReportHtml.stats(List.of(
-                new ReportHtml.Stat("" + totals.passed(), "Passed", "passed"),
-                new ReportHtml.Stat("" + totals.failed(), "Failed", totals.failed() > 0 ? "failed" : ""),
-                new ReportHtml.Stat("" + totals.skipped(), "Skipped", totals.skipped() > 0 ? "skipped" : ""),
-                new ReportHtml.Stat(FlowTestRunner.formatMillis(millis), "Duration", ""),
-                new ReportHtml.Stat("" + shots.size(), "Screenshots", "")))
-            + ReportHtml.card("screenshots", "Screenshots",
-                "Every screenshot each test in this suite captured, in run order.",
+                    "Kind=Test suite",
+                    "Suite=" + report.suiteFile(),
+                    report.projectRoot() == null ? null : "Project=" + report.projectRoot(),
+                    "Device=" + report.deviceSerial(),
+                    report.continueOnFailure() ? "On failure=Continue" : "On failure=Stop",
+                    "Started=" + ReportHtml.time(report.startedAt()),
+                    "Ended=" + ReportHtml.time(report.endedAt())),
+                sections),
+            ReportHtml.card("screenshots", "Screenshots", note,
                 shots.size() + (shots.size() == 1 ? " capture" : " captures"),
                 ReportHtml.gallery("screenshots", shots))
-            + testsHtml(report)
+            + testsHtml(report, images)
             + hooksHtml(report));
     }
 
     /** The failed hook, named: a suite can fail without any test in its table having failed. */
     private static String suiteVerdict(SuiteReport report) {
-        if (report.cancelled()) return "Cancelled by user · remaining tests were skipped";
+        if (report.cancelled()) return "Cancelled by user, so the remaining tests were skipped";
         return report.hooks().stream().filter(hook -> hook.status().equals("failed")).findFirst()
-            .map(hook -> "suite " + hook.phase() + " hook failed · " + hook.displayName()
+            .map(hook -> "suite " + hook.phase() + " hook failed: " + hook.displayName()
                 + (hook.error() == null ? "" : ": " + hook.error()))
             .orElse(null);
     }
@@ -525,13 +615,13 @@ public final class FlowSuiteRunner {
         for (TestOutcome test : report.tests()) {
             for (String screenshot : test.screenshots()) {
                 shots.add(new ReportHtml.Shot(screenshot, screenshotLabel(screenshot),
-                    "Test " + test.number() + " · " + test.displayName(), test.status()));
+                    "Test " + test.number(), test.displayName(), test.status()));
             }
         }
         return shots;
     }
 
-    private static String testsHtml(SuiteReport report) {
+    private static String testsHtml(SuiteReport report, ReportImages images) {
         // The strip beside a row opens the same overlay the gallery does, so stepping through the
         // run with the overlay's prev/next works whichever thumbnail the reader started from. The
         // anchor is counted out in step with suiteShots rather than looked up by path: two tests
@@ -554,11 +644,11 @@ public final class FlowSuiteRunner {
             if (!test.screenshots().isEmpty()) {
                 List<ReportHtml.Shot> strip = new ArrayList<>();
                 for (String path : test.screenshots()) {
-                    strip.add(new ReportHtml.Shot(path, screenshotLabel(path), null, null,
-                        "#" + ReportHtml.anchor("screenshots", shot++)));
+                    strip.add(new ReportHtml.Shot(path, screenshotLabel(path), null, null, null,
+                        "#" + ReportHtml.anchor("screenshots", shot++), null, null));
                 }
                 rows.append("<tr><td></td><td colspan=\"5\" class=\"screenshots\">")
-                    .append(ReportHtml.strip(strip)).append("</td></tr>");
+                    .append(ReportHtml.strip(images.embedThumbnails(strip))).append("</td></tr>");
             }
         }
         Totals totals = totals(report.tests());
@@ -575,7 +665,7 @@ public final class FlowSuiteRunner {
         StringBuilder rows = new StringBuilder();
         for (HookOutcome hook : report.hooks()) {
             rows.append("<tr><td><span class=\"phase\">")
-                .append(html(hook.phase().toUpperCase(java.util.Locale.ROOT)))
+                .append(html(ReportHtml.sentenceCase(hook.phase())))
                 .append("</span></td><td class=\"name\">").append(html(hook.displayName()))
                 .append("</td><td>").append(ReportHtml.pill(hook.status()))
                 .append("</td><td class=\"dur\">")

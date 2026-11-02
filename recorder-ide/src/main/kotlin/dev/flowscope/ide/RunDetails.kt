@@ -37,13 +37,20 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 
 /** Observes the selected directory even if newer runs push it out of the rail's recent-run limit. */
-internal data class RunDetails(val report: RunReport?, val htmlReport: Path?, val steps: RunSteps.Snapshot) {
+internal data class RunDetails(
+    val report: RunReport?,
+    val htmlReport: Path?,
+    val pdfReport: Path?,
+    val steps: RunSteps.Snapshot,
+) {
     companion object {
         fun read(directory: Path): RunDetails {
             val report = RunReport.read(directory).orElse(null)
             val html = listOf("suite-report.html", "report.html")
                 .map(directory::resolve).firstOrNull(Files::isRegularFile)
-            return RunDetails(report, html, RunSteps.read(directory, report))
+            val pdf = listOf("suite-report.pdf", "report.pdf")
+                .map(directory::resolve).firstOrNull(Files::isRegularFile)
+            return RunDetails(report, html, pdf, RunSteps.read(directory, report))
         }
     }
 }
@@ -105,8 +112,18 @@ internal fun RunDetailContent(directory: Path) {
         enabled = details?.htmlReport != null,
         modifier = Modifier.fillMaxWidth(),
     ) { Text("Open HTML report", fontSize = 12.sp) }
+    // The PDF is the one to send on: it carries the screenshots, so a single file is the evidence.
+    OutlinedButton(
+        onClick = {
+            details?.pdfReport?.let { file ->
+                scope.launch(Dispatchers.IO) { openWithDefaultApplication(file) }
+            }
+        },
+        enabled = details?.pdfReport != null,
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Open PDF report", fontSize = 12.sp) }
     if (report?.isRunning == true && details?.htmlReport == null) {
-        Text("The HTML report will be available when the run finishes.", color = TextLow, fontSize = 11.sp)
+        Text("The reports will be available when the run finishes.", color = TextLow, fontSize = 11.sp)
     }
     OutlinedButton(
         onClick = { scope.launch(Dispatchers.IO) { revealInFileManager(directory) } },

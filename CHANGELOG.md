@@ -15,16 +15,31 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 - **`continue-on-failure=true` on a step** fails the test when that step fails but keeps running
   the steps after it, so one wrong label does not hide every check behind it. It is accepted on
   `step` instructions only, not on `before`, `after`, `if-visible` or `end`.
-- `report.html` and `suite-report.html` are redesigned: one self-contained page with a verdict
-  banner, a pass/fail/skip/duration summary, status pills and readable durations, built on the
-  FlowScope palette. A report opens light and carries its own **Dark**/**Light** toggle. Both now
-  open with a labelled **Screenshots** section collecting every capture the run made — the step that
+- **Every run now writes `report.pdf`, and a suite writes `suite-report.pdf`** — the artifact that
+  gets attached to a ticket. The screenshots are inside the file, the steps are set as block rows
+  that paginate instead of a table squeezed off the page, and each capture gets a plate of its own.
+  It is written on a plain JDK with no new dependency and uses only the base-14 fonts, so nothing is
+  embedded. Writing it is best effort: if it cannot be typeset the run warns and keeps its verdict,
+  because a verdict is what the device did.
+- **`report.html` and `suite-report.html` now carry their screenshots inside the page**, as `data:`
+  URIs, so a report can be sent to someone on its own and still show the evidence — a relative
+  `<img>` went blank the moment the page left its folder. Thumbnails are always embedded; full-size
+  views are embedded until a page-size budget is spent, after which the rest fall back to the
+  evidence folder and the **Screenshots** section says so. The per-step `evidence` and `hierarchy`
+  links still point into the run folder.
+- `report.html` and `suite-report.html` are redesigned against the rules in
+  [hallmark](https://github.com/Nutlope/hallmark): a masthead carrying the verdict, a rail of counts
+  and run facts, and the full width of the viewport for the step table and the gallery. Gone are the
+  kicker above the heading, the tracked capitals, the decorative status dots, the middle-dot
+  separators, the nested cards and the sub-16px body type; added are one tokenised palette on a 4px
+  scale, `:focus-visible` on every control, a reduced-motion fallback, and a stamp at the top of the
+  stylesheet recording the decisions and waivers. Both still run no script and fetch nothing. Each
+  opens with a labelled **Screenshots** section collecting every capture the run made — the step that
   took it, the test it belongs to in a suite, and the screenshot saved when a step fails. A
   thumbnail opens a full-size view with previous/next controls and a position counter, so a run can
   be stepped through one capture at a time; the thumbnails beside a suite's test row open the same
-  view. Per-step evidence links and the per-test thumbnail strip are unchanged, and the toggle and
-  viewer use a checkbox and `:target` rather than a script, so the page still runs nothing. The HTML
-  layout is presentation only; `report.json`, `suite-report.json` and `junit.xml` are untouched.
+  view. The HTML layout is presentation only; `report.json`, `suite-report.json` and `junit.xml` are
+  untouched.
 
 - Optional literal `label="..."` display names for flow steps, suite hooks and suite test entries,
   shown in live progress, inspection tabs and reports; unlabeled tests and existing `name=` arguments
@@ -42,6 +57,17 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 - `scroll-to clear-of-id=<id>[,<id>...]` keeps swiping while the element overlaps any of those, so a
   tap after it is not swallowed by a panel or floating button drawn over the content; `scroll-to` also takes `distance=`
   and `duration=` like `swipe`.
+
+### Changed
+
+- **The reports are light only; the **Dark**/**Light** toggle is gone.** A report is a document that
+  is read, printed and pasted into tickets, and with no script there was nothing to remember a
+  choice with between reports.
+- A run's one-line verdict reads as a sentence rather than a middle-dot list: `setup failed: …`,
+  `cleanup failed: …`, and `… . Cleanup also failed (1): …`. This is the string the CLI, the
+  `junit.xml` message attribute and a suite's test row all share; `report.json` is unchanged.
+- A cleanup banner's list of failures now renders inside the banner. A `<p>` cannot contain a `<ul>`,
+  so the parser had been closing the banner early and the failures appeared outside its own band.
 
 ### Fixed
 

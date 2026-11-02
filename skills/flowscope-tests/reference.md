@@ -179,15 +179,19 @@ flowscope suite run [<file.suite>] [--project <dir>] [--serial <id>] [--secrets-
 ```
 
 Exit codes: `0` success, `1` a test failed, `2` invalid input. Every run writes `report.json`,
-`report.html` and `junit.xml`. `report.html` opens light (with a dark toggle) and carries a verdict
-banner, a summary, and a **Screenshots** section holding every capture the run made — each labelled
-with the step that took it, including the screenshot saved when a step fails, and steppable one at a
-time — before the step table, whose rows keep their own evidence links. A suite run's `suite-report.html` carries the same **Screenshots** section
-across every test and still embeds each test's `screenshot`/`web-screenshot` evidence as a thumbnail
-gallery under that test's row, linked to the full-size file; `suite-report.json` carries the same
-list as a `screenshots` array per test. The HTML layout is presentation only — parse `report.json`.
-While a run is in flight its directory also holds a transient `progress.jsonl` (the IDE shows it
-live); it is deleted when the report is written, so never parse it — read the report.
+`report.html`, `report.pdf` and `junit.xml`. `report.html` is light only and carries a masthead with
+the verdict, a rail of counts and run facts, and a **Screenshots** section holding every capture the
+run made — each labelled with the step that took it, including the screenshot saved when a step
+fails, and steppable one at a time — beside the step table, whose rows keep their own evidence links.
+The HTML and the PDF both carry their screenshots inside the file, so either can be shared on its
+own; the per-step `evidence` and `hierarchy` links need the run folder. A suite run's
+`suite-report.html` and `suite-report.pdf` carry the same **Screenshots** section across every test,
+and the page still embeds each test's `screenshot`/`web-screenshot` evidence as a thumbnail gallery
+under that test's row; `suite-report.json` carries the same list as a `screenshots` array per test.
+The HTML and PDF layouts are presentation only — parse `report.json`.
+While a run is in flight its directory also holds transient `progress.jsonl` and `activity.json`
+files (the IDE shows them live, and the CLI rewrites one `RUN` row in place with what the running
+step is doing); both are deleted when the report is written, so never parse them — read the report.
 `flowscope version` prints the build, and `flowscope doctor` leads
 with it — include both in a bug report. What these formats and exit codes promise not to break is
 recorded in `COMPATIBILITY.md`.

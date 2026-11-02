@@ -210,15 +210,15 @@ public final class FlowTestRunner {
     public String failureMessage() {
         String primary = primaryFailure();
         List<String> teardown = teardownFailures();
-        if (isCancelled()) return "Cancelled" + (primary == null ? "" : " · " + primary)
-            + (teardown.isEmpty() ? "" : " · cleanup also failed: " + String.join(" · ", teardown));
+        if (isCancelled()) return "Cancelled" + (primary == null ? "" : ": " + primary)
+            + (teardown.isEmpty() ? "" : ". Cleanup also failed: " + String.join("; ", teardown));
         if (primary == null) {
-            return teardown.isEmpty() ? null : "cleanup failed · " + String.join(" · ", teardown);
+            return teardown.isEmpty() ? null : "cleanup failed: " + String.join("; ", teardown);
         }
-        String verdict = (setupFailed() ? "setup failed · " : "") + primary;
+        String verdict = (setupFailed() ? "setup failed: " : "") + primary;
         if (teardown.isEmpty()) return verdict;
-        return verdict + " · cleanup also failed (" + teardown.size() + "): "
-            + String.join(" · ", teardown);
+        return verdict + ". Cleanup also failed (" + teardown.size() + "): "
+            + String.join("; ", teardown);
     }
 
     /** True when the primary failure came from `before`, so the test body never ran. */
@@ -1567,15 +1567,18 @@ public final class FlowTestRunner {
             rows.append("<tr><td class=\"num\">#").append(r.number).append("</td><td class=\"name\">")
                 .append(html(redact(r.step.displayName()))).append("</td><td class=\"dur\">")
                 .append(formatMillis(r.durationMillis)).append(ReportHtml.bar(r.durationMillis, total))
-                .append("</td><td class=\"dur\">").append(r.dumps).append(" · ")
-                .append(formatMillis(r.dumpMillis)).append("</td></tr>");
+                .append("</td><td class=\"dur\">").append(r.dumps)
+                .append("</td><td class=\"dur\">").append(formatMillis(r.dumpMillis))
+                .append("</td></tr>");
         }
-        String share = total > 0 ? Math.round(100.0 * dumpMillis / total) + "% of the run" : "";
+        String share = total > 0 ? ", which is " + Math.round(100.0 * dumpMillis / total)
+            + "% of the run" : "";
         String note = dumpCount + " UI hierarchy dump" + (dumpCount == 1 ? "" : "s") + " took "
-            + formatMillis(dumpMillis) + (share.isEmpty() ? "" : " · " + share)
+            + formatMillis(dumpMillis) + share
             + ". Dumps are the dominant cost of a run, so the slowest steps are usually the ones that looked hardest for an element.";
         String body = "<div class=\"body\"><p>" + html(note) + "</p></div>" + (rows.isEmpty() ? ""
-            : ReportHtml.table("<th>#</th><th>Slowest steps</th><th>Duration</th><th>UI dumps</th>", rows.toString()));
+            : ReportHtml.table("<th>#</th><th>Slowest steps</th><th>Duration</th><th>Dumps</th>"
+                + "<th>Dump time</th>", rows.toString()));
         return ReportHtml.card("performance", "Performance", null, formatMillis(total) + " total", body);
     }
 
@@ -1629,7 +1632,7 @@ public final class FlowTestRunner {
         StringBuilder summary = new StringBuilder();
         int kinds = 0;
         for (var entry : agentEvents.counts().entrySet()) {
-            if (kinds++ > 0) summary.append(" · ");
+            if (kinds++ > 0) summary.append(", ");
             summary.append(entry.getKey()).append(' ').append(entry.getValue());
         }
         List<AgentEventCapture.Event> events = agentEvents.events();
@@ -1658,6 +1661,119 @@ public final class FlowTestRunner {
         Files.writeString(root.resolve("report.json"), reportJson(passed, started, ended), StandardCharsets.UTF_8);
         Files.writeString(root.resolve("report.html"), reportHtml(passed, started, ended), StandardCharsets.UTF_8);
         Files.writeString(root.resolve("junit.xml"), junitXml(passed, Duration.between(started, ended).toMillis()), StandardCharsets.UTF_8);
+        writePdf(passed, started, ended);
+    }
+
+    /**
+     * `report.pdf`, the artifact that gets attached to a ticket. Best effort on purpose: a run's
+     * verdict is what the device did, and a report that could not be typeset must not be allowed to
+     * change it. The JSON, HTML and JUnit artifacts are already on disk by this point.
+     */
+    private void writePdf(boolean passed, Instant started, Instant ended) {
+        try {
+            Files.write(root.resolve("report.pdf"),
+                ReportPdf.render(pdfDoc(passed, started, ended), new ReportImages(root)));
+        } catch (Exception unwritable) {
+            System.err.println("WARN could not write report.pdf: " + message(unwritable)
+                + " (report.json, report.html and junit.xml were written)");
+        }
+    }
+
+    private ReportPdf.Doc pdfDoc(boolean passed, Instant started, Instant ended) {
+        long total = Duration.between(started, ended).toMillis();
+        long dumpMillis = Duration.ofNanos(dumpNanos).toMillis();
+        List<Shot> shots = screenshots();
+        Map<Integer, String> failureShots = failureShots();
+
+        List<ReportPdf.Row> rows = new ArrayList<>();
+        for (var r : results) {
+            Map<String, String> details = new LinkedHashMap<>(r.details);
+            String shot = failureShots.get(r.number);
+            if (shot != null) details.putIfAbsent("screenshot", shot);
+            rows.add(new ReportPdf.Row(String.valueOf(r.number),
+                ReportHtml.sentenceCase(r.step.phase().value()), redact(r.step.displayName()),
+                r.status, formatMillis(r.durationMillis), flatten(details),
+                r.error == null ? "" : r.error, firstScreenshot(details)));
+        }
+
+        List<ReportPdf.Plate> plates = new ArrayList<>();
+        for (Shot shot : shots) {
+            plates.add(new ReportPdf.Plate(shot.path(), shot.title(), shot.where(), shot.what(),
+                shot.status()));
+        }
+
+        List<ReportPdf.Measure> slowest = new ArrayList<>();
+        for (StepResult r : slowestSteps()) {
+            slowest.add(new ReportPdf.Measure("#" + r.number, redact(r.step.displayName()),
+                formatMillis(r.durationMillis), r.dumps + " dumps",
+                total <= 0 ? 0 : (double) r.durationMillis / total));
+        }
+
+        List<ReportPdf.Row> events = new ArrayList<>();
+        String eventsNote = null;
+        if (agentEvents != null) {
+            if (!agentEvents.captured()) {
+                eventsNote = "Not captured: " + agentEvents.unavailableReason() + ".";
+            } else {
+                eventsNote = "Instrumented events the debug agent streamed while the run executed.";
+                for (var event : agentEvents.events()) {
+                    Integer step = stepAt(event.arrivedAt());
+                    events.add(new ReportPdf.Row(
+                        "+" + formatMillis(Duration.between(started, event.arrivedAt()).toMillis()),
+                        step == null ? "" : "#" + step, event.kind(), "", "", event.summary(), "",
+                        null));
+                }
+            }
+        }
+
+        String share = total > 0 ? ", which is " + Math.round(100.0 * dumpMillis / total)
+            + "% of the run" : "";
+        return new ReportPdf.Doc(test.name(), "Flow test", status(passed), failureMessage(),
+            teardownFailures(),
+            List.of(new ReportPdf.Count("Passed", "" + count("passed"), "passed"),
+                new ReportPdf.Count("Failed", "" + count("failed"),
+                    count("failed") > 0 ? "failed" : ""),
+                new ReportPdf.Count("Skipped", "" + (count("skipped") + count("cancelled")),
+                    count("skipped") + count("cancelled") > 0 ? "skipped" : ""),
+                new ReportPdf.Count("Duration", formatMillis(total), ""),
+                new ReportPdf.Count("Screenshots", "" + shots.size(), "")),
+            List.of(new ReportPdf.Fact("Package", test.packageName()),
+                new ReportPdf.Fact("Mode", test.mode().cliName()),
+                new ReportPdf.Fact("Device", device.serial()),
+                new ReportPdf.Fact("FlowScope", FlowScopeVersion.current()),
+                new ReportPdf.Fact("Started", ReportHtml.time(started)),
+                new ReportPdf.Fact("Ended", ReportHtml.time(ended))),
+            "Steps",
+            "Setup, test and cleanup instructions in execution order; cleanup failures mean a dirty device, not a broken assertion.",
+            rows, plates,
+            dumpCount + " UI hierarchy dump" + (dumpCount == 1 ? "" : "s") + " took "
+                + formatMillis(dumpMillis) + share + ".",
+            slowest, eventsNote == null ? null : "Agent events", eventsNote, events);
+    }
+
+    /** `failure-NN` screenshots are written straight to disk rather than returned by the step. */
+    private Map<Integer, String> failureShots() {
+        Map<Integer, String> failureShots = new HashMap<>();
+        for (String path : evidenceScreenshots()) {
+            Matcher failure = FAILURE_SHOT.matcher(shotName(path));
+            if (failure.matches()) failureShots.put(Integer.parseInt(failure.group(1)), path);
+        }
+        return failureShots;
+    }
+
+    private static String firstScreenshot(Map<String, String> details) {
+        for (String value : details.values()) if (value != null && value.endsWith(".png")) return value;
+        return null;
+    }
+
+    /** The details cell as one line; the PDF has no room for chips. */
+    private static String flatten(Map<String, String> details) {
+        StringBuilder out = new StringBuilder();
+        for (var entry : details.entrySet()) {
+            if (!out.isEmpty()) out.append("   ");
+            out.append(entry.getKey()).append('=').append(entry.getValue());
+        }
+        return out.toString();
     }
     private String reportJson(boolean passed, Instant started, Instant ended) {
         // Both read the shared phase-aware API, so the report, junit.xml and the console agree
@@ -1672,31 +1788,47 @@ public final class FlowTestRunner {
     private String reportHtml(boolean passed, Instant started, Instant ended) {
         String status = status(passed);
         long total = Duration.between(started, ended).toMillis();
-        List<Shot> shots = screenshots();
-        return ReportHtml.document(test.name(), ReportHtml.hero("Flow test", test.name(), status,
-            failureMessage(), ReportHtml.meta(
-                "package=" + test.packageName(),
-                "mode=" + test.mode().cliName(),
-                "device=" + device.serial(),
-                "started=" + ReportHtml.time(started),
-                "ended=" + ReportHtml.time(ended)))
-            + ReportHtml.stats(List.of(
-                new ReportHtml.Stat("" + count("passed"), "Passed", "passed"),
-                new ReportHtml.Stat("" + count("failed"), "Failed", count("failed") > 0 ? "failed" : ""),
-                new ReportHtml.Stat("" + (count("skipped") + count("cancelled")), "Skipped",
-                    count("skipped") + count("cancelled") > 0 ? "skipped" : ""),
-                new ReportHtml.Stat(formatMillis(total), "Duration", ""),
-                new ReportHtml.Stat("" + shots.size(), "Screenshots", "")))
-            + screenshotsHtml(shots)
+        // The page carries its screenshots, so it can be sent on its own. The evidence and hierarchy
+        // links in the step rows still point into this folder and need it.
+        ReportImages images = new ReportImages(root);
+        List<Shot> shots = images.embed(screenshots());
+        List<ReportHtml.Section> sections = new ArrayList<>(List.of(
+            new ReportHtml.Section("screenshots", "Screenshots"),
+            new ReportHtml.Section("steps", "Steps"),
+            new ReportHtml.Section("performance", "Performance")));
+        if (agentEvents != null) sections.add(new ReportHtml.Section("agent", "Agent events"));
+        return ReportHtml.document(test.name(),
+            ReportHtml.head(test.name(), status, failureMessage()),
+            ReportHtml.rail(
+                List.of(
+                    new ReportHtml.Stat("" + count("passed"), "Passed", "passed"),
+                    new ReportHtml.Stat("" + count("failed"), "Failed",
+                        count("failed") > 0 ? "failed" : ""),
+                    new ReportHtml.Stat("" + (count("skipped") + count("cancelled")), "Skipped",
+                        count("skipped") + count("cancelled") > 0 ? "skipped" : ""),
+                    new ReportHtml.Stat(formatMillis(total), "Duration", ""),
+                    new ReportHtml.Stat("" + shots.size(), "Screenshots", "")),
+                ReportHtml.meta(
+                    "Kind=Flow test",
+                    "Package=" + test.packageName(),
+                    "Mode=" + test.mode().cliName(),
+                    "Device=" + device.serial(),
+                    "Started=" + ReportHtml.time(started),
+                    "Ended=" + ReportHtml.time(ended)),
+                sections),
+            screenshotsHtml(shots, images)
             + stepsHtml()
             + performanceHtml(started, ended)
             + agentEventsHtml(started));
     }
 
     /** The at-a-glance gallery. The same files stay linked from the step that captured them. */
-    private String screenshotsHtml(List<Shot> shots) {
-        return ReportHtml.card("screenshots", "Screenshots",
-            "Every screenshot this run captured, in the order the steps took them.",
+    private String screenshotsHtml(List<Shot> shots, ReportImages images) {
+        String note = "Every screenshot this run captured, in the order the steps took them."
+            + (images.plateBudgetSpent()
+                ? " This run captured more than one page can carry, so the last full-size views open from the evidence folder rather than from the page."
+                : " They travel inside this page, so it can be shared on its own.");
+        return ReportHtml.card("screenshots", "Screenshots", note,
             shots.size() + (shots.size() == 1 ? " capture" : " captures"),
             ReportHtml.gallery("screenshots", shots));
     }
@@ -1705,11 +1837,7 @@ public final class FlowTestRunner {
         // A failing step's screenshot is written straight to disk, so the row that failed would
         // otherwise be the one row with no evidence to click. This is a link, not a report field:
         // `report.json` still records only what the step itself returned.
-        Map<Integer, String> failureShots = new HashMap<>();
-        for (String path : evidenceScreenshots()) {
-            Matcher failure = FAILURE_SHOT.matcher(shotName(path));
-            if (failure.matches()) failureShots.put(Integer.parseInt(failure.group(1)), path);
-        }
+        Map<Integer, String> failureShots = failureShots();
         StringBuilder rows = new StringBuilder();
         for (var r : results) {
             Map<String, String> details = new LinkedHashMap<>(r.details);
@@ -1717,7 +1845,7 @@ public final class FlowTestRunner {
             if (shot != null) details.putIfAbsent("screenshot", shot);
             rows.append("<tr><td class=\"num\">").append(r.number)
                 .append("</td><td><span class=\"phase\">")
-                .append(html(r.step.phase().value().toUpperCase(Locale.ROOT)))
+                .append(html(ReportHtml.sentenceCase(r.step.phase().value())))
                 .append("</span></td><td class=\"name\">").append(html(redact(r.step.displayName())))
                 .append("</td><td>").append(ReportHtml.pill(r.status))
                 .append("</td><td class=\"dur\">").append(formatMillis(r.durationMillis))
@@ -1750,8 +1878,8 @@ public final class FlowTestRunner {
             for (var entry : r.details.entrySet()) {
                 String path = entry.getValue();
                 if (path == null || !path.endsWith(".png") || !seen.add(path)) continue;
-                shots.add(new Shot(path, shotName(path),
-                    "Step " + r.number + " · " + redact(r.step.displayName()), r.status));
+                shots.add(new Shot(path, shotName(path), "Step " + r.number,
+                    redact(r.step.displayName()), r.status));
             }
         }
         for (String path : evidenceScreenshots()) {
@@ -1759,8 +1887,8 @@ public final class FlowTestRunner {
             Matcher failure = FAILURE_SHOT.matcher(shotName(path));
             StepResult step = failure.matches() ? resultNumbered(Integer.parseInt(failure.group(1))) : null;
             shots.add(new Shot(path, shotName(path),
-                step == null ? "Captured during the run"
-                    : "Step " + step.number + " failed · " + redact(step.step.displayName()),
+                step == null ? null : "Step " + step.number + " failed",
+                step == null ? "Captured during the run" : redact(step.step.displayName()),
                 step == null ? "" : step.status));
         }
         return shots;
@@ -1828,7 +1956,8 @@ public final class FlowTestRunner {
     private String teardownHtml() {
         List<String> teardown = teardownFailures();
         if (teardown.isEmpty()) return "";
-        StringBuilder out = new StringBuilder("Cleanup failures · the device or its fixtures may be dirty<ul>");
+        StringBuilder out = new StringBuilder(
+            "<p>Cleanup failures: the device or its fixtures may be dirty</p><ul>");
         for (String cleanup : teardown) out.append("<li>").append(html(cleanup)).append("</li>");
         return ReportHtml.note("", out.append("</ul>").toString());
     }

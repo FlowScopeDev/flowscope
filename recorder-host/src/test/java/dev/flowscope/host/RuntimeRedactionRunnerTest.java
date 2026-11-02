@@ -36,7 +36,8 @@ class RuntimeRedactionRunnerTest {
         String console = failureConsole(runner::run);
         assertTrue(console.contains("id=item_1"), console);
         assertTrue(console.contains("501"), console);
-        assertReadableReports(runner.root(), List.of("report.json", "report.html", "junit.xml"));
+        assertReadableReports(runner.root(),
+            List.of("report.json", "report.html", "junit.xml", "report.pdf"));
     }
 
     @Test
@@ -69,8 +70,8 @@ class RuntimeRedactionRunnerTest {
         assertHidden(console, "env-sentinel", "body-sentinel", encoded);
         assertTrue(console.contains("item_10"), console);
         assertHidden(runner.failureMessage(), "env-sentinel", "body-sentinel", encoded);
-        for (String name : List.of("report.json", "report.html", "junit.xml")) {
-            assertHidden(Files.readString(runner.root().resolve(name)),
+        for (String name : List.of("report.json", "report.html", "junit.xml", "report.pdf")) {
+            assertHidden(read(runner.root().resolve(name)),
                 "env-sentinel", "body-sentinel", encoded);
         }
     }
@@ -101,8 +102,9 @@ class RuntimeRedactionRunnerTest {
                 "UNUSED", "id"));
 
         assertHidden(failureConsole(runner::run), "hook-sentinel", "child-sentinel");
-        for (String name : List.of("suite-report.json", "suite-report.html", "junit.xml")) {
-            String written = Files.readString(runner.root().resolve(name));
+        for (String name : List.of("suite-report.json", "suite-report.html", "junit.xml",
+            "suite-report.pdf")) {
+            String written = read(runner.root().resolve(name));
             assertHidden(written, "hook-sentinel", "child-sentinel");
             assertTrue(written.contains("id=item_1"), name);
             assertTrue(written.contains("501"), name);
@@ -111,9 +113,10 @@ class RuntimeRedactionRunnerTest {
         try (var entries = Files.list(runner.root())) {
             child = entries.filter(Files::isDirectory).findFirst().orElseThrow();
         }
-        assertReadableReports(child, List.of("report.json", "report.html", "junit.xml"));
-        for (String name : List.of("report.json", "report.html", "junit.xml")) {
-            assertHidden(Files.readString(child.resolve(name)), "hook-sentinel", "child-sentinel");
+        assertReadableReports(child,
+            List.of("report.json", "report.html", "junit.xml", "report.pdf"));
+        for (String name : List.of("report.json", "report.html", "junit.xml", "report.pdf")) {
+            assertHidden(read(child.resolve(name)), "hook-sentinel", "child-sentinel");
         }
     }
 
@@ -154,10 +157,16 @@ class RuntimeRedactionRunnerTest {
 
     private static void assertReadableReports(Path root, List<String> names) throws Exception {
         for (String name : names) {
-            String written = Files.readString(root.resolve(name));
+            String written = read(root.resolve(name));
             assertTrue(written.contains("id=item_1"), name);
             assertTrue(written.contains("501"), name);
         }
+    }
+
+    /** Every artifact as text. A PDF keeps its strings in deflated streams, so it is inflated. */
+    private static String read(Path file) throws Exception {
+        return file.getFileName().toString().endsWith(".pdf")
+            ? PdfProbe.text(Files.readAllBytes(file)) : Files.readString(file);
     }
 
     private static void assertHidden(String text, String... protectedValues) {

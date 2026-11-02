@@ -215,19 +215,48 @@ Lifecycle instructions are grouped as `BEFORE`, `TEST`, and `AFTER` in card view
 their offline HTML report from the rail and retain a separate reveal-folder action. JSON remains the
 machine-readable source for the IDE, while JUnit output supports CI.
 
-The HTML report is the one surface read outside the app — from a CI artifact, usually with no
-network — so it carries its own stylesheet and no script, font or image host. It leads with the
-verdict, then a summary, then a **Screenshots** section holding every capture the run made, each
-labelled with the step or test that took it and steppable one at a time; the step table keeps its
-own evidence links, because the gallery answers "what happened" and the table answers "where".
+The reports are the surfaces read outside the app — from a CI artifact, usually with no network, or
+as a file someone was sent — so they carry their own stylesheet and no script, font or image host.
+They lead with the verdict, then a rail of counts and run facts, then a **Screenshots** section
+holding every capture the run made, each labelled with the step or test that took it and steppable
+one at a time; the step table keeps its own evidence links, because the gallery answers "what
+happened" and the table answers "where".
 
-It opens light, in the IDE's light palette, rather than following the reader's system theme: a
-report is a document that is read, printed and pasted into tickets, and a dark page is the wrong
-default for all three. Dark is an explicit choice, made by a toggle in the page. Both the toggle and
-the full-size viewer are a checkbox and `:target` with sibling selectors rather than a script, which
-keeps the page safe to open straight from an artifact; the price is that the theme choice lasts for
-the open page and is not carried to the next report. Its layout is presentation, not API:
-`COMPATIBILITY.md` promises `report.json`, not this page.
+**Both the HTML and the PDF carry their screenshots inside the file.** A relative `<img>` went blank
+the moment the page was sent without its folder, which is how a report is usually shared, so the
+captures are embedded as `data:` URIs in the page and as image XObjects in the PDF — decoded and
+downscaled once by `ReportImages` for both. Thumbnails are always embedded, so a shared page always
+shows every capture; full-size views are embedded until a page-size budget is spent, after which the
+rest fall back to the evidence folder and the section says so. The per-step `evidence` and
+`hierarchy` links still point into the run folder, because a hierarchy dump is not something a page
+can carry.
+
+The page is light only, whatever the reader's system is set to: a report is a document that is read,
+printed and pasted into tickets, and a dark page is the wrong default for all three. There is no
+theme toggle, because with no script there is nothing to remember a choice with, and a control that
+only applies to the page in front of you is not worth the chrome. The full-size viewer is `:target`
+with sibling selectors rather than a script, which keeps the page safe to open straight from an
+artifact.
+
+The chrome was last worked over against the rules in
+[hallmark](https://github.com/Nutlope/hallmark), which catalogues the tells of machine-made design.
+What that removed: the kicker above the heading, tracked capitals on every label, decorative status
+dots, middle-dot separators, cards nested inside cards, pure white panels, body type below 16px, and
+off-scale spacing. What it added: one tokenised palette on a 4px scale, `:focus-visible` on every
+control, a reduced-motion fallback, and a build stamp at the top of the stylesheet recording those
+decisions and the two waivers the page has to take — a system font stack, because it may not fetch
+one, and no script. The rule that the measure must not grow with the viewport is read here as: the
+shell and the data tables use the width, prose stays at 65ch.
+
+The PDF is not a picture of the page. It paginates, so the steps are set as block rows rather than
+squeezed into the page's seven columns, and the screenshots get plates of their own, two to a page
+for the portrait captures a phone produces. It is written by `Pdf`/`ReportPdf` on a plain JDK with
+no dependency, for the same reason `flowscope.json` is read by `Json` rather than a library, and it
+uses only the base-14 fonts so nothing is embedded and no font licence is involved — which costs the
+document the system typeface the page asks for. Writing it is best effort: a run's verdict is what
+the device did, and a report that could not be typeset must not change it.
+
+Their layout is presentation, not API: `COMPATIBILITY.md` promises `report.json`, not these.
 
 The rail's runs are whatever the reports directory holds, wherever they were started. Every runner —
 CLI or IDE — appends `progress.jsonl` to its run directory while in flight (a start line with the

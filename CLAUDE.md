@@ -130,6 +130,26 @@ splits `primaryFailure` from `teardownFailures`, and every surface with room for
 cleanup failure — the message attribute alone used to drop them, hiding a leaked fixture from CI. A
 cleanup failure still fails the run.
 
+Every run writes `report.json`, `report.html`, `report.pdf` and `junit.xml`; a suite writes the
+`suite-report.*` equivalents. Both the HTML and the PDF embed their screenshots — `data:` URIs in the
+page, image XObjects in the PDF — so either travels as one file; `ReportImages` decodes and
+downscales each capture once for both, and a capture that will not decode keeps its relative link
+rather than failing anything. Thumbnails are always embedded; full-size views stop at a page-size
+budget and the section says when it fell back. `Pdf`/`ReportPdf` are plain-JDK, base-14 fonts only,
+no dependency — the same constraint as `Json.java`. **Writing a PDF must never change a run's
+verdict**: catch, warn naming the cause, and leave the other artifacts alone, the way a failed
+hierarchy capture becomes `details.hierarchyError`. The HTML and PDF layouts are presentation, not
+API (`COMPATIBILITY.md`); `report.json` schema 2 is the contract.
+
+The reports are light only — no theme toggle, no `prefers-color-scheme` — and run no script and
+fetch nothing; a base64 payload cannot smuggle a URL past that, since `:` is not in the alphabet.
+Their chrome follows the rules in https://github.com/Nutlope/hallmark: no kicker above a heading, no
+tracked capitals, no decorative status dots, no middle-dot separators, no nested cards, no pure
+white panels, body type no smaller than 16px, colour and spacing through `:root` tokens on a 4px
+scale, `:focus-visible` on every control, a `prefers-reduced-motion` fallback, and a build stamp as
+the first line of the stylesheet recording the decisions and the two standing waivers (system font
+stack, no script). The shell and the data tables use the viewport width; prose stays at 65ch.
+
 API requests execute on the host with Java's platform TLS. Secrets come from `${env.NAME}` and
 captured scalar JSON fields use `${var.name}` within the current test only. Reports retain sanitized
 request metadata but never environment values, headers, bodies, or captured values. Device lifecycle

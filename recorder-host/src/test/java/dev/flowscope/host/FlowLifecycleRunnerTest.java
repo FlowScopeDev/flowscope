@@ -64,8 +64,28 @@ class FlowLifecycleRunnerTest {
         assertTrue(adb.commands.stream().anyMatch(command -> command.contains("force-stop")));
         assertTrue(adb.commands.stream().anyMatch(command -> command.contains("revoke")));
         // The verdict names the phase: setup broke, the body never ran, cleanup was clean.
-        assertTrue(runner.failureMessage().startsWith("setup failed · "), runner.failureMessage());
+        assertTrue(runner.failureMessage().startsWith("setup failed: "), runner.failureMessage());
         assertTrue(runner.teardownFailures().isEmpty());
+    }
+
+    @Test
+    void aContinueOnFailureStepFailsTheRunButTheStepsAfterItStillRun() throws Exception {
+        FlowTest test = FlowTestParser.parseSource("""
+            flowscope 1
+            package com.example.debug
+            step api-request method=GET url="https://service.example/health" expect-status=200 \
+              continue-on-failure=true label="Soft health check"
+            step force-stop
+            """, "soft.flow");
+        FakeAdb adb = new FakeAdb();
+        FlowTestRunner runner = new FlowTestRunner(adb, DEVICE, test, temp, "soft",
+            new RecordingHttp(new FlowHttpClient.Response(503, "{}")), Map.of());
+
+        assertFalse(runner.run());
+        assertTrue(adb.commands.stream().anyMatch(command -> command.contains("force-stop")));
+        assertTrue(runner.failureMessage().startsWith("Soft health check: "), runner.failureMessage());
+        String report = Files.readString(runner.root().resolve("report.json"));
+        assertFalse(report.contains("\"status\": \"skipped\""), report);
     }
 
     @Test
@@ -83,7 +103,7 @@ class FlowLifecycleRunnerTest {
         assertFalse(runner.run());
         assertNull(runner.primaryFailure());
         assertEquals(1, runner.teardownFailures().size());
-        assertTrue(runner.failureMessage().startsWith("cleanup failed · "), runner.failureMessage());
+        assertTrue(runner.failureMessage().startsWith("cleanup failed: "), runner.failureMessage());
 
         String report = Files.readString(runner.root().resolve("report.json"));
         assertTrue(report.contains("\"primaryFailure\": null"), report);
@@ -118,7 +138,7 @@ class FlowLifecycleRunnerTest {
         // The regression this change fixes: the single message attribute used to be the only place
         // a failure could land, so the cleanup error vanished from the one artifact CI reads.
         String junit = Files.readString(runner.root().resolve("junit.xml"));
-        assertTrue(junit.contains("cleanup also failed (1)"), junit);
+        assertTrue(junit.contains("Cleanup also failed (1)"), junit);
         assertTrue(junit.contains("test: api-request:"), junit);
         assertTrue(junit.contains("cleanup: api-request:"), junit);
     }
