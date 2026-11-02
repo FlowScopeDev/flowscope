@@ -398,12 +398,21 @@ report their contents as skipped; cleanup still runs. Taps (including field focu
 fail with `Target is covered by <id>` when drawing-order or later-window metadata establishes that
 another branch covers the tap point. Ancestors and the target's own children are excluded; missing
 accessibility drawing metadata cannot establish coverage. `clear-of-id` remains available for that
-case. `scroll-to` defaults to a slower 1000 ms swipe, avoids covered targets, and detects the end from
+case. `scroll-to` defaults to a slower 1000 ms swipe and detects the end from
 scrollable-container children confirmed by a fresh dump. With no identifiable scrollable container,
-it stops at `max-swipes` rather than using unrelated screen content. Scroll targets must clear the
-whole area of later coverers, including system-bar strips. Pure layouts without id, text, description,
-or clickable/focusable semantics cover only through their children. A previously covered target that
-leaves the viewport stops the search with its last covering node and bounds instead of more swipes.
+it stops at `max-swipes` rather than using unrelated screen content.
+
+`scroll-to` matches its selector exactly as `assert-visible` does, checks every observation starting
+before the first swipe, and accepts the match once it sits fully inside the screen and fully inside
+its own scroll container and is clear of later coverers. An element `assert-visible` accepts therefore
+costs no gesture. An element too large to fit the container on one axis only has to span it there,
+so a card taller than its list is still reachable. The scroll container is the target's own scrollable ancestor when it has one, so a
+larger unrelated scrollable pane cannot veto a visible element. Scroll targets must clear the whole
+area of later coverers, including system-bar strips. Pure layouts without id, text, description,
+or clickable/focusable semantics cover only through their children. When a target matches but is not
+accepted, the failure names the last reason — `partly outside the container <bounds>`, `outside the
+screen`, or `covered by <node>` — instead of reporting the element as missing, and a rejected target
+that leaves the viewport stops the search with that reason instead of using up `max-swipes`.
 
 Malformed, empty, and truncated UI dumps are discarded and retried every 400 ms within the polling
 budget. For example, `step wait-visible id=com.example.debug:id/total timeout=60000` tolerates
@@ -425,7 +434,8 @@ skipped steps have none, and capture failures appear as `hierarchyError` without
 Steps report valid `uiDumps`, discarded `uiDumpErrors`, and `uiDumpLastError`. With this flag, the first
 discarded dump per step is saved as redacted `evidence/step-NN-discarded.txt`, and every scroll
 observation as `evidence/step-NN-swipe-MM.xml` (fresh end confirmations add `-confirm`). Details link
-these files and name `coveringNode` and `targetBounds` when coverage is observed.
+these files and name `targetBounds`, `targetRejection`, and `coveringNode` when a scroll target
+matched but was not accepted.
 
 Shared request payloads live in `flowsDir/fixtures`:
 

@@ -628,7 +628,9 @@ public final class Main {
             visible and fails at the end of the content or at max-swipes; from-id starts every swipe at
             that element instead of the screen centre, and clear-of-id keeps swiping while the element
             overlaps any of those (a panel or floating button drawn over the content).
-            scroll-to requires full-area clearance and stops if a covered target leaves the viewport.
+            scroll-to checks from before the first swipe and accepts the same match as assert-visible
+            once it is fully inside the screen and its own scroll container and fully clear of covering
+            nodes; a match it rejects fails with that reason and stops if it leaves the viewport.
             Pure layouts without identity/text/input semantics cover only through their children. End detection compares a scrollable container's
             children and confirms with a fresh dump; without a container it uses max-swipes only.
             Input: press-key key=enter|search|delete|tab|home|app-switch|volume-up|volume-down,

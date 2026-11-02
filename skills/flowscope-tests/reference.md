@@ -39,7 +39,12 @@ before applying `index`. Use it when a sheet repeats IDs from the underlying scr
 
 Tap, tap-if-visible, field focus, clear-text and long-press reject tap points covered by later
 drawing-order branches or windows, naming the covering ID. This is best effort when accessibility
-metadata is missing. `scroll-to` also avoids covered targets. End detection compares scrollable
+metadata is missing. `scroll-to` accepts a target with the same match as `assert-visible` once it is
+fully inside the screen and inside its own scroll container and clear of covering nodes, checking
+before the first swipe, so an already visible element needs no swipe. A target too large to fit an
+axis only has to span it. A match that is not accepted is
+reported with its reason (`partly outside the container`, `outside the screen`, `covered by <node>`),
+and a rejected target that leaves the viewport fails at once. End detection compares scrollable
 container children across fresh dumps, ignoring unrelated clocks; without a container, max-swipes
 is the only stopping limit. `from-id` helps identify the intended container.
 
@@ -212,7 +217,7 @@ checks without a timeout use the test budget to obtain one valid observation. `s
 timeout per observation and `max-swipes` for the search; settle uses 1500 ms. In-flight ADB commands
 have their own bounds. No valid observation is an error, never an absent match. Reports expose
 valid `uiDumps`, discarded `uiDumpErrors`, and `uiDumpLastError`. `--keep-hierarchy` retains the first
-discarded raw text (redacted) and each scroll observation/confirmation. Read `coveringNode` and
-`targetBounds` on a covered failure. Scroll targets must clear the full overlap; a previously covered
-target leaving the viewport fails immediately. Pure layouts without identity/text/input semantics
+discarded raw text (redacted) and each scroll observation/confirmation. Read `targetRejection`,
+`targetBounds` and `coveringNode` on a rejected scroll target. Scroll targets must clear the full
+overlap; a rejected target leaving the viewport fails immediately. Pure layouts without identity/text/input semantics
 cover only through their children; system-bar strips cover only their own area.

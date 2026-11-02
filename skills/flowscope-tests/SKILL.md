@@ -101,6 +101,7 @@ so missing files and path escapes fail early. A covered tap or device-readiness 
 fixed at its source; do not work around it with guessed coordinates or sleeps.
 
 For flaky hierarchy captures, inspect `uiDumpErrors` and `uiDumpLastError` before changing selectors.
-`--keep-hierarchy` retains the first discarded dump and every scroll observation. A covered-target
-failure includes `coveringNode` and `targetBounds`; fix the overlay or scroll scope rather than raising
-`max-swipes` after the target has already left the viewport.
+`--keep-hierarchy` retains the first discarded dump and every scroll observation. A rejected scroll
+target reports `targetRejection` with `targetBounds` (and `coveringNode` when an overlay is to blame);
+fix the overlay or scroll scope rather than raising `max-swipes` after the target has already left
+the viewport.

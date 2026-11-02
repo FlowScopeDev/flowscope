@@ -363,6 +363,81 @@ class FlowGestureActionsTest {
     }
 
     @Test
+    void scrollToAcceptsEveryTargetAVisibilityCheckAccepts() throws Exception {
+        // A zero-area wrapper between the list and the card, and a larger unrelated scroll pane:
+        // neither hides the card from `assert-visible`, so neither may hide it from `scroll-to`.
+        String wrapped = """
+            <hierarchy><node class="android.widget.FrameLayout" bounds="[0,0][1000,2000]">
+              <node resource-id="list" scrollable="true" bounds="[0,200][1000,1800]">
+                <node class="android.view.ViewGroup" bounds="[0,0][0,0]">
+                  <node resource-id="card" bounds="[30,300][960,700]"/>
+                </node>
+              </node>
+            </node></hierarchy>
+            """;
+        String twoPanes = """
+            <hierarchy><node class="android.widget.FrameLayout" bounds="[0,0][1000,2000]">
+              <node drawing-order="1" resource-id="list" scrollable="true" bounds="[0,100][1000,800]">
+                <node resource-id="card" bounds="[30,200][960,400]"/>
+              </node>
+              <node drawing-order="2" resource-id="sheet" scrollable="true" bounds="[0,900][1000,2000]"/>
+            </node></hierarchy>
+            """;
+        for (String hierarchy : List.of(wrapped, twoPanes)) {
+            assertTrue(run(new ScriptedAdb(hierarchy), "step assert-visible id=card"), hierarchy);
+            ScriptedAdb adb = new ScriptedAdb(hierarchy);
+            FlowTestRunner runner = runner(adb, "step scroll-to id=card max-swipes=3");
+            assertTrue(runner.run(), hierarchy + runner.failureMessage());
+            assertEquals(0, adb.swipes, hierarchy);
+        }
+    }
+
+    @Test
+    void scrollToAcceptsATargetTooLargeToFitItsContainer() throws Exception {
+        String tall = """
+            <hierarchy><node class="android.widget.FrameLayout" bounds="[0,0][1000,2000]">
+              <node resource-id="list" scrollable="true" bounds="[0,200][1000,1000]">
+                <node resource-id="card" bounds="[0,%d][1000,%d]"/>
+              </node>
+            </node></hierarchy>
+            """;
+        // Spanning the container is as visible as a card taller than it can ever be.
+        ScriptedAdb spanning = new ScriptedAdb(tall.formatted(100, 1500));
+        FlowTestRunner accepted = runner(spanning, "step scroll-to id=card max-swipes=3");
+        assertTrue(accepted.run(), accepted.failureMessage());
+        assertEquals(0, spanning.swipes);
+        // One that has scrolled half out of the container still has to come back.
+        ScriptedAdb partial = new ScriptedAdb(tall.formatted(500, 1900), tall.formatted(100, 1500));
+        FlowTestRunner scrolled = runner(partial, "step scroll-to id=card max-swipes=3");
+        assertTrue(scrolled.run(), scrolled.failureMessage());
+        assertEquals(1, partial.swipes);
+    }
+
+    @Test
+    void scrollToNamesWhyAMatchedTargetWasRejected() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(decorScreen(1073, 1545, false));
+        FlowTestRunner runner = runner(adb, "step scroll-to id=target max-swipes=1").keepHierarchy(true);
+        assertFalse(runner.run());
+        assertTrue(runner.failureMessage().contains("Target matched on swipes 0\u20131 but was rejected: "
+            + "partly outside the container [0,170][720,1510]"), runner.failureMessage());
+        assertFalse(runner.failureMessage().contains("Element not found"));
+        assertTrue(Files.readString(runner.root().resolve("report.json")).contains("targetRejection"));
+        for (String swipe : List.of("step-01-swipe-00.xml", "step-01-swipe-01.xml")) {
+            assertTrue(Files.exists(runner.root().resolve("evidence/" + swipe)), swipe);
+        }
+    }
+
+    @Test
+    void scrollToStopsWhenARejectedTargetScrollsPastTheContainer() throws Exception {
+        ScriptedAdb adb = new ScriptedAdb(decorScreen(1073, 1545, false), decorScreen(0, 100, false));
+        FlowTestRunner runner = runner(adb, "step scroll-to id=target max-swipes=40");
+        assertFalse(runner.run());
+        assertEquals(1, adb.swipes);
+        assertTrue(runner.failureMessage().contains("partly outside the container"), runner.failureMessage());
+        assertTrue(runner.failureMessage().contains("left the viewport after swipe 1"), runner.failureMessage());
+    }
+
+    @Test
     void aPermanentlyCoveredTargetReportsTheOverlayAtTheSwipeLimit() throws Exception {
         ScriptedAdb adb = new ScriptedAdb(decorScreen(900, 1200, true), decorScreen(500, 800, true));
         FlowTestRunner runner = runner(adb, "step scroll-to id=target max-swipes=1");

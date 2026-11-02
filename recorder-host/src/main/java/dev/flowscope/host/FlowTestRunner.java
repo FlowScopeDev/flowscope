@@ -1265,8 +1265,13 @@ public final class FlowTestRunner {
     }
 
     /**
-     * Swipes until the element is visible. Stops at {@code max-swipes}, or earlier when a swipe leaves
-     * the scroll container children unchanged across fresh dumps (the end of the content), so it can never scroll forever.
+     * Swipes until the element is visible. The target is matched exactly as `assert-visible` matches
+     * it and then has to sit fully inside the screen and inside its scroll container, and be clear of
+     * any overlay; every observation starting with swipe 0 is checked, so an element that is already
+     * visible costs no gesture. A target that matched but was rejected is reported with its last
+     * reason instead of "Element not found". Stops at {@code max-swipes}, earlier when a rejected
+     * target leaves the viewport, and earlier when a swipe leaves the scroll container children
+     * unchanged across fresh dumps (the end of the content), so it can never scroll forever.
      * With {@code from-id} every swipe starts at that element's centre, so a pinned panel over the
      * screen's lower half cannot swallow it. With {@code clear-of-id} (comma-separated ids) the element only counts once it
      * overlaps none of them (panels or floating buttons drawn over the content), so a later tap reaches it.
@@ -1281,73 +1286,61 @@ public final class FlowTestRunner {
         long millis = boundedArg(args, "duration", 1000, FlowTestParser.SWIPE_MIN_MILLIS, FlowTestParser.SWIPE_MAX_MILLIS);
         String previous = null;
         int firstSeen = -1, lastSeen = -1;
-        String lastCover = null;
+        String lastRejection = null;
         if (screenSize == null) screenSize = adb.displaySize(device.serial());
         if (screenSize == null) throw new IOException("Could not determine device size");
-        int[] size = screenSize;
         for (int swipes = 0; ; swipes++) {
             // max-swipes bounds scrolling; timeout bounds obtaining each fresh observation.
             byte[] dump = new HierarchyPoll(timeout).next(false);
-            var nodes = UiHierarchy.parse(dump);
-            var anchor = fromId == null ? null : UiHierarchy.find(nodes, Map.of("id", fromId));
-            var container = scrollContainer(nodes, anchor, args.get("within-id"));
-            var target = UiHierarchy.find(nodes, args);
-            if (target != null) stepDiagnostics.put("targetBounds", UiHierarchy.bounds(target));
             retainSwipe(dump, swipes, false);
-            boolean inView = target != null && inViewport(target, container, size);
-            if (inView) {
-                var cover = scrollCover(target, nodes, args.get("clear-of-id"));
-                if (cover == null) {
-                    rememberSettled(dump);
-                    return Map.of("swipes", "" + swipes);
-                }
+            var look = look(dump, args, fromId);
+            if (look.accepted()) {
+                rememberSettled(dump);
+                return Map.of("swipes", "" + swipes);
+            }
+            if (look.visible()) {
                 if (firstSeen < 0) firstSeen = swipes;
                 lastSeen = swipes;
-                lastCover = UiHierarchy.describe(cover);
-                recordCover(target, cover);
+                lastRejection = look.rejection();
             } else if (firstSeen >= 0) {
-                throw new IllegalStateException("Target seen on swipes " + firstSeen + "–" + lastSeen
-                    + " but covered by " + lastCover + "; it left the viewport after swipe " + swipes);
+                throw new IllegalStateException(rejected(firstSeen, lastSeen, lastRejection)
+                    + "; it left the viewport after swipe " + swipes);
             }
             if (swipes >= maxSwipes) {
-                if (lastCover != null) throw new IllegalStateException("Target seen on swipes " + firstSeen
-                    + "–" + lastSeen + " but covered by " + lastCover + " after " + swipes + " swipes");
+                if (lastRejection != null) throw new IllegalStateException(rejected(firstSeen, lastSeen, lastRejection));
                 throw new IllegalStateException("Element not found after " + swipes + " swipes: " + selectorDescription(args));
             }
-            if (fromId != null && anchor == null) {
+            if (fromId != null && look.anchor() == null) {
                 throw new IllegalStateException("scroll-to start element not found: id=" + fromId);
             }
-            String signature = container == null ? null : UiHierarchy.contentSignature(nodes, container);
+            var anchor = look.anchor();
+            String signature = look.container() == null ? null
+                : UiHierarchy.contentSignature(look.nodes(), look.container());
             if (signature != null && !signature.isEmpty() && signature.equals(previous)) {
                 Thread.sleep(POLL_MILLIS);
                 byte[] confirmation = new HierarchyPoll(timeout).next(false);
                 retainSwipe(confirmation, swipes, true);
-                var confirmedNodes = UiHierarchy.parse(confirmation);
-                var confirmedAnchor = fromId == null ? null : UiHierarchy.find(confirmedNodes, Map.of("id", fromId));
-                var confirmedContainer = scrollContainer(confirmedNodes, confirmedAnchor, args.get("within-id"));
-                var confirmedTarget = UiHierarchy.find(confirmedNodes, args);
-                if (confirmedTarget != null && inViewport(confirmedTarget, confirmedContainer, size)) {
-                    var cover = scrollCover(confirmedTarget, confirmedNodes, args.get("clear-of-id"));
-                    if (cover == null) {
-                        rememberSettled(confirmation);
-                        return Map.of("swipes", "" + swipes);
-                    }
+                var confirmed = look(confirmation, args, fromId);
+                if (confirmed.accepted()) {
+                    rememberSettled(confirmation);
+                    return Map.of("swipes", "" + swipes);
+                }
+                if (confirmed.visible()) {
                     if (firstSeen < 0) firstSeen = swipes;
                     lastSeen = swipes;
-                    lastCover = UiHierarchy.describe(cover);
-                    recordCover(confirmedTarget, cover);
+                    lastRejection = confirmed.rejection();
                 } else if (firstSeen >= 0) {
-                    throw new IllegalStateException("Target seen on swipes " + firstSeen + "–" + lastSeen
-                        + " but covered by " + lastCover + "; it left the viewport after swipe " + swipes);
+                    throw new IllegalStateException(rejected(firstSeen, lastSeen, lastRejection)
+                        + "; it left the viewport after swipe " + swipes);
                 }
-                if (confirmedContainer != null
-                    && signature.equals(UiHierarchy.contentSignature(confirmedNodes, confirmedContainer))) {
+                if (confirmed.container() != null
+                    && signature.equals(UiHierarchy.contentSignature(confirmed.nodes(), confirmed.container()))) {
                     throw new IllegalStateException("Reached the end of the content after " + swipes
-                        + (lastCover == null ? " swipes without finding: " + selectorDescription(args)
-                            : " swipes; target covered by " + lastCover));
+                        + (lastRejection == null ? " swipes without finding: " + selectorDescription(args)
+                            : " swipes; " + rejected(firstSeen, lastSeen, lastRejection)));
                 }
                 // A changed confirmation is the freshest source for the next gesture.
-                anchor = confirmedAnchor;
+                anchor = confirmed.anchor();
                 if (fromId != null && anchor == null)
                     throw new IllegalStateException("scroll-to start element not found: id=" + fromId);
             }
@@ -1357,15 +1350,68 @@ public final class FlowTestRunner {
         }
     }
 
-    private static boolean inViewport(UiHierarchy.UiNode target, UiHierarchy.UiNode container, int[] size) {
+    /** One scroll-to observation: what matched, where it can scroll, and why it is not usable yet. */
+    private record ScrollLook(List<UiHierarchy.UiNode> nodes, UiHierarchy.UiNode anchor,
+        UiHierarchy.UiNode container, UiHierarchy.UiNode target, String rejection, boolean visible) {
+        boolean accepted() { return target != null && rejection == null; }
+    }
+
+    /**
+     * Matches the target exactly as a visibility check does, then decides whether this observation
+     * can end the scroll. The scroll container only bounds the target when it really holds it: the
+     * largest scrollable on screen can belong to another pane, and must not veto a visible element.
+     */
+    private ScrollLook look(byte[] dump, Map<String, String> args, String fromId) throws Exception {
+        var nodes = UiHierarchy.parse(dump);
+        var anchor = fromId == null ? null : UiHierarchy.find(nodes, Map.of("id", fromId));
+        var target = UiHierarchy.find(nodes, args);
+        var container = scrollContainer(nodes, anchor, args.get("within-id"), target);
+        if (target == null) return new ScrollLook(nodes, anchor, container, null, null, false);
+        stepDiagnostics.put("targetBounds", UiHierarchy.bounds(target));
+        var viewport = container != null && UiHierarchy.descendant(target, container) ? container : null;
+        String rejection = rejection(target, viewport, nodes, args.get("clear-of-id"));
+        if (rejection != null) stepDiagnostics.put("targetRejection", redact(rejection));
+        return new ScrollLook(nodes, anchor, container, target, rejection,
+            visible(target, viewport, screenSize));
+    }
+
+    /** Why a matched target cannot end the scroll, or null when it is fully visible and clear. */
+    private String rejection(UiHierarchy.UiNode target, UiHierarchy.UiNode viewport,
+        List<UiHierarchy.UiNode> nodes, String clearOfIds) {
+        if (viewport != null && !inside(target, viewport.left(), viewport.top(), viewport.right(), viewport.bottom()))
+            return "partly outside the container " + UiHierarchy.bounds(viewport);
+        if (!inside(target, 0, 0, screenSize[0], screenSize[1])) return "outside the screen";
+        var cover = scrollCover(target, nodes, clearOfIds);
+        if (cover == null) return null;
+        recordCover(target, cover);
+        return "covered by " + UiHierarchy.describe(cover);
+    }
+
+    private static String rejected(int firstSeen, int lastSeen, String reason) {
+        return "Target matched on " + (firstSeen == lastSeen ? "swipe " + firstSeen
+            : "swipes " + firstSeen + "\u2013" + lastSeen) + " but was rejected: " + reason;
+    }
+
+    /**
+     * Full containment, except along an axis the node is too large to fit on: an element taller than
+     * its scroll container can never be contained, and spanning the viewport is as visible as it gets.
+     */
+    private static boolean inside(UiHierarchy.UiNode node, int left, int top, int right, int bottom) {
+        boolean horizontal = node.right() - node.left() >= right - left
+            ? node.left() <= left && node.right() >= right
+            : node.left() >= left && node.right() <= right;
+        boolean vertical = node.bottom() - node.top() >= bottom - top
+            ? node.top() <= top && node.bottom() >= bottom
+            : node.top() >= top && node.bottom() <= bottom;
+        return horizontal && vertical;
+    }
+
+    /** Whether any part of the target still shows, which decides when it has scrolled past. */
+    private static boolean visible(UiHierarchy.UiNode target, UiHierarchy.UiNode viewport, int[] size) {
         int left = 0, top = 0, right = size[0], bottom = size[1];
-        for (var parent = target.parent(); parent != null; parent = parent.parent()) {
-            left = Math.max(left, parent.left()); top = Math.max(top, parent.top());
-            right = Math.min(right, parent.right()); bottom = Math.min(bottom, parent.bottom());
-        }
-        if (container != null) {
-            left = Math.max(left, container.left()); top = Math.max(top, container.top());
-            right = Math.min(right, container.right()); bottom = Math.min(bottom, container.bottom());
+        if (viewport != null) {
+            left = Math.max(left, viewport.left()); top = Math.max(top, viewport.top());
+            right = Math.min(right, viewport.right()); bottom = Math.min(bottom, viewport.bottom());
         }
         return right > left && bottom > top && target.right() > left && target.left() < right
             && target.bottom() > top && target.top() < bottom;
@@ -1389,13 +1435,20 @@ public final class FlowTestRunner {
     }
 
     private static UiHierarchy.UiNode scrollContainer(List<UiHierarchy.UiNode> nodes,
-        UiHierarchy.UiNode anchor, String withinId) {
+        UiHierarchy.UiNode anchor, String withinId, UiHierarchy.UiNode target) {
         if (anchor != null) {
             for (var node = anchor; node != null; node = node.parent()) if (node.scrollable()) return node;
         }
         if (withinId != null) {
             var scope = UiHierarchy.find(nodes, Map.of("id", withinId));
             if (scope != null && scope.scrollable()) return scope;
+        }
+        // The target's own scroll parent, when it has one, beats the largest scrollable on screen.
+        if (target != null) {
+            for (var node = target.parent(); node != null; node = node.parent()) {
+                if (node.scrollable() && (withinId == null || node.id().equals(withinId)
+                    || node.matches(Map.of("within-id", withinId)))) return node;
+            }
         }
         return nodes.stream().filter(n -> n.scrollable() && n.hasArea())
             .filter(n -> withinId == null || n.id().equals(withinId) || n.matches(Map.of("within-id", withinId)))

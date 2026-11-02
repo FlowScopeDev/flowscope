@@ -170,8 +170,14 @@ step descriptions, and JUnit failure details and suite case names use labels whe
 Transient malformed hierarchy dumps now retry within their observation budget. Per-step `uiDumps`
 counts successfully parsed dumps; additive `uiDumpErrors` and `uiDumpLastError` distinguish discarded
 captures and their last error. Schema version 2 is unchanged. Optional detail keys
-`discardedHierarchy`, `swipeHierarchy<N>` (and `-confirm` variants), `coveringNode`, and `targetBounds`
-provide redacted evidence links and coverage diagnostics; evidence failures use corresponding
-`Error` details. No `.flow` syntax or exit-code changes. `scroll-to` now requires full-area clearance
-and stops when a previously covered target leaves the viewport. Pure layouts cover only through
+`discardedHierarchy`, `swipeHierarchy<N>` (and `-confirm` variants), `coveringNode`, `targetBounds`,
+and `targetRejection` provide redacted evidence links and coverage diagnostics; evidence failures use
+corresponding `Error` details. No `.flow` syntax or exit-code changes. `scroll-to` now requires
+full-area clearance and stops when a rejected target leaves the viewport.
+
+`scroll-to` accepts a target using the same match as `assert-visible` plus full containment in the
+screen and in the target's own scroll container, so an already visible element completes with zero
+swipes; an unrelated scrollable pane no longer bounds the target. A target that matched but was not
+accepted fails with its last reason rather than `Element not found`. Failure message text is
+diagnostic, not a compatibility surface; exit codes and report schema 2 are unchanged. Pure layouts cover only through
 children unless they have id/text/description/clickable/focusable semantics.

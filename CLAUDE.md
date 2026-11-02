@@ -393,5 +393,8 @@ uses that budget per observation and max-swipes for the search. Settle uses its 
 Keep uiDumps (valid), uiDumpErrors, and uiDumpLastError per step. With keep-hierarchy, retain the
 first discarded text and every swipe/confirmation dump, redacting runtime values including XML
 references. Pure layout containers cover only through descendants unless they have id/text/desc or
-clickable/focusable semantics. Scroll targets clear full overlapping bounds; stop if a previously
-covered target leaves the viewport and report the coverer's metadata and last target bounds.
+clickable/focusable semantics. Scroll targets clear full overlapping bounds. `scroll-to` accepts the
+same match as `assert-visible`, from swipe 0, once the target lies fully inside the screen and fully
+inside its own scrollable ancestor (a larger unrelated scrollable never bounds it) and is uncovered;
+a rejected match keeps its reason, fails with it instead of `Element not found`, and stops as soon as
+it leaves the viewport. Report `targetRejection`, `targetBounds` and the coverer's metadata.

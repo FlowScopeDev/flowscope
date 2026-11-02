@@ -67,6 +67,18 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 - Selectors skip nodes with no area. Compose reports a node scrolled out of its viewport as
   `[0,0][0,0]`, which made `assert-visible` and `scroll-to` treat an off-screen element as visible.
 
+- `scroll-to` rejected elements `assert-visible` accepts, failing with `Element not found after N
+  swipes` while swiping away from a target that was on screen the whole time. It judged visibility by
+  intersecting every ancestor's bounds, so one zero-area wrapper hid the element, and it scoped the
+  target to the largest scrollable on screen, which can belong to another pane. It now uses the same
+  match as `assert-visible` and accepts the target — from the check before the first swipe — once it
+  lies fully inside the screen and fully inside its own scrollable ancestor and is uncovered.
+
+- A `scroll-to` target that matched but was not accepted now fails with the reason (`partly outside
+  the container <bounds>`, `outside the screen`, or `covered by <node>`) and the swipes it was seen
+  on, instead of claiming the element does not exist, and stops as soon as a rejected target leaves
+  the viewport rather than using up `max-swipes`. Reports add the `targetRejection` detail.
+
 ## [1.0.0] - 2026-10-19
 
 First public release: record Android UI flows from a desktop IDE or the CLI and replay them as
