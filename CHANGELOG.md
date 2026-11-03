@@ -10,7 +10,20 @@ released from `agent-v*` tags. This file tracks the desktop app, CLI and file fo
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-03
+
 ### Added
+
+- **Saved execution plans run tests on several devices at once.** A `.runplan.json` names projects,
+  binds each device role to an ordered queue of `.flow`/`.suite` jobs, and
+  `flowscope plan validate|show|run` executes it, one queue per device with bounded parallelism.
+  A failed job stops only its own queue unless `continueOnFailure` is set. Each job keeps its usual
+  report; the plan adds an `execution-report.json` (schema 1, `kind=execution`) with job counts and
+  JUnit. See `examples/flows/plans/devices.runplan.json`.
+- Test runs, suite runs and recordings reserve their device across FlowScope processes, so a second
+  run against the same serial fails before touching the device instead of interleaving with the first.
+- IDE: project tabs, each with its own device session, and an assignment view that edits and runs
+  saved plans with a per-device Stop. Open tabs are restored on launch without restarting any work.
 
 - **`continue-on-failure=true` on a step** fails the test when that step fails but keeps running
   the steps after it, so one wrong label does not hide every check behind it. It is accepted on
@@ -167,5 +180,6 @@ What 1.x promises not to break is written down in [COMPATIBILITY.md](COMPATIBILI
   unavoidable by configuration. Working, it shrank the app jars by 7.3 MiB, about 5% of a bundle
   that carries its own JDK. Re-test it with `-Pflowscope.proguard=true` (needs Gradle 8 for now).
 
-[Unreleased]: https://github.com/FlowScopeDev/flowscope/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/FlowScopeDev/flowscope/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/FlowScopeDev/flowscope/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/FlowScopeDev/flowscope/releases/tag/v1.0.0

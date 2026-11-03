@@ -72,8 +72,8 @@ Two ways, depending on whether you want a release or the working tree.
 and put its `bin/` on your `PATH`:
 
 ```bash
-unzip flowscope-cli-1.0.0.zip
-export PATH="$PWD/flowscope-1.0.0/bin:$PATH"
+unzip flowscope-cli-1.1.0.zip
+export PATH="$PWD/flowscope-1.1.0/bin:$PATH"
 flowscope version
 ```
 
@@ -91,8 +91,8 @@ The CLI needs a Java 21 runtime on the machine. The desktop app does not: its ru
 Every release asset has a `.sha256` file beside it holding one line of hex.
 
 ```bash
-shasum -a 256 FlowScope-1.0.0.dmg
-cat FlowScope-1.0.0.dmg.sha256
+shasum -a 256 FlowScope-1.1.0.dmg
+cat FlowScope-1.1.0.dmg.sha256
 ```
 
 The two strings must match. The release notes list both checksums as well, so you can compare
