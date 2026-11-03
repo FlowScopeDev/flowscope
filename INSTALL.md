@@ -86,6 +86,9 @@ export PATH="$PWD/recorder-host/build/install/flowscope/bin:$PATH"
 
 The CLI needs a Java 21 runtime on the machine. The desktop app does not: its runtime is bundled.
 
+Every command, and how to set up the agent skill, is in
+[CLI.md](CLI.md).
+
 ## Verifying a download
 
 Every release asset has a `.sha256` file beside it holding one line of hex.

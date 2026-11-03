@@ -8,13 +8,27 @@ Skills that teach a coding agent how to work with FlowScope in a project that us
 
 ## Claude Code
 
-Copy the folder into the project (shared with the team through Git) or into your home directory:
+Put the folder in the project (shared with the team through Git) or in your home directory. Without
+a clone of this repository, download the copy that matches your installed CLI:
+
+```bash
+v=$(flowscope version | awk '{print $2}')
+mkdir -p .claude/skills/flowscope-tests
+for f in SKILL.md reference.md; do
+  curl -fsSL -o ".claude/skills/flowscope-tests/$f" \
+    "https://raw.githubusercontent.com/FlowScopeDev/flowscope/v$v/skills/flowscope-tests/$f"
+done
+# or, for every project: ~/.claude/skills/flowscope-tests
+```
+
+From a clone, copy it instead:
 
 ```bash
 mkdir -p .claude/skills
 cp -R /path/to/flowscope/skills/flowscope-tests .claude/skills/
-# or, for every project: ~/.claude/skills/
 ```
+
+Every CLI command is listed in [CLI.md](../CLI.md).
 
 Claude loads it when you ask for a UI test ("add a test for the login screen"), or run it
 explicitly with `/flowscope-tests`.

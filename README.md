@@ -694,6 +694,8 @@ Switching projects switches everything that belongs to a project:
 To have Claude Code, Codex or another agent write tests for your app, copy the
 [`flowscope-tests` skill](skills/README.md) into your project. It covers finding real selectors from
 a snapshot, writing, validating and running `.flow` files, and the rules that keep them durable.
+[CLI.md](CLI.md) has every command on one page and the download
+commands for the skill, which need no clone of this repository.
 
 Agents should discover capabilities instead of guessing syntax:
 
