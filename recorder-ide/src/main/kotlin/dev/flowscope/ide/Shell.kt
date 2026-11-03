@@ -149,7 +149,7 @@ internal fun SessionBar(
 
     Column(Modifier.fillMaxWidth().background(Ink150)) {
       // Drag strip; the traffic lights float here on macOS. Zero height elsewhere.
-      Spacer(Modifier.fillMaxWidth().height(TitleStripHeight))
+      // The workspace project tabs already reserve the macOS title-bar inset.
       Row(
         Modifier.fillMaxWidth().height(44.dp).padding(start = 16.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -199,86 +199,6 @@ internal fun SessionBar(
         Box(Modifier.width(1.dp).height(20.dp).background(Ink300))
         Spacer(Modifier.width(14.dp))
 
-        // Project — the outermost context, so it sits left of the device.
-        ProjectChip(project)
-
-        Spacer(Modifier.width(10.dp))
-
-        // Device — a chip, not a pill button with a typed-in caret.
-        Box {
-            ChromeChip(
-                label = selected?.let { "${it.displayName()} · ${shortSerial(it.serial())}" } ?: "No device",
-                enabled = !recording,
-                leading = { Box(Modifier.size(6.dp).clip(CircleShape).background(if (selected != null) SignalGreen else SignalRed)) },
-                onClick = { deviceMenu = true },
-            )
-            DropdownMenu(expanded = deviceMenu, onDismissRequest = { deviceMenu = false }) {
-                DropdownMenuItem(
-                    text = { Text("Rescan devices", color = TextHi, fontSize = 12.sp) },
-                    enabled = !busy,
-                    onClick = { onRefresh(); deviceMenu = false },
-                )
-                HorizontalDivider(color = Ink300)
-                if (devices.isEmpty()) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (avds.isEmpty()) "No devices found" else "No devices. Start an emulator below",
-                                color = TextMid,
-                                fontSize = 12.sp,
-                            )
-                        },
-                        onClick = { deviceMenu = false },
-                    )
-                } else {
-                    devices.forEach { device ->
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(device.displayName(), color = TextHi, fontSize = 12.sp)
-                                    Text(
-                                        device.serial(),
-                                        color = TextMid,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp,
-                                    )
-                                }
-                            },
-                            onClick = { onDeviceSelected(device); deviceMenu = false },
-                        )
-                    }
-                }
-                if (!emulatorAvailable) {
-                    HorizontalDivider(color = Ink300)
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "No emulator found. Install the SDK emulator or set ANDROID_HOME",
-                                color = TextMid,
-                                fontSize = 11.sp,
-                                modifier = Modifier.widthIn(max = 300.dp),
-                            )
-                        },
-                        enabled = false,
-                        onClick = {},
-                    )
-                } else if (avds.isNotEmpty()) {
-                    HorizontalDivider(color = Ink300)
-                    Text(
-                        "EMULATORS",
-                        color = TextMid,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        letterSpacing = 1.2.sp,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                    avds.forEach { avd -> AvdRow(avd, showDisplay, onStartAvd, onStopAvd) }
-                }
-            }
-        }
-
-        Spacer(Modifier.width(10.dp))
-
         // Application ID — a search over what is actually installed on the selected device.
         var packageFocused by remember { mutableStateOf(false) }
         var fieldSize by remember { mutableStateOf(IntSize.Zero) }
@@ -317,7 +237,7 @@ internal fun SessionBar(
                 BasicTextField(
                     value = packageName,
                     onValueChange = onPackageNameChanged,
-                    enabled = !recording,
+                    enabled = !recording && !busy,
                     singleLine = true,
                     textStyle = TextStyle(
                         color = when {
@@ -426,6 +346,58 @@ internal fun SessionBar(
 
         Spacer(Modifier.width(10.dp))
 
+        // Context actions stay available without repeating the selected tabs.
+        ProjectChip(project, label = "Project actions")
+
+        Spacer(Modifier.width(10.dp))
+
+        // Device maintenance: discovery and emulator lifecycle, not session selection.
+        Box {
+            ChromeChip(
+                label = "Device tools",
+                enabled = !recording && !busy,
+                leading = { Box(Modifier.size(6.dp).clip(CircleShape).background(if (selected != null) SignalGreen else SignalRed)) },
+                onClick = { deviceMenu = true },
+            )
+            DropdownMenu(expanded = deviceMenu, onDismissRequest = { deviceMenu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Rescan devices", color = TextHi, fontSize = 12.sp) },
+                    enabled = !busy,
+                    onClick = { onRefresh(); deviceMenu = false },
+                )
+                HorizontalDivider(color = Ink300)
+                if (!emulatorAvailable) {
+                    HorizontalDivider(color = Ink300)
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "No emulator found. Install the SDK emulator or set ANDROID_HOME",
+                                color = TextMid,
+                                fontSize = 11.sp,
+                                modifier = Modifier.widthIn(max = 300.dp),
+                            )
+                        },
+                        enabled = false,
+                        onClick = {},
+                    )
+                } else if (avds.isNotEmpty()) {
+                    HorizontalDivider(color = Ink300)
+                    Text(
+                        "EMULATORS",
+                        color = TextMid,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.2.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                    avds.forEach { avd -> AvdRow(avd, showDisplay, onStartAvd, onStopAvd) }
+                }
+            }
+        }
+
+        Spacer(Modifier.width(10.dp))
+
+
         // Beside the target it runs against, the way an IDE puts run next to its configuration.
         RunButton(run)
 
@@ -434,7 +406,7 @@ internal fun SessionBar(
         Box {
             ChromeChip(
                 label = if (captureMode == CaptureMode.ZERO_CODE) "ZERO-CODE" else "INSTRUMENTED",
-                enabled = !recording,
+                enabled = !recording && !busy,
                 mono = true,
                 onClick = { modeMenu = true },
             )
@@ -1587,13 +1559,13 @@ internal fun CopyButton(label: String, value: String) {
  * rather than a dozen parameters — `SessionBar` is already at its limit.
  */
 @Composable
-internal fun ProjectChip(chrome: ProjectChrome) {
+internal fun ProjectChip(chrome: ProjectChrome, label: String = chrome.label) {
     var menu by remember { mutableStateOf(false) }
     var pathDraft by remember { mutableStateOf("") }
 
     Box {
         ChromeChip(
-            label = chrome.label,
+            label = label,
             enabled = true,
             leading = {
                 Box(

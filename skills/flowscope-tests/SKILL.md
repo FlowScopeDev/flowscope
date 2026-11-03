@@ -105,3 +105,14 @@ For flaky hierarchy captures, inspect `uiDumpErrors` and `uiDumpLastError` befor
 target reports `targetRejection` with `targetBounds` (and `coveringNode` when an overlay is to blame);
 fix the overlay or scroll scope rather than raising `max-swipes` after the target has already left
 the viewport.
+
+## Multiple projects and devices
+
+For explicit assignments use a versioned .runplan.json (see reference.md), validate/show it before
+running, and bind each device role with repeatable --device role=serial. Assign individual tests
+or intact suites; preserve suite hook/variable semantics. Each project retains its own secrets and
+reports. Do not replace existing single-device workflows when no execution plan is needed.
+
+The desktop supports project tabs and device sessions. Its Assignments view runs saved .flow files
+and complete suites through the same host plan runner. Save edits before queueing tests; do not
+split suite hooks across devices. Use queue/whole-execution Stop controls and wait for cleanup.

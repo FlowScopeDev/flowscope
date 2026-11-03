@@ -130,6 +130,13 @@ public final class FlowSuiteRunner {
     FlowSuiteRunner(AdbClient adb, Device device, FlowSuite suite, Path suiteFile,
         FlowProject project, Path outputRoot, FlowHttpClient http,
         Map<String, String> environment, Map<String, String> secretSources) throws IOException {
+        this(adb, device, suite, suiteFile, project, outputRoot, http, environment, secretSources, null);
+    }
+
+    FlowSuiteRunner(AdbClient adb, Device device, FlowSuite suite, Path suiteFile,
+        FlowProject project, Path outputRoot, FlowHttpClient http,
+        Map<String, String> environment, Map<String, String> secretSources,
+        List<FlowTest> frozenChildren) throws IOException {
         this.adb = adb;
         this.device = device;
         this.suite = suite;
@@ -137,7 +144,17 @@ public final class FlowSuiteRunner {
             ? project.relativize(suiteFile)
             : suiteFile.toAbsolutePath().normalize().toString();
         this.projectRootLabel = project != null ? project.root().toString() : null;
-        this.resolved = resolve(suite, suiteFile, project);
+        if (frozenChildren == null) this.resolved = resolve(suite, suiteFile, project);
+        else {
+            if (frozenChildren.size() != suite.entries().size()) throw new IllegalArgumentException("Suite snapshot does not match entries");
+            var frozen = new ArrayList<Resolved>();
+            for (int i = 0; i < frozenChildren.size(); i++) {
+                FlowTest child = frozenChildren.get(i);
+                frozen.add(new Resolved(suite.entries().get(i), child,
+                    String.format("%02d-%s", i + 1, RunDirectories.sanitize(child.name()))));
+            }
+            this.resolved = List.copyOf(frozen);
+        }
         this.root = RunDirectories.create(outputRoot, suite.name());
         this.sourceDirectory = suiteFile.toAbsolutePath().normalize().getParent();
         this.http = http;
@@ -238,6 +255,10 @@ public final class FlowSuiteRunner {
     }
 
     public boolean run() throws Exception {
+        return ExecutionCoordinator.withDevice(device.serial(), this::runReserved);
+    }
+
+    private boolean runReserved() throws Exception {
         FlowFiles.validate(sourceDirectory, suite.hooks());
         for (Resolved child : resolved) FlowFiles.validate(child.test().sourceDirectory(), child.test().steps());
         Instant started = Instant.now();
@@ -312,7 +333,7 @@ public final class FlowSuiteRunner {
                 continue;
             }
 
-            System.out.printf("TEST %02d/%02d  %s%n", number, total, current.entry().displayName(current.entry().reference()));
+            RunOutput.out("TEST %02d/%02d  %s%n", number, total, current.entry().displayName(current.entry().reference()));
             reportProgress(progressFile, new Progress(number, total, current.entry().reference(), "running", current.entry().label()));
 
             Instant testStarted = Instant.now();
@@ -352,7 +373,7 @@ public final class FlowSuiteRunner {
                 current.entry().reference(), current.test().name(), status, elapsed,
                 current.directoryName() + "/report.json", error, teardownErrors, screenshots, current.entry().label()));
 
-            System.out.printf("DONE %02d/%02d  %s · %s · %.1fs%n",
+            RunOutput.out("DONE %02d/%02d  %s · %s · %.1fs%n",
                 number, total, status, current.entry().displayName(current.test().name()), elapsed / 1000.0);
             reportProgress(progressFile, new Progress(number, total, current.entry().reference(), status, current.entry().label()));
 
@@ -375,7 +396,7 @@ public final class FlowSuiteRunner {
 
         Totals totals = totals(outcomes);
         boolean allPassed = !isCancelled() && setupPassed && cleanupPassed && totals.failed() == 0 && totals.skipped() == 0;
-        System.out.printf("SUITE %s · %d passed · %d failed · %d skipped · %d total%n",
+        RunOutput.out("SUITE %s · %d passed · %d failed · %d skipped · %d total%n",
             isCancelled() ? "cancelled" : allPassed ? "passed" : "failed",
             totals.passed(), totals.failed(), totals.skipped(), totals.total());
         return allPassed;
@@ -392,7 +413,7 @@ public final class FlowSuiteRunner {
         } catch (Exception unwritable) {
             String cause = unwritable.getMessage() == null
                 ? unwritable.getClass().getSimpleName() : unwritable.getMessage();
-            System.err.println("WARN could not write suite-report.pdf: " + cause
+            RunOutput.err("%s%n", "WARN could not write suite-report.pdf: " + cause
                 + " (suite-report.json, suite-report.html and junit.xml were written)");
         }
     }

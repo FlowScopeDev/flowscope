@@ -68,3 +68,13 @@ private fun chooseWithSwing(parent: Frame?, title: String): Path? = runCatching 
     if (chooser.showOpenDialog(parent) != JFileChooser.APPROVE_OPTION) return null
     chooser.selectedFile?.toPath()?.toAbsolutePath()?.normalize()
 }.getOrNull()
+
+/** Native save picker: the user chooses the shared plan's destination. */
+internal fun chooseSavePlan(parent: Frame?): Path? = runCatching {
+    val dialog = FileDialog(parent, "Save execution plan", FileDialog.SAVE)
+    dialog.file = "regression.runplan.json"
+    dialog.isVisible = true
+    val directory = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    Path.of(directory, if (file.endsWith(".runplan.json")) file else "$file.runplan.json")
+}.getOrNull()

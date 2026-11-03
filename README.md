@@ -782,3 +782,132 @@ license.
 - [FFmpeg](https://ffmpeg.org) decodes scrcpy's H.264 stream. Its license (LGPL or GPL) depends on how
   your copy was built.
 - Android platform tools (`adb`) and the SDK's `apkanalyzer` are used as installed on your machine.
+
+### Device ownership and execution coordination
+
+Test runs, complete suite runs, and recordings reserve their device across FlowScope
+processes using OS file locks under `~/.flowscope/device-locks/`. A competing operation
+fails before device work starts. Locks release after cleanup/reporting, or on process
+exit; permanent lock files must not be deleted to recover ownership. Suite children
+share their parent's reservation. Existing single-device commands are unchanged.
+
+The host `ExecutionCoordinator` provides ordered per-device queues, bounded concurrency
+across devices, unique device assignments and all-device reservation before jobs start.
+Queue failure stops only that queue unless continue-on-failure is selected. Saved execution
+plans, CLI commands and desktop assignment controls use this coordinator. Desktop project tabs
+own independent device sessions. Manual input and inspection from other processes are not yet
+covered by reservations.
+
+### Saved execution plans and multiple devices
+
+Use a `.runplan.json` file to assign different tests to device queues, within one project or
+across several projects. Device roles are portable names; provide the actual serials when running.
+Each device runs its jobs in order, while different devices run concurrently.
+
+```json
+{
+  "version": 1,
+  "name": "Customer and agent regression",
+  "projects": {
+    "customer": "../customer-tests",
+    "agent": "../agent-tests"
+  },
+  "maxParallel": 3,
+  "queues": [
+    {"project": "customer", "device": "login-phone",
+     "jobs": ["login.flow", "profile.flow"]},
+    {"project": "customer", "device": "payment-phone",
+     "jobs": ["checkout.flow", "payments.flow"]},
+    {"project": "agent", "device": "agent-phone",
+     "continueOnFailure": false, "jobs": ["regression.suite"]}
+  ]
+}
+```
+
+```bash
+flowscope plan validate regression.runplan.json
+flowscope plan show regression.runplan.json
+flowscope plan run regression.runplan.json \
+  --device login-phone=SERIAL_A \
+  --device payment-phone=SERIAL_B \
+  --device agent-phone=SERIAL_C \
+  --output ./execution-results
+```
+
+A working two-device example is `examples/flows/plans/devices.runplan.json`:
+
+```bash
+flowscope plan validate examples/flows/plans/devices.runplan.json
+flowscope plan run examples/flows/plans/devices.runplan.json \
+  --device xml-phone=SERIAL_A --device compose-phone=SERIAL_B
+```
+
+`validate` and `show` do not require ADB, connected devices, or secret values and do not write
+reports. They validate every test and every suite child before execution. Project paths resolve
+relative to the plan file, allowing `..` for sibling projects. Job references resolve within their
+owning project using the existing test/suite lookup ladder; they require `.flow` or `.suite`, must
+use forward slashes, and cannot contain `..`, absolute paths, or symlinks outside the project.
+Project aliases and device roles start with a letter and contain letters, digits, `_` or `-`
+(up to 64 characters). Unknown and duplicate JSON keys are errors. Plans contain literal metadata,
+not secret values, runtime expressions, or fixed serials.
+
+Bind every role exactly once, with distinct serials. Project-default serials are not used for plan
+assignments. All devices must be connected, authorized and reservable before any job starts.
+`--max-parallel N` overrides the plan's concurrency limit (the default is the number of queues).
+A failed job stops its queue unless that queue sets `continueOnFailure: true`; other queues
+continue. A disconnected device always stops its queue, including with continue-on-failure.
+There is no retry or automatic device substitution. Suites run intact with their existing hooks,
+variables, internal ordering and failure policy; a suite is never split across devices.
+
+Each project loads its own `flows/.secrets` (or configured flows directory). A repeatable
+`--secrets-file customer=/local/customer.env` option overrides a project's source; environment values
+still take precedence. Plans and aggregate reports never contain secret values or raw exception
+messages. Required environment and secret references are checked across all queues before work
+starts; suite variable values are resolved after that suite's setup.
+
+Output lines are attributed with `[project/device-role]`. Each execution uses a unique ID; child
+reports stay under each project's `reports/<execution-id>/<device-role>/<job-number>/`.
+The aggregate `execution-report.json`, `.html`, `.pdf`, and `junit.xml` go under
+`--output/<execution-id>/`, or `~/.flowscope/executions/<execution-id>/` by default. Aggregate counts
+and JUnit entries describe assigned jobs: an intact suite counts as one job. JSON includes each
+project, role, serial, capture modes, status, failure category, and child report location. HTML
+links point to local child reports; copying the aggregate alone does not copy project evidence.
+PDF failure is best effort and does not change the execution's verdict.
+
+Exit codes remain `0` for success, `1` for failed execution and `2` for invalid plans, bindings,
+missing devices or busy-device preflight. Existing `test run` and `suite run` commands work as before.
+Desktop project tabs and assignment controls use the same saved-plan runner.
+
+### Desktop projects, device sessions and assignments
+
+Open projects with **Open project…** or the existing project menu. Each project gets its own tab;
+opening one already present focuses it. Inside a project use **Add device…**, or choose another
+device in the existing device selector, to create or focus that device's session. Each session
+retains its own editor buffer, recording, timeline, evidence, inspection and performance state.
+Switching tabs keeps recordings and tests running. Only the visible session streams its preview.
+Editors reject a save if the file has changed in another session; reopen it or use Save as.
+
+Open **Assignments** to distribute saved tests and complete suites across device queues:
+
+1. Select files under a project and choose **Add selected** on a device's queue.
+2. Use **Choose device…** to bind an imported queue, and **Up**, **Down** or **Remove** to edit order.
+3. Choose **Run assignments** to run queues concurrently. Each device runs its queue sequentially.
+4. Use **Details** for a job's live steps/evidence, **Stop queue** for one device, **Stop all** for
+   the execution, or **Open report** for the aggregate result.
+
+**Save plan…** writes a portable CLI-compatible .runplan.json; **Load plan…** restores its queues
+without binding them to your devices automatically. Bind every queue explicitly before running.
+The desktop uses each project's selected secrets file or its normal project default. A device
+reserved by another open session or the assignment execution cannot start conflicting work.
+Assignments run the saved file contents; save edits before assigning/running them.
+
+Open project tabs, device bindings, assignment order and failure policies are remembered locally
+under ~/.flowscope/. On restart, recordings and executions remain stopped. Closing a session,
+project or the application offers save/discard/cancel; active owned work stops and finishes cleanup
+and reports before disposal. A session reserved by a running assignment plan must stay open until
+that execution releases it. Existing standalone scratch, recording and single-test/suite controls
+remain available in each session. Cancellation retains real cleanup failures in child reports.
+
+Desktop navigation uses compact project/device tabs with attached close controls, active underlines,
+and fixed actions on the right. The session toolbar retains project actions and device tools
+(rescan/emulators) without repeating the selected project and device.

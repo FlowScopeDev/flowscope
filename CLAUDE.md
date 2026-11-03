@@ -53,6 +53,10 @@ flowscope snapshot --package <id> --mode zero-code|instrumented [--serial <id>]
 flowscope web inspect --package <id> [--serial <id>] [--page <match>]
                       [--mode zero-code|instrumented] [--format text|json]
 flowscope schema
+flowscope plan validate|show <file.runplan.json>
+flowscope plan run <file.runplan.json> --device <role>=<serial> [--device ...]
+                   [--max-parallel <count>] [--output <dir>] [--keep-hierarchy]
+                   [--secrets-file <project>=<path> ...]
 flowscope project init [<dir>] [--name <name>] [--package <id>]
                        [--mode zero-code|instrumented] [--timeout <ms>] [--serial <id>]
                        [--suite <file.suite>]
@@ -441,3 +445,62 @@ same match as `assert-visible`, from swipe 0, once the target lies fully inside 
 inside its own scrollable ancestor (a larger unrelated scrollable never bounds it) and is uncovered;
 a rejected match keeps its reason, fails with it instead of `Element not found`, and stops as soon as
 it leaves the viewport. Report `targetRejection`, `targetBounds` and the coverer's metadata.
+
+### Device ownership and execution coordination
+
+Test runs, complete suite runs, and recordings reserve their device across FlowScope
+processes using OS file locks under `~/.flowscope/device-locks/`. A competing operation
+fails before device work starts. Locks release after cleanup/reporting, or on process
+exit; permanent lock files must not be deleted to recover ownership. Suite children
+share their parent's reservation. Existing single-device commands are unchanged.
+
+The host `ExecutionCoordinator` provides ordered per-device queues, bounded concurrency
+across devices, unique device assignments and all-device reservation before jobs start.
+Queue failure stops only that queue unless continue-on-failure is selected. Saved execution
+plans, CLI commands and desktop assignment controls use this coordinator. Desktop project tabs
+own independent device sessions. Manual input and inspection from other processes are not yet
+covered by reservations.
+
+### Saved execution plans
+
+`.runplan.json` version 1 uses the strict Json parser: version, name, projects (alias to relative
+project directory), queues (project, device role, ordered jobs, optional continueOnFailure), and
+optional maxParallel. Project paths are relative to the plan; job references use project resolution,
+require .flow/.suite and cannot escape their project, including symlinks. One queue per role, every
+role bound explicitly to a distinct serial. Reject unknown keys, duplicate keys and expressions.
+Validate/show perform no ADB access, secret discovery or writes. Run freezes parsed tests and suite
+children, resolves project secrets independently and checks required sources before mutation.
+Suites stay intact. Output is attributed per project/role without swapping global streams.
+
+ExecutionPlanRunner prepares runners, invokes ExecutionCoordinator and writes aggregate reports.
+Unique execution IDs and role/job directories isolate child outputs in each project's reportsDir.
+Aggregate outputs default to ~/.flowscope/executions, or an explicitly selected CLI output root.
+execution-report.json schemaVersion 1 is a separate kind=execution contract; existing child schema 2
+is unchanged. Aggregate counts/JUnit entries are jobs, not suite child counts. Aggregate failures use
+fixed categories, never raw exception text or runtime values. A disconnect stops that queue even
+with continueOnFailure. PDF generation is best effort. Invalid plan/bindings/device preflight exit 2;
+executed job failures exit 1. Keep the schema command, README, COMPATIBILITY and authoring skill aligned.
+
+### Desktop workspace ownership
+
+DesktopWorkspace owns project tabs and DesktopSession owners. Session owners retain independent
+ProjectState/AuthoringState/SessionState/DeviceState/ShellState, timeline and performance state.
+FlowScopeApp stays composed for every owner; only the selected owner emits UI. Never key worker
+lifetimes to tab visibility. Gate preview streams by visibility, tag decoded frames by serial, and
+reject late device/package results. Discovery is shared by the workspace; sessions consume its
+latest poll. Reopening a project/device focuses its existing owner. An imported queue remains
+unbound until explicit device selection. Do not silently substitute disconnected devices.
+
+AssignmentSurface edits saved-file queues and uses ExecutionPlan.save/read plus ExecutionPlanRunner.
+Local workspace state under ~/.flowscope/desktop-workspaces.txt records roots, serials, roles and
+assignment paths/policies, never runtime values. Restore opens tabs but never restarts work.
+ExecutionCancellation owns per-role RunCancellation signals; queued jobs skip after stop, active
+jobs finish cleanup/reporting, unrelated roles continue. Observers carry metadata-only job identity,
+ordinal/status and report directory and cannot change verdicts. Aggregate schema 1 adds cancelled
+count/status; genuine step/hook/cleanup failures still produce failure JUnit entries.
+
+Close and OS Quit must route through workspace save/discard/cancel and wait for owned work to stop.
+Never dispose a mounted session while it is reserved by an assignment execution. EditorWrites
+compares the saved source before replacing a file, serializes desktop writes and uses CREATE_NEW
+for new paths. Do not let another session's stale editor overwrite a newer file. Recording roots
+include UUIDs so simultaneous recordings of one package cannot share artifacts.

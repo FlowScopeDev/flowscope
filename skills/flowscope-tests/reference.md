@@ -225,3 +225,35 @@ discarded raw text (redacted) and each scroll observation/confirmation. Read `ta
 `targetBounds` and `coveringNode` on a rejected scroll target. Scroll targets must clear the full
 overlap; a rejected target leaving the viewport fails immediately. Pure layouts without identity/text/input semantics
 cover only through their children; system-bar strips cover only their own area.
+
+## Saved plans for multiple devices and projects
+
+Use `flowscope plan validate|show file.runplan.json` without ADB. The strict v1 JSON form is:
+
+```json
+{"version":1,"name":"Regression","projects":{"app":"../.."},"queues":[
+  {"project":"app","device":"login-phone","jobs":["login.flow"]},
+  {"project":"app","device":"checkout-phone","jobs":["checkout.flow","nightly.suite"]}
+]}
+```
+
+Project paths resolve relative to the plan (including sibling projects). Each queue has one project,
+one unique device role and ordered jobs. Job references use project test/suite lookup, require their
+.flow/.suite extension and cannot leave the project, including symlinks. Bind all roles explicitly:
+`flowscope plan run file.runplan.json --device login-phone=SERIAL_A --device checkout-phone=SERIAL_B`.
+Every serial must be distinct. maxParallel defaults to queue count; optional --max-parallel overrides
+it. continueOnFailure defaults to false per queue. Disconnect always stops the affected queue.
+Suites stay intact; never split hooks or suite variables across devices. Different queues run in
+parallel. --keep-hierarchy propagates to child tests. Per-project secrets auto-load; repeatable
+--secrets-file app=/local/source.env overrides one project. Never put secrets or serials in a plan.
+Aggregate execution-report.json schemaVersion 1 counts jobs (one suite = one job), includes devices,
+capture modes, fixed failure categories and local child report paths. Existing child reports retain
+schema 2. Aggregate JSON/HTML/PDF/JUnit go to --output/<execution-id> or ~/.flowscope/executions;
+child reports stay in each project's reportsDir. Exit 0 success, 1 executed failure, 2 invalid input
+or device preflight rejection. Standalone test and suite workflows remain unchanged.
+
+The desktop Assignments view can save/load the same portable plans and bind their device queues.
+Project/device tabs keep independent editors and recordings alive across selection changes. Assign
+saved files, preserve complete suites, and save pending edits before execution. Stop queue affects
+only that role; Stop all waits for cleanup/reporting. Aggregate execution summaries additionally
+count cancelled jobs; real cleanup failures remain failures, and child reports keep schema 2.

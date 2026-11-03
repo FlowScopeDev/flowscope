@@ -276,6 +276,10 @@ public final class FlowTestRunner {
     }
 
     public boolean run() throws Exception {
+        return ExecutionCoordinator.withDevice(device.serial(), this::runReserved);
+    }
+
+    private boolean runReserved() throws Exception {
         Thread sweepHook = null;
         try {
             Set<String> observed;
@@ -414,7 +418,7 @@ public final class FlowTestRunner {
                 // Progress before the printed line: a listener rendering an in-place `RUN` row has
                 // to be told the step is over so it can clear the row this line lands on.
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "passed", step.label()));
-                System.out.printf("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.displayName());
+                RunOutput.out("PASS %s %02d  %s%n", phase.value().toUpperCase(), i + 1, step.displayName());
             } catch (RunCancellation.Cancelled cancelled) {
                 passed = false;
                 results.add(new StepResult(i + 1, step, "cancelled", elapsed(started),
@@ -432,7 +436,7 @@ public final class FlowTestRunner {
                 results.add(new StepResult(i + 1, step, "failed", elapsed(started), message, details,
                     dumpCount - dumpsBefore, Duration.ofNanos(dumpNanos - dumpNanosBefore).toMillis(), stepDumpErrors, stepDumpLastError));
                 progress(new StepProgress(i + 1, total, phase.value(), step.action(), step.line(), "failed", step.label()));
-                System.err.printf("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.displayName(), message);
+                RunOutput.err("FAIL %s %02d  %s: %s%n", phase.value().toUpperCase(), i + 1, step.displayName(), message);
                 if (stopOnFailure && !step.continueOnFailure()) stopped = true;
             } finally {
                 // Every exit path, Cancelled included: nothing is published between steps.
@@ -448,7 +452,7 @@ public final class FlowTestRunner {
         results.add(new StepResult(i + 1, step, "skipped", 0, reason, Map.of(), 0, 0, 0, null));
         progress(new StepProgress(i + 1, test.steps().size(), step.phase().value(), step.action(),
             step.line(), "skipped", step.label()));
-        System.out.printf("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.displayName());
+        RunOutput.out("SKIP %s %02d  %s%n", step.phase().value().toUpperCase(), i + 1, step.displayName());
     }
 
     private void skipPhase(FlowTest.Phase phase, String reason) {
@@ -1769,7 +1773,7 @@ public final class FlowTestRunner {
             Files.write(root.resolve("report.pdf"),
                 ReportPdf.render(pdfDoc(passed, started, ended), new ReportImages(root)));
         } catch (Exception unwritable) {
-            System.err.println("WARN could not write report.pdf: " + message(unwritable)
+            RunOutput.err("%s%n", "WARN could not write report.pdf: " + message(unwritable)
                 + " (report.json, report.html and junit.xml were written)");
         }
     }

@@ -62,7 +62,7 @@ public final class SessionRecorder implements AutoCloseable {
         this.device = device;
         this.packageName = packageName;
         this.mode = mode;
-        String directory = DIRECTORY_TIME.format(startedAt) + "-" + safeName(packageName);
+        String directory = DIRECTORY_TIME.format(startedAt) + "-" + safeName(packageName) + "-" + java.util.UUID.randomUUID();
         this.root = outputRoot.resolve(directory).toAbsolutePath();
         Files.createDirectories(root.resolve("checkpoints"));
     }
@@ -134,9 +134,13 @@ public final class SessionRecorder implements AutoCloseable {
         observer.accept("host", event);
     }
 
-    public void start() throws IOException, InterruptedException {
-        Runtime.getRuntime().addShutdownHook(shutdownHook);
+    private DeviceLease deviceLease;
+
+    public synchronized void start() throws IOException, InterruptedException {
+        if (closed.get() || deviceLease != null) throw new IllegalStateException("Recording already started or closed");
+        deviceLease = DeviceLease.acquire(device.serial());
         try {
+            Runtime.getRuntime().addShutdownHook(shutdownHook);
             writeManifest(null);
             String uid = adb.packageUid(device.serial(), packageName);
             try { startFilteredLogcat(uid); }
@@ -361,7 +365,7 @@ public final class SessionRecorder implements AutoCloseable {
     }
 
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
         if (!closed.compareAndSet(false, true)) return;
         try {
             Runtime.getRuntime().removeShutdownHook(shutdownHook);
@@ -370,12 +374,16 @@ public final class SessionRecorder implements AutoCloseable {
         } catch (IllegalArgumentException neverStarted) {
             // start() was not called, so no hook was registered.
         }
-        stop(logcat);
-        join(logcatPump);
-        stop(agentEvents);
-        join(agentEventsPump);
-        stopAccessibility();
-        writeManifest(Instant.now());
+        try {
+            stop(logcat);
+            join(logcatPump);
+            stop(agentEvents);
+            join(agentEventsPump);
+            stopAccessibility();
+            writeManifest(Instant.now());
+        } finally {
+            if (deviceLease != null) deviceLease.close();
+        }
     }
 
     private void stopAccessibility() {

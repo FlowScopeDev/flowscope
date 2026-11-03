@@ -106,6 +106,7 @@ internal object Preferences {
      * file from another project into a `../../..` path that resolves to someone else's test, and
      * once written it is indistinguishable from a legitimate entry.
      */
+    @Synchronized
     fun rememberRecentProject(root: Path, openFile: Path?) {
         runCatching {
             val relative = openFile?.let { file ->

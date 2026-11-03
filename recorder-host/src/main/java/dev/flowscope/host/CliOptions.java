@@ -20,6 +20,7 @@ final class CliOptions {
     private final List<String> positional;
     private final Map<String, String> values;
     private final Set<String> flags;
+    private Map<String, List<String>> repeated = Map.of();
 
     private CliOptions(List<String> positional, Map<String, String> values, Set<String> flags) {
         this.positional = List.copyOf(positional);
@@ -28,6 +29,11 @@ final class CliOptions {
     }
 
     static CliOptions parse(List<String> args, Set<String> valueFlags, Set<String> booleanFlags) {
+        return parse(args, valueFlags, booleanFlags, Set.of());
+    }
+
+    static CliOptions parse(List<String> args, Set<String> valueFlags, Set<String> booleanFlags, Set<String> repeatable) {
+        Map<String, List<String>> repeated = new LinkedHashMap<>();
         List<String> positional = new ArrayList<>();
         Map<String, String> values = new LinkedHashMap<>();
         Set<String> flags = new java.util.LinkedHashSet<>();
@@ -42,18 +48,22 @@ final class CliOptions {
             } else if (booleanFlags.contains(token)) {
                 if (!flags.add(token)) throw repeated(token);
                 // Boolean flags take no value.
-            } else if (valueFlags.contains(token)) {
+            } else if (valueFlags.contains(token) || repeatable.contains(token)) {
                 if (++index >= args.size()) {
                     throw new IllegalArgumentException("Missing value for " + token);
                 }
-                if (values.put(token, args.get(index)) != null) throw repeated(token);
+                if (repeatable.contains(token)) repeated.computeIfAbsent(token, key -> new ArrayList<>()).add(args.get(index));
+                else if (values.put(token, args.get(index)) != null) throw repeated(token);
             } else if (token.startsWith("-") && token.length() > 1) {
                 throw new IllegalArgumentException("Unknown option: " + token);
             } else {
                 positional.add(token);
             }
         }
-        return new CliOptions(positional, values, flags);
+        CliOptions result = new CliOptions(positional, values, flags);
+        repeated.replaceAll((key, list) -> List.copyOf(list));
+        result.repeated = Map.copyOf(repeated);
+        return result;
     }
 
     private static IllegalArgumentException repeated(String option) {
@@ -75,6 +85,8 @@ final class CliOptions {
                 "Unexpected argument for " + command + ": " + positional.get(allowed));
         }
     }
+
+    List<String> values(String flag) { return repeated.getOrDefault(flag, List.of()); }
 
     String value(String flag) {
         return values.get(flag);

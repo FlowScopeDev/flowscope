@@ -8,7 +8,7 @@ import java.util.Set;
 
 /**
  * Minimal JSON writer and reader. FlowScope has no JSON dependency on purpose: the host CLI must
- * stay runnable from a plain JDK, so the one structured format it reads — `flowscope.json` — is
+ * stay runnable from a plain JDK, so project manifests and saved execution plans are
  * parsed by a deliberately small, strict subset here rather than by a library.
  *
  * <p>Accepted: objects, arrays, strings, integers, {@code true}, {@code false}, {@code null}, and
@@ -209,7 +209,8 @@ final class Json {
                 String key = readString();
                 expect(':', "after a key");
                 Object value = readValue();
-                if (result.put(key, value) != null) throw error("duplicate key: " + key);
+                if (result.containsKey(key)) throw error("duplicate key: " + key);
+                result.put(key, value);
                 skipWhitespace();
                 if (!has()) throw error("unterminated object");
                 char next = advance();
@@ -266,7 +267,7 @@ final class Json {
         }
 
         /**
-         * Integers only. The only numeric field in any FlowScope JSON is a millisecond timeout, so
+         * Integers only. Versions, timeouts and concurrency limits require whole numbers, so
          * accepting a double would mean silently truncating it somewhere later.
          */
         private Long readInteger() {

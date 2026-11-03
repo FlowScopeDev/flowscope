@@ -535,3 +535,52 @@ output path, restoring the previous bundle if promotion fails. This prevents sta
 state from the assembly/signing process from rejecting an otherwise valid local app. The DMG and
 run-distributable tasks use the same final app; no separate launch copy is required. This does not
 replace Developer ID signing/notarization for downloaded distribution.
+
+### Device ownership and execution coordination
+
+Test runs, complete suite runs, and recordings reserve their device across FlowScope
+processes using OS file locks under `~/.flowscope/device-locks/`. A competing operation
+fails before device work starts. Locks release after cleanup/reporting, or on process
+exit; permanent lock files must not be deleted to recover ownership. Suite children
+share their parent's reservation. Existing single-device commands are unchanged.
+
+The host `ExecutionCoordinator` provides ordered per-device queues, bounded concurrency
+across devices, unique device assignments and all-device reservation before jobs start.
+Queue failure stops only that queue unless continue-on-failure is selected. Saved execution
+plans, CLI commands and desktop assignment controls use this coordinator. Desktop project tabs
+own independent device sessions. Manual input and inspection from other processes are not yet
+covered by reservations.
+
+### Saved plan execution
+
+ExecutionPlan loads portable project aliases and device-role queues without consulting ADB or secrets.
+It parses all .flow files and suite children once, containing job paths inside the owning project.
+PlanCommand handles validation, assignment display and explicit repeatable role=serial bindings.
+ExecutionPlanRunner resolves secrets per project, checks required sources and prepares independent
+runner instances. ExecutionCoordinator reserves every serial before work begins, then runs ordered
+queues with bounded parallelism. Each intact suite retains its hooks and variable lifetime.
+RunOutput attributes worker output through thread-local context; legacy runner output is unchanged.
+Child report roots include a UUID execution ID, role and job ordinal. ExecutionPlanReport writes a
+metadata-only cross-project summary in JSON, HTML, PDF and JUnit; it never copies exception messages
+or runtime values. Reports count jobs; child suite reports contain the actual suite test counts.
+Desktop project tabs and assignment controls call this same host runner.
+
+### Desktop workspace and assignment lifecycle
+
+DesktopWorkspaceApp is the application owner. Project tabs contain keyed DesktopSession instances,
+which retain their own existing recorder/editor/inspection workflows while hidden. Only the active
+session renders the original shell; preview acquisition is visibility gated, while recordings,
+owned runs and evidence workers stay mounted. Shared discovery feeds each session. Tab changes do
+not replace any other session's mutable targets. Per-session editors use revision checks at the
+EditorWrites boundary so two sessions cannot silently overwrite the same authored file.
+
+Assignments are ordered saved-file queues grouped by session role/project. Saving and loading use
+the same host v1 plan format as the CLI. ExecutionPlanRunner owns actual reservations and jobs;
+its metadata-only observer drives the desktop's global queue view and links into existing run
+inspection. ExecutionCancellation stops one role or the execution without interrupting cleanup.
+Local workspace restoration records tabs, bindings, assignment paths and policies, not active work.
+Both window close and OS quit wait for cleanup and explicit handling of unsaved editor buffers.
+
+Desktop navigation uses compact project/device tabs with attached close controls, active underlines,
+and fixed actions on the right. The session toolbar retains project actions and device tools
+(rescan/emulators) without repeating the selected project and device.

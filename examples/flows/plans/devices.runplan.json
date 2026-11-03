@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "Sample app on two devices",
+  "projects": { "sample": "../.." },
+  "maxParallel": 2,
+  "queues": [
+    {
+      "project": "sample",
+      "device": "xml-phone",
+      "jobs": ["sample-login-xml.flow", "sample-list-xml.flow"]
+    },
+    {
+      "project": "sample",
+      "device": "compose-phone",
+      "continueOnFailure": false,
+      "jobs": ["sample-login-compose.flow", "sample-list-compose.flow"]
+    }
+  ]
+}

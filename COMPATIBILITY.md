@@ -11,6 +11,8 @@ is frozen as of **1.0.0** and what "compatible" means afterwards.
 | `.flow` test format | v1 (`flowscope 1`) | `flowscope schema`, [README](README.md), `FlowTestParser` |
 | `.suite` suite format | v1 (`flowscope-suite 1`) | `flowscope schema`, `FlowSuiteParser` |
 | `flowscope.json` project manifest | `schemaVersion` 1 | `flowscope schema`, `ProjectManifest` |
+| Saved execution plans | `version` 1 | `flowscope schema`, `ExecutionPlan`, README |
+| Execution summaries | `schemaVersion` 1, `kind: execution` | `execution-report.json` |
 | Run reports | `schemaVersion` 2 | `report.json`, `suite-report.json` |
 | CLI commands and exit codes | 1.0 | `flowscope help`, `flowscope schema` |
 | Instrumented event envelope | `schemaVersion` 1 | `FlowScopeAgent`, [README](README.md) |
@@ -185,3 +187,25 @@ swipes; an unrelated scrollable pane no longer bounds the target. A target that 
 accepted fails with its last reason rather than `Element not found`. Failure message text is
 diagnostic, not a compatibility surface; exit codes and report schema 2 are unchanged. Pure layouts cover only through
 children unless they have id/text/description/clickable/focusable semantics.
+
+## Execution plans and summaries
+
+The additive `plan validate`, `plan show`, and `plan run` commands preserve existing single-device
+commands and .flow/.suite/flowscope.json contracts. The v1 plan keys are version, name, projects,
+queues, and optional maxParallel. A queue has project, device, jobs, optional continueOnFailure.
+All roles need explicit unique serial bindings. Invalid plans, bindings and live device preflight
+return 2; jobs that execute and fail return 1. Device infrastructure failures can also fail a run.
+
+Execution summaries have schemaVersion 1 and kind execution. Fields: id, name, startedAt, endedAt,
+status, totalJobs, passed, failed, skipped, and jobs. Each job records project, projectRoot, deviceRole,
+deviceSerial, reference, kind (test/suite), status, failureKind (nullable), report (nullable local
+absolute child JSON path), and modes (distinct capture-mode names). Job statuses are passed, failed,
+or skipped. Failure categories are test-or-cleanup, infrastructure or device-disconnected; details
+remain in child reports. Counts and aggregate JUnit entries count complete assigned jobs; suite child
+counts remain in suite reports. Child report schemaVersion 2 is unchanged. HTML/PDF are presentation.
+
+Desktop assignment execution adds the optional aggregate `cancelled` count and the job status
+`cancelled` to execution-report.json schemaVersion 1. Cancellation without real failures maps to
+skipped in aggregate JUnit; failed steps, suite hooks or cleanup retain failure entries. Child
+report schema 2 is unchanged. Desktop state restoration and recording directory names are internal;
+recording roots now include UUID suffixes to prevent simultaneous-device collisions.

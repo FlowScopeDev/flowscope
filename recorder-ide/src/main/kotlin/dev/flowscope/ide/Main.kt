@@ -163,13 +163,21 @@ fun main() {
         // freshly opened window — where nothing is focused yet — every shortcut was silently dead.
         // The window's own handler sees each key regardless of focus.
         val shortcuts = remember { mutableStateOf<(KeyEvent) -> Boolean>({ false }) }
+        val closeRequest = remember { mutableStateOf<() -> Unit>({}) }
         Window(
-            onCloseRequest = ::exitApplication,
+            onCloseRequest = { closeRequest.value() },
             title = "Flow Scope",
             state = state,
             onPreviewKeyEvent = { shortcuts.value(it) },
         ) {
             DisposableEffect(Unit) {
+                val desktop = if (java.awt.Desktop.isDesktopSupported()) java.awt.Desktop.getDesktop() else null
+                if (desktop?.isSupported(java.awt.Desktop.Action.APP_QUIT_HANDLER) == true) {
+                    desktop.setQuitHandler { _, response ->
+                        response.cancelQuit()
+                        javax.swing.SwingUtilities.invokeLater { closeRequest.value() }
+                    }
+                }
                 onDispose { DesktopNotifications.close() }
             }
             window.minimumSize = Dimension(1040, 680)
@@ -184,33 +192,41 @@ fun main() {
             }
             FlowScopeTheme(themeMode) {
                 // The window is needed for modal dialog ownership (ProjectPicker).
-                FlowScopeApp(themeMode, window, shortcuts, { themeMode = it })
+                DesktopWorkspaceApp(themeMode, window, shortcuts, closeRequest, { themeMode = it }, ::exitApplication)
             }
         }
     }
 }
 
 @Composable
-private fun FlowScopeApp(
+internal fun FlowScopeApp(
     themeMode: ThemeMode,
     window: java.awt.Frame?,
     shortcuts: MutableState<(KeyEvent) -> Boolean>,
     onThemeModeChanged: (ThemeMode) -> Unit,
+    owner: DesktopSession,
+    visible: Boolean,
+    blocked: Boolean,
+    onOpenProject: (Path) -> Unit,
+    onProjectOpened: (Path) -> Unit,
+    onCloseProject: () -> Unit,
+    onSelectDevice: (dev.flowscope.host.Device) -> Unit,
+    discoveredDevices: List<dev.flowscope.host.Device>,
 ) {
     val adb = remember { AdbClient() }
     val scrcpy = remember { ScrcpyClient() }
     val emulator = remember { EmulatorClient() }
     val embeddedScrcpy = remember { EmbeddedScrcpyClient(adb, scrcpy) }
     val embeddedFrames = remember {
-        FrameChannel<EmbeddedScrcpyClient.Frame>(FrameChannel.CONFLATED)
+        FrameChannel<Pair<String, EmbeddedScrcpyClient.Frame>>(FrameChannel.CONFLATED, onUndeliveredElement = { it.second.recycle() })
     }
     val scope = rememberCoroutineScope()
-    val authoring = remember { AuthoringState() }
-    val projectState = remember { ProjectState() }
-    val shell = remember { ShellState() }
-    val timeline = remember { TimelineState() }
-    val session = remember { SessionState() }
-    val performance = remember { PerformanceState() }
+    val authoring = owner.authoring
+    val projectState = owner.project
+    val shell = owner.shell
+    val timeline = owner.timeline
+    val session = owner.recording
+    val performance = owner.performance
     var runInspection by remember { mutableStateOf(RunInspection()) }
     var loadedRun by remember { mutableStateOf<Path?>(null) }
     var runArtifact by remember { mutableStateOf<EvidenceArtifact?>(null) }
@@ -227,7 +243,7 @@ private fun FlowScopeApp(
     val shownEvidence = if (inspectedRun != null) runInspection.artifacts else session.evidence
     val shownArtifact = if (inspectedRun != null) runArtifact else session.selectedEvidence
 
-    LaunchedEffect(inspectedRun, inspectionRefresh) {
+    LaunchedEffect(inspectedRun, inspectionRefresh, blocked) {
         if (loadedRun != inspectedRun) {
             loadedRun = inspectedRun
             runInspection = RunInspection()
@@ -248,7 +264,7 @@ private fun FlowScopeApp(
                 it.screenshot == runArtifact?.screenshot && it.hierarchy == runArtifact?.hierarchy
             } ?: loaded.artifacts.lastOrNull()
             inspectionRevision++
-            if (!loaded.running && !authoring.running) break
+            if (!loaded.running && !authoring.running && !blocked) break
             delay(1_000)
         } while (isActive)
     }
@@ -273,12 +289,21 @@ private fun FlowScopeApp(
     val secretsFile = secretsOverride ?: projectState.project?.let(dev.flowscope.host.ProjectSecrets::defaultFile)
     var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
     val deviceState = remember {
-        DeviceState().apply {
+        owner.device.apply {
             embeddedStatus = embeddedScrcpy.availabilitySummary()
             mirrorStatus = if (scrcpy.available()) {
                 "scrcpy ready"
             } else "scrcpy not installed · screenshot fallback active"
         }
+    }
+    val latestDiscovery by rememberUpdatedState(discoveredDevices)
+    val latestBlocked by rememberUpdatedState(blocked)
+    fun deviceWorkAllowed(): Boolean {
+        if (latestBlocked || authoring.running) {
+            session.status = "Device is reserved by an active run or another session"
+            return false
+        }
+        return true
     }
     LaunchedEffect(Unit) {
         shell.reduceMotion = withContext(Dispatchers.IO) { detectReduceMotion() }
@@ -305,7 +330,7 @@ private fun FlowScopeApp(
             if (!deviceState.captureModeChosen) deviceState.captureMode = mode
         }
         defaults.serial()?.let { serial ->
-            if (deviceState.selected == null) {
+            if (owner.autoSelect && owner.requestedSerial == null && deviceState.selected == null) {
                 deviceState.devices.firstOrNull { it.serial() == serial }
                     ?.let { deviceState.selected = it }
             }
@@ -336,22 +361,23 @@ private fun FlowScopeApp(
      */
     suspend fun refreshDevices(silent: Boolean = false) {
         if (!silent) deviceState.busy = true
-        runCatching { withContext(Dispatchers.IO) { adb.devices() } }
+        runCatching { if (silent) latestDiscovery else withContext(Dispatchers.IO) { adb.devices() } }
             .onSuccess { found ->
                 deviceState.devices = found.filter { it.state() == "device" }
                 val currentSerial = deviceState.selected?.serial()
                 // While recording, keep the selection pinned — the only thing that matters is
                 // whether the target is still attached.
-                if (session.recording != null) {
+                if (session.recording != null || authoring.running) {
                     if (deviceState.devices.none { it.serial() == currentSerial }) {
                         deviceState.lostSerial = currentSerial
                     }
                     if (!silent) deviceState.busy = false
                     return@onSuccess
                 }
-                deviceState.selected = deviceState.devices.firstOrNull { it.serial() == currentSerial }
-                    ?: deviceState.devices.singleOrNull()
-                    ?: deviceState.devices.firstOrNull()
+                val requested = owner.requestedSerial ?: (if (owner.autoSelect) projectState.manifest?.defaults()?.serial() else null) ?: currentSerial
+                deviceState.selected = deviceState.devices.firstOrNull { it.serial() == requested }
+                    ?: if (requested == null && owner.autoSelect) deviceState.devices.firstOrNull() else null
+                if (owner.requestedSerial == null && !projectState.restoring) owner.requestedSerial = requested ?: deviceState.selected?.serial()
                 session.status = when {
                     deviceState.devices.isEmpty() -> "No authorized device detected"
                     deviceState.selected != null -> "Connected over ADB"
@@ -429,10 +455,10 @@ private fun FlowScopeApp(
 
     LaunchedEffect(Unit) {
         launch {
-            for (frame in embeddedFrames) {
+            for ((sourceSerial, frame) in embeddedFrames) {
                 // Raw BGRA straight from the decoder — no JPEG round trip, no marker scanning.
                 runCatching { frame.toComposeBitmap() }
-                    .onSuccess { deviceState.embeddedFrame = it }
+                    .onSuccess { if (sourceSerial == deviceState.serial) deviceState.embeddedFrame = it }
                 // makeRaster copies, so the buffer is free the moment the image exists.
                 frame.recycle()
             }
@@ -449,13 +475,13 @@ private fun FlowScopeApp(
 
     LaunchedEffect(deviceState.selected?.serial()) {
         val serial = deviceState.selected?.serial()
-        deviceState.installedPackages = if (serial == null) emptyList() else {
-            runCatching { withContext(Dispatchers.IO) { adb.installedPackages(serial) } }
-                .getOrDefault(emptyList())
+        val packages = if (serial == null) emptyList() else {
+            runCatching { withContext(Dispatchers.IO) { adb.installedPackages(serial) } }.getOrDefault(emptyList())
         }
+        if (deviceState.serial == serial) deviceState.installedPackages = packages
     }
 
-    LaunchedEffect(deviceState.selected?.serial(), deviceState.showDisplay) {
+    LaunchedEffect(deviceState.selected?.serial(), deviceState.showDisplay, visible) {
         deviceState.embeddedSession?.let { previous -> withContext(Dispatchers.IO) { previous.close() } }
         deviceState.embeddedSession = null
         deviceState.embeddedFrame = null
@@ -465,7 +491,7 @@ private fun FlowScopeApp(
             deviceState.mirrorStatus = if (scrcpy.available()) "scrcpy ready" else "scrcpy not installed · screenshot fallback active"
         }
         deviceState.screenshot = null
-        if (!deviceState.showDisplay) return@LaunchedEffect
+        if (!deviceState.showDisplay || !visible) return@LaunchedEffect
         val serial = deviceState.selected?.serial() ?: return@LaunchedEffect
         while (isActive) {
             runCatching {
@@ -731,7 +757,7 @@ private fun FlowScopeApp(
         defaults.mode()?.let { mode ->
             if (!deviceState.captureModeChosen) deviceState.captureMode = mode
         }
-        defaults.serial()?.let { serial ->
+        (owner.requestedSerial ?: if (owner.autoSelect) defaults.serial() else null)?.let { serial ->
             deviceState.devices.firstOrNull { it.serial() == serial }
                 ?.let { deviceState.selected = it }
         }
@@ -751,6 +777,7 @@ private fun FlowScopeApp(
             val switching = projectState.root?.toAbsolutePath()?.normalize() !=
                 project.root().toAbsolutePath().normalize()
             projectState.project = project
+            onProjectOpened(project.root())
             projectState.status = "${project.manifest().name()} · ${project.root()}"
             // Marked rows belong to the project that listed them, never to the one arriving.
             if (switching) projectState.missing = emptySet()
@@ -790,6 +817,10 @@ private fun FlowScopeApp(
     }
 
     fun openProject(root: Path) {
+        if (projectState.root != root.toAbsolutePath().normalize()) {
+            onOpenProject(root)
+            return
+        }
         val same = projectState.root?.toAbsolutePath()?.normalize() ==
             root.toAbsolutePath().normalize()
         // Reopening the project already open keeps the buffer, so there is nothing to lose.
@@ -841,20 +872,7 @@ private fun FlowScopeApp(
         }
     }
 
-    fun closeProject() {
-        val root = projectState.root?.toAbsolutePath()?.normalize()
-        val openFile = authoring.currentFile?.toAbsolutePath()?.normalize()
-        projectState.project = null
-        projectState.detectedPackage = null
-        projectState.missing = emptySet()
-        projectState.status = "No project open"
-        // A file from the closed project would otherwise stay open under the `~/.flowscope/`
-        // fallback and save itself back into a project the user just left. A scratch buffer that
-        // never belonged to it is untouched.
-        if (root != null && openFile != null && openFile.startsWith(root)) clearEditor()
-        scope.launch { refreshProjectListing() }
-        addEvent("□", "Project closed", "Saves now go to $FlowScopeHome", channel = Channel.Session)
-    }
+    fun closeProject() = onCloseProject()
 
     fun reloadProject() {
         projectState.root?.let(::openProject)
@@ -864,7 +882,7 @@ private fun FlowScopeApp(
         val project = projectState.project ?: return
         scope.launch {
             val written = withContext(Dispatchers.IO) {
-                runCatching { ProjectManifest.write(project.manifestPath(), manifest) }
+                runCatching { EditorWrites.writeManifest(project, manifest) }
             }
             written.onSuccess {
                 projectState.project = FlowProject(project.root(), manifest)
@@ -923,6 +941,7 @@ private fun FlowScopeApp(
 
     /** Where this buffer should be written when it has no file of its own yet. */
     fun refreshWebViewInspection(pageMatch: String? = session.selectedWebViewTarget?.pageMatch()) {
+        if (!deviceWorkAllowed()) return
         val device = deviceState.selected
         val packageName = deviceState.packageName.trim()
         if (device == null || packageName.isBlank()) {
@@ -1004,11 +1023,11 @@ private fun FlowScopeApp(
         val target = if (existing != null && !saveAs) existing
             else deriveTarget(authoring.source, authoring.kind).toAbsolutePath()
         val contents = flowFileContents(authoring.source)
+        val expected = if (existing != null && !saveAs) authoring.savedSource else null
         authoring.status = "Saving…"
         val written = runCatching {
             withContext(Dispatchers.IO) {
-                Files.createDirectories(target.parent)
-                Files.writeString(target, contents, StandardCharsets.UTF_8)
+                EditorWrites.write(target, contents, expected)
                 target
             }
         }
@@ -1025,7 +1044,7 @@ private fun FlowScopeApp(
     }
 
     fun saveTest(runAfterSave: Boolean, saveAs: Boolean = false) {
-        if (authoring.running) return
+        if (authoring.running || (runAfterSave && !deviceWorkAllowed())) return
         val device = deviceState.selected
         if (authoring.source.isBlank()) {
             authoring.status = "Create or record a test first"
@@ -1054,6 +1073,7 @@ private fun FlowScopeApp(
                 val target = if (existing != null && !saveAs) existing
                     else deriveTarget(authoring.source, kind).toAbsolutePath()
                 val contents = flowFileContents(authoring.source)
+                val expected = if (existing != null && !saveAs) authoring.savedSource else null
                 authoring.status = "Running…"
                 // Written by the runner thread, read by the activity heartbeat thread.
                 val runningStep = java.util.concurrent.atomic.AtomicReference<FlowTestRunner.StepProgress?>(null)
@@ -1061,8 +1081,7 @@ private fun FlowScopeApp(
                 runCatching {
                     withContext(Dispatchers.IO) {
                         val runSecretsFile = dev.flowscope.host.ProjectSecrets.resolve(runProject, runSecretsOverride)
-                        Files.createDirectories(target.parent)
-                        Files.writeString(target, contents, StandardCharsets.UTF_8)
+                        EditorWrites.write(target, contents, expected)
                         if (kind == EditorKind.Suite) {
                             val suite = FlowSuiteParser.parse(target)
                             val runner = FlowSuiteRunner(
@@ -1197,12 +1216,13 @@ private fun FlowScopeApp(
             ) {
                 val target = authoring.currentFile
                     ?: deriveTarget(authoring.source, authoring.kind)
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        Files.createDirectories(target.parent)
-                        Files.writeString(target, flowFileContents(authoring.source),
-                            StandardCharsets.UTF_8)
-                    }
+                val saved = withContext(Dispatchers.IO) {
+                    runCatching { EditorWrites.write(target, flowFileContents(authoring.source),
+                        if (authoring.currentFile != null) authoring.savedSource else null) }
+                }
+                if (saved.isFailure) {
+                    authoring.status = saved.exceptionOrNull()?.message ?: "Could not save the current editor"
+                    return@launch
                 }
             }
             val template = if (kind == EditorKind.Suite) {
@@ -1243,7 +1263,7 @@ private fun FlowScopeApp(
                     if (!suiteReferences(source, oldReference)) return@runCatching null
                     val rewritten = rewriteSuiteReference(source, oldReference, newReference)
                     if (rewritten == source) return@runCatching null
-                    Files.writeString(suite, rewritten, StandardCharsets.UTF_8)
+                    EditorWrites.write(suite, rewritten, source)
                     project.relativize(suite)
                 }.getOrNull()
             }
@@ -1329,7 +1349,12 @@ private fun FlowScopeApp(
     LaunchedEffect(Unit) {
         val recents = withContext(Dispatchers.IO) { Preferences.loadRecentProjects() }
         projectState.recent = recents
-        val mostRecent = recents.firstOrNull()
+        val mostRecent = if (owner.restoreRecent) recents.firstOrNull() else null
+        if (owner.initialRoot != null) {
+            openProjectAwaiting(owner.initialRoot)
+            projectState.restoring = false
+            return@LaunchedEffect
+        }
         if (mostRecent == null) {
             refreshProjectListing()
             projectState.restoring = false
@@ -1352,8 +1377,9 @@ private fun FlowScopeApp(
     fun toggleDisplay() = setShowDisplay(!deviceState.showDisplay)
 
     fun inspectLiveTree() {
+        if (!deviceWorkAllowed()) return
         val device = deviceState.selected ?: return
-        if (deviceState.busy || liveTreeBusy || projectState.runs.any { it.isRunning }) return
+        if (deviceState.busy || liveTreeBusy || authoring.running) return
         val packageName = deviceState.packageName
         liveTreeBusy = true
         deviceState.busy = true
@@ -1410,6 +1436,7 @@ private fun FlowScopeApp(
     }
 
     fun toggleMirror() {
+        if (!deviceWorkAllowed()) return
         val current = deviceState.mirrorSession
         if (current != null) {
             scope.launch {
@@ -1457,7 +1484,7 @@ private fun FlowScopeApp(
      * Prepares the editor for a new recording: persists whatever was open, then writes the template
      * for the new test and points the buffer at it. Never refuses to start, and never loses work.
      */
-    suspend fun startRecordingBuffer() {
+    suspend fun startRecordingBuffer(): Boolean {
         // Record is reachable before the restore finishes; without this the first test of a
         // session lands in ~/.flowscope instead of the project that is still being reopened.
         awaitProjectRestore()
@@ -1465,12 +1492,13 @@ private fun FlowScopeApp(
         if (authoring.source.isNotBlank()) {
             val target = previous ?: deriveTarget(authoring.source, authoring.kind)
             if (authoring.dirty || previous == null) {
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        Files.createDirectories(target.parent)
-                        Files.writeString(target, flowFileContents(authoring.source),
-                            StandardCharsets.UTF_8)
-                    }
+                val saved = withContext(Dispatchers.IO) {
+                    runCatching { EditorWrites.write(target, flowFileContents(authoring.source),
+                        if (authoring.currentFile != null) authoring.savedSource else null) }
+                }
+                if (saved.isFailure) {
+                    authoring.status = saved.exceptionOrNull()?.message ?: "Could not save the current editor"
+                    return false
                 }
             }
         }
@@ -1494,8 +1522,7 @@ private fun FlowScopeApp(
         val target = directory.resolve(fileName)
         val written = withContext(Dispatchers.IO) {
             runCatching {
-                Files.createDirectories(directory)
-                Files.writeString(target, template, StandardCharsets.UTF_8)
+                EditorWrites.write(target, template, null)
                 target
             }
         }
@@ -1506,9 +1533,11 @@ private fun FlowScopeApp(
             onFailure = { it.message ?: "Recording into an unsaved buffer" },
         )
         refreshProjectListing()
+        return true
     }
 
     fun toggleRecording() {
+        if (session.recording == null && !deviceWorkAllowed()) return
         if (session.recording != null) {
             val current = session.recording
             scope.launch {
@@ -1536,7 +1565,7 @@ private fun FlowScopeApp(
                 // would destroy work, so unsaved work is written first and the new recording gets
                 // its own file on disk immediately — visible in the rail from the first second, and
                 // recoverable if the IDE dies mid-session.
-                startRecordingBuffer()
+                if (!startRecordingBuffer()) { deviceState.busy = false; return@launch }
                 runCatching {
                     withContext(Dispatchers.IO) {
                         SessionRecorder(
@@ -1716,6 +1745,7 @@ private fun FlowScopeApp(
         val agent = runCatching {
             withContext(Dispatchers.IO) { adb.hasAgentEvidence(serial, target) }
         }.getOrDefault(false)
+        if (deviceState.serial != serial || deviceState.packageName.trim() != target) return@LaunchedEffect
         deviceState.debuggable = debuggable
         deviceState.agentAvailable = agent
         if (agent && !deviceState.captureModeChosen &&
@@ -1749,8 +1779,8 @@ private fun FlowScopeApp(
     // place matters — when a separate initial start also existed, a slow first connect (push +
     // server boot + two socket connects) outlasted this loop's check and both started a server,
     // leaving two scrcpy servers contending for one device.
-    LaunchedEffect(deviceState.selected?.serial(), deviceState.showDisplay) {
-        if (!deviceState.showDisplay) return@LaunchedEffect
+    LaunchedEffect(deviceState.selected?.serial(), deviceState.showDisplay, visible) {
+        if (!deviceState.showDisplay || !visible) return@LaunchedEffect
         val serial = deviceState.selected?.serial() ?: return@LaunchedEffect
         while (isActive) {
             if (deviceState.streaming) {
@@ -1774,7 +1804,7 @@ private fun FlowScopeApp(
                 if (attempt == 0) "Starting embedded scrcpy…" else "Reconnecting embedded stream…"
             runCatching {
                 withContext(Dispatchers.IO) {
-                    embeddedScrcpy.start(serial) { frame -> embeddedFrames.trySend(frame) }
+                    embeddedScrcpy.start(serial) { frame -> embeddedFrames.trySend(serial to frame) }
                 }
             }.onSuccess { session ->
                 deviceState.embeddedSession = session
@@ -1984,11 +2014,12 @@ private fun FlowScopeApp(
         commandIdFor(event)?.let(::dispatch) ?: false
     }
 
-    DisposableEffect(Unit) {
-        shortcuts.value = handleShortcut
-        onDispose { shortcuts.value = { false } }
+    androidx.compose.runtime.SideEffect {
+        owner.save = { writeBuffer() != null }
+        owner.handleKey = handleShortcut
     }
 
+    if (visible) {
     CompositionLocalProvider(LocalReduceMotion provides shell.reduceMotion) {
     Surface(
         Modifier.fillMaxSize(),
@@ -1998,7 +2029,7 @@ private fun FlowScopeApp(
             SessionBar(
                 devices = deviceState.devices,
                 selected = deviceState.selected,
-                onDeviceSelected = { deviceState.selected = it },
+                onDeviceSelected = { if (!owner.busy) onSelectDevice(it) },
                 onRefresh = { scope.launch { refreshDevices(); refreshAvds() } },
                 avds = deviceState.avds,
                 emulatorAvailable = deviceState.emulatorAvailable,
@@ -2023,7 +2054,7 @@ private fun FlowScopeApp(
                 },
                 recording = session.isRecording,
                 recordingSeconds = session.seconds,
-                busy = deviceState.busy,
+                busy = deviceState.busy || blocked,
                 health = health,
                 packageInstalled = deviceState.packageInstalled,
                 checkpointCount = session.evidence.size,
@@ -2032,7 +2063,7 @@ private fun FlowScopeApp(
                 run = RunControl(
                     // The same conditions the "run" command uses, plus a file that parses: a run
                     // of invalid source only fails slowly on the device.
-                    enabled = authoring.source.isNotBlank() &&
+                    enabled = !blocked && authoring.source.isNotBlank() &&
                         deviceState.selected != null &&
                         session.recording == null &&
                         authoring.validation.isValid,
@@ -2128,6 +2159,7 @@ private fun FlowScopeApp(
                         mirrorAvailable = scrcpy.available(),
                         mirrorRunning = deviceState.mirroring,
                         onDeviceTap = { normalized ->
+                            if (!deviceWorkAllowed()) return@DeviceColumn
                             val device = deviceState.selected ?: return@DeviceColumn
                             // Input must use the same coordinate space as the image on screen.
                             // scrcpy rejects positional events whose declared frame size differs
@@ -2196,6 +2228,7 @@ private fun FlowScopeApp(
                             }
                         },
                         onDeviceSwipe = { start, end ->
+                            if (!deviceWorkAllowed()) return@DeviceColumn
                             val device = deviceState.selected ?: return@DeviceColumn
                             val reference = deviceState.liveImage ?: return@DeviceColumn
                             val startX = (start.x * reference.width).toInt().coerceIn(0, reference.width - 1)
@@ -2219,6 +2252,7 @@ private fun FlowScopeApp(
                             }
                         },
                         onDeviceScroll = { direction ->
+                            if (!deviceWorkAllowed()) return@DeviceColumn
                             val device = deviceState.selected ?: return@DeviceColumn
                             val reference = deviceState.liveImage ?: return@DeviceColumn
                             val centerX = reference.width / 2
@@ -2242,6 +2276,7 @@ private fun FlowScopeApp(
                             }
                         },
                         onDeviceKey = { key ->
+                            if (!deviceWorkAllowed()) return@DeviceColumn
                             val device = deviceState.selected ?: return@DeviceColumn
                             scope.launch(Dispatchers.IO) {
                                 runCatching { embeddedScrcpy.keyEvent(device.serial(), key) }
@@ -2253,6 +2288,7 @@ private fun FlowScopeApp(
                             }
                         },
                         onDeviceText = { text ->
+                            if (!deviceWorkAllowed()) return@DeviceColumn
                             val device = deviceState.selected ?: return@DeviceColumn
                             scope.launch(Dispatchers.IO) {
                                 runCatching { embeddedScrcpy.typeText(device.serial(), text) }
@@ -2362,7 +2398,7 @@ private fun FlowScopeApp(
                                     modifier = Modifier.fillMaxSize(),
                                     nodes = liveTree ?: inspectionNodes,
                                     subtitle = liveTreeStatus ?: shownArtifact?.reason ?: "No captured hierarchy",
-                                    liveEnabled = !deviceState.busy && !liveTreeBusy && projectState.runs.none { it.isRunning } && deviceState.selected != null,
+                                    liveEnabled = !blocked && !authoring.running && !deviceState.busy && !liveTreeBusy && deviceState.selected != null,
                                     onInspectLive = ::inspectLiveTree,
                                     onRefresh = {
                                         liveTree = null
@@ -2456,6 +2492,7 @@ private fun FlowScopeApp(
                 onCancel = { shell.pendingConfirm = null },
             )
         }
+    }
     }
     }
 }

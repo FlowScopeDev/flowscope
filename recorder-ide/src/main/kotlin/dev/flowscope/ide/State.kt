@@ -187,7 +187,7 @@ internal class AuthoringState {
     val stepCount: Int get() = source.lineSequence().count { it.trim().startsWith("step ") }
 
     /** Derived, never stored: five step-card actions and every recorded event mutate `source`. */
-    val dirty: Boolean get() = isDirty(source, savedSource)
+    val dirty: Boolean get() = (currentFile == null && source.isNotBlank()) || isDirty(source, savedSource)
     val kind: EditorKind get() = editorKindOf(currentFile)
     val fileName: String? get() = currentFile?.fileName?.toString()
 }

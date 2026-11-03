@@ -48,6 +48,7 @@ public final class Main {
             case "project" -> project(args.subList(1, args.size()));
             case "test" -> test(args.subList(1, args.size()));
             case "suite" -> suite(args.subList(1, args.size()));
+            case "plan" -> PlanCommand.run(args.subList(1, args.size()), new AdbClient());
             case "schema" -> schema();
             default -> {
                 System.err.println("Unknown command: " + args.getFirst());
@@ -820,6 +821,29 @@ public final class Main {
 
             flowscope.json supplies authoring and run defaults only. Every .flow keeps its own
             package/mode/timeout header and runs with no project present.
+
+            Execution plans (.runplan.json), version 1:
+              {"version":1,"name":"Regression","projects":{"app":"../.."},
+               "maxParallel":2,"queues":[
+                 {"project":"app","device":"phone-a","jobs":["login.flow"]},
+                 {"project":"app","device":"phone-b","continueOnFailure":false,
+                  "jobs":["checkout.flow","nightly.suite"]}]}
+            Project paths are relative to the plan file (.. allowed). Job references use the
+            owning project's resolution ladder, must end in .flow/.suite, and cannot escape
+            that project, including through symlinks. Unknown/duplicate keys are rejected.
+            One ordered queue per device role; bind every role to a distinct serial at run time.
+            maxParallel defaults to the number of queues; continueOnFailure defaults to false.
+            Suites execute intact. No secrets, serials or runtime expressions belong in plans.
+            Commands: plan validate|show <file.runplan.json> (no ADB required)
+                      plan run <file.runplan.json> --device <role>=<serial> [--device ...]
+                        [--max-parallel <count>] [--output <dir>] [--keep-hierarchy]
+                        [--secrets-file <project>=<path>] (repeatable, local overrides)
+            Execution reports: execution-report.json schemaVersion 1, kind execution,
+            id/name/startedAt/endedAt/status, totalJobs/passed/failed/skipped/cancelled, jobs with project,
+            projectRoot/deviceRole/deviceSerial/reference/kind/status/failureKind/report/modes.
+            Counts and aggregate JUnit entries describe jobs; a complete suite is one job.
+            Owned desktop executions may cancel queues: cancelled jobs count separately, map to
+            JUnit skipped without real failures, and retain actual hook/cleanup failures.
             """);
         return 0;
     }
@@ -865,6 +889,10 @@ public final class Main {
               suite validate <file.suite> [--project <directory>]
               suite run [<file.suite>] [--project <directory>] [--serial <adb-serial>]
                         [--output <directory>] [--secrets-file <path>] [--keep-hierarchy]
+              plan validate|show <file.runplan.json>
+              plan run <file.runplan.json> --device <role>=<serial> [--device ...]
+                       [--max-parallel <count>] [--output <directory>]
+                       [--secrets-file <project>=<path>] [--keep-hierarchy]
               schema
 
             Inside a project, `test run login` resolves flows/tests/login.flow and writes to
